@@ -8,6 +8,7 @@ import { ThemeScript } from "@/components/ThemeScript";
 import { TickerStrip } from "@/components/TickerStrip";
 import { WatchlistSync } from "@/components/WatchlistSync";
 import { Analytics } from "@/components/Analytics";
+import { Identify } from "@/components/Identify";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { getSession } from "@/lib/auth/session";
 import { cryptoEnabled } from "@/lib/flags";
@@ -79,6 +80,12 @@ export default async function LocaleLayout({
         <TickerStrip locale={locale} />
         <WatchlistSync email={session?.email ?? null} />
         <Analytics />
+        <Identify
+          tier={session?.tier ?? "anon"}
+          locale={locale}
+          signedIn={!!session?.email}
+          expiresAt={session?.exp ?? null}
+        />
         <main id="main" className="mx-auto max-w-[1400px] px-4 py-6">
           {children}
         </main>

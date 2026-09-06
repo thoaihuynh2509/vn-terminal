@@ -93,4 +93,27 @@ Each entry: what · where · symptom · evidence · date · status.
 - **Suggested fix:** either restore the grouped-nav disclosure in `Header.tsx`, or drop the check
   from `cdp.mjs` and the claim from `README.md`. Separately, `check()` should record a failure
   instead of letting a null selector throw, so one stale assertion cannot mask the rest of the suite.
-- **Status:** OPEN, pre-existing. Blocks any full green run of `test:actions`.
+- **Status:** **RESOLVED 2026-09-07.** The check was retargeted at the chart's interval menu (a
+  disclosure that does exist), every selector in it is null-safe, and `check()` now streams one line
+  per assertion so a stalled step is identifiable instead of looking like a hang. Unblocking it
+  revealed that **81 assertions had never executed**; four more stale selectors were fixed with it
+  (see the next entry) and the suite now runs all 96 checks to completion.
+
+## 2026-09-07 — four `test:actions` checks assert toolbar read-outs that were never built
+
+- **Where:** `scripts/cdp.mjs` — "wheel up zooms in", "wheel down zooms back out", "the zoom level is
+  shown in the toolbar" (they read `[aria-label="Khoảng"] [aria-pressed=true]`), and "a custom
+  interval is served real bars" (it matches `/([0-9.,]+) nến/` in `main`).
+- **Symptom:** all four return `undefined`/`null`. They are the last red checks in the suite
+  (92 pass / 4 fail).
+- **Cause:** neither read-out exists in the UI. `ChartPro`'s toolbar has only a `120 bars`/`All`
+  toggle — there is no numbered range group and no bar-count label. Corroborating evidence: the
+  dictionary keys `chart.range` ("Khoảng"), `chart.bars` ("nến") and `chart.sessions` ("phiên") are
+  all defined in **both** locales and have **no rendering consumer** anywhere in `src/`. The checks
+  and the strings were evidently written for a range control that was never finished.
+- **Assessment:** not a regression and not a stale selector — the tests are ahead of the product.
+  They describe exactly the control the chart roadmap builds as **P1-13** (range presets
+  1M/3M/6M/1Y/YTD/All, plus a visible bar count), which will turn all four green and give the three
+  orphaned dictionary keys their consumer.
+- **Status:** OPEN, expected to close with P1-13. Until then `test:actions` exits 1 on these four;
+  every other assertion passes.

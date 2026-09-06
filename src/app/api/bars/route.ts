@@ -2,11 +2,20 @@ import { getTimeframeBars, type Kind } from "@/lib/providers/vnstock";
 import { timeframe } from "@/lib/chart/timeframes";
 import { can } from "@/lib/auth/entitlement";
 import { getSession } from "@/lib/auth/session";
+import { clientIp, createLimiter } from "@/lib/rate-limit";
 import { fail, ok, okPrivate } from "@/lib/api";
 
 export const revalidate = 0;
 
+/**
+ * Headroom for the polling refresh (one call per 30s per open chart) and a
+ * multi-chart grid reloading, while still bounding a bulk history crawl. Applied
+ * before the session read so an unauthenticated flood costs no cookie work.
+ */
+const limited = createLimiter({ windowMs: 60_000, max: 120 });
+
 export async function GET(req: Request) {
+  if (limited(clientIp(req))) return fail(new Error("rate limited"), 429);
   const p = new URL(req.url).searchParams;
   const symbol = p.get("symbol");
   if (!symbol) return fail(new Error("symbol is required"), 400);

@@ -15,6 +15,7 @@ import {
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { useStored, writeStored } from "@/lib/browser-store";
+import { track } from "@/lib/analytics/posthog";
 import type { Bar, Locale, Tier } from "@/lib/types";
 
 type ChartType = "candle" | "line" | "area";
@@ -189,14 +190,34 @@ export function ChartPro({
     };
   }, [allPlots, wStart, wEnd]);
 
+  // Mirrors `active` so the refused paths are observable — a gate we cannot
+  // count is a gate we cannot price — without the stale-closure hazard that
+  // reading the state variable directly would bring. Advancing the ref before
+  // `setActive` keeps two clicks landing in one render batch composing, which is
+  // the property the functional updater used to provide.
+  const activeRef = useRef(active);
+  // Synced after commit, never during render (a render-phase ref write is not a
+  // legal read/write point and the linter rejects it). A click handler always
+  // runs after the commit that produced the DOM it fired on, so the ref it reads
+  // is the committed set.
+  useEffect(() => { activeRef.current = active; }, [active]);
+
   const toggle = useCallback((def: IndicatorDef) => {
-    if (!def.free && !unlocked) return;
-    setActive((prev) => {
-      if (prev.includes(def.id)) return prev.filter((x) => x !== def.id);
-      if (prev.length >= limit) return prev; // at the tier's ceiling
-      return [...prev, def.id];
-    });
-  }, [limit, unlocked]);
+    if (!def.free && !unlocked) {
+      track("chart_limit_hit", { gate: "indicator", reason: "locked", id: def.id, tier, limit });
+      return;
+    }
+    const prev = activeRef.current;
+    const on = prev.includes(def.id);
+    if (!on && prev.length >= limit) {
+      track("chart_limit_hit", { gate: "indicator", reason: "limit", id: def.id, tier, limit });
+      return; // at the tier's ceiling
+    }
+    const next = on ? prev.filter((x) => x !== def.id) : [...prev, def.id];
+    activeRef.current = next;
+    setActive(next);
+    track("chart_indicator_toggled", { id: def.id, on: !on, active_count: next.length, limit, tier });
+  }, [limit, unlocked, tier]);
 
   const PAD = { left: 6, right: 58 };
   const plotW = width - PAD.left - PAD.right;
@@ -548,7 +569,7 @@ function Toolbar({
     <div className="relative -mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0">
       <div role="group" aria-label={dict.chart.type} className="flex shrink-0 rounded border border-line">
         {(["candle", "line", "area"] as ChartType[]).map((t) => (
-          <button key={t} type="button" onClick={() => setType(t)} aria-pressed={type === t}
+          <button key={t} type="button" onClick={() => { setType(t); track("chart_type_changed", { type: t }); }} aria-pressed={type === t}
             className={`${seg} first:rounded-l last:rounded-r ${type === t ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}>
             {dict.chart[t]}
           </button>

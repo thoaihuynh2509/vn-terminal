@@ -386,7 +386,15 @@ try {
 
   if (mode === "actions") {
     const results = [];
-    const check = (name, pass, detail = "") => results.push({ name, pass: pass ? "PASS" : "FAIL", detail });
+    // Streamed, not just collected: the summary table only prints after the last
+    // check, so a step that stalls leaves no way to tell which one it was — the
+    // whole run just looks hung. One line per check makes the suite debuggable
+    // and shows a failure the moment it happens.
+    const check = (name, pass, detail = "") => {
+      const row = { name, pass: pass ? "PASS" : "FAIL", detail };
+      results.push(row);
+      console.log(`  ${row.pass === "PASS" ? "✓" : "✗"} ${name}${detail ? ` — ${detail}` : ""}`);
+    };
 
     // Hermetic start — the Chrome profile dir persists between runs. The
     // watchlist checks below assert the anonymous round trip, so the session
@@ -443,8 +451,18 @@ try {
     await s.goto(BASE + "/vi/chung-khoan/VNM", { scheme: "light" });
     const hasSvg = await s.evaluate("!!document.querySelector('svg[role=img]')");
     check("price chart renders", hasSvg === true);
-    const candles = await s.evaluate("document.querySelectorAll('svg[role=img] rect').length");
-    check("candles drawn", candles > 20, `${candles} rects`);
+    // This route permanently redirects to the terminal, so the chart here is
+    // ChartPro, which batches candle bodies into paths. The old `rect` count was
+    // written for PriceChart (still rect-based, but only used by the crypto
+    // detail page) and could not pass once the two symbol pages were merged.
+    const candles = await s.evaluate(`(() => {
+      const pane = document.querySelector('svg[role=img]');
+      if (!pane) return 0;
+      return [...pane.querySelectorAll('path')]
+        .filter(p => /Z/.test(p.getAttribute('d') || ''))
+        .reduce((n, p) => n + ((p.getAttribute('d').match(/M/g) || []).length), 0);
+    })()`);
+    check("candles drawn", candles > 20, `${candles} candles`);
     await s.evaluate(`(()=>{const s=document.querySelector('svg[role=img]');s.focus();s.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));})()`);
     await sleep(300);
     const crosshair = await s.evaluate(`!!document.querySelector('[role=status]')`);
@@ -461,17 +479,25 @@ try {
     const paths = await s.evaluate("document.querySelectorAll('svg[role=img] path').length");
     check("line mode draws a path", paths >= 1, `${paths} paths`);
 
-    // ── grouped nav dropdown ──────────────────────────────────────
-    await s.goto(BASE + "/vi", { scheme: "light" });
-    const closed = await s.evaluate(`document.querySelector('header nav button[aria-expanded]')?.getAttribute('aria-expanded')`);
-    await s.evaluate(`document.querySelector('header nav button[aria-expanded]').click()`);
+    // ── disclosure: the chart's interval menu ─────────────────────
+    // This was the header's grouped-nav dropdown, which no longer exists — the
+    // header renders flat links. `querySelector` returned null, `.click()` threw,
+    // and every check below this point silently never ran. Retargeted at a
+    // disclosure that does exist, and every call is null-safe so the next removal
+    // records a FAIL row instead of aborting the suite.
+    await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
+    const DISC = 'button[aria-haspopup="menu"][aria-expanded]';
+    const readDisc = () =>
+      s.evaluate(`document.querySelector('${DISC}')?.getAttribute('aria-expanded') ?? 'missing'`);
+    const closed = await readDisc();
+    await s.evaluate(`document.querySelector('${DISC}')?.click()`);
     await sleep(250);
-    const opened = await s.evaluate(`document.querySelector('header nav button[aria-expanded]')?.getAttribute('aria-expanded')`);
-    check("nav dropdown opens", closed === "false" && opened === "true", `${closed} → ${opened}`);
+    const opened = await readDisc();
+    check("interval menu opens", closed === "false" && opened === "true", `${closed} → ${opened}`);
     await s.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
     await sleep(250);
-    const afterEsc = await s.evaluate(`document.querySelector('header nav button[aria-expanded]')?.getAttribute('aria-expanded')`);
-    check("nav dropdown closes on Escape", afterEsc === "false", String(afterEsc));
+    const afterEsc = await readDisc();
+    check("interval menu closes on Escape", afterEsc === "false", String(afterEsc));
 
     // ── the assistant is gated, so authenticate first ─────────────
     // Built with the server's real signing secret; a fabricated cookie would be
@@ -551,12 +577,29 @@ try {
     })()`);
     check("every visible bar is drawn as a candle", termCandles > 50, `${termCandles} candles`);
 
-    const clickInd = async (short) =>
-      s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(short)})?.click()`);
-    await clickInd("RSI"); await sleep(400);
+    // Open the menu, then match the item by its LABEL. This used to look for a
+    // button whose whole text was "RSI"; the menu was closed after the goto, and
+    // the item's text is label+short ("RSI (14)RSI"), so it matched nothing and
+    // `?.click()` silently did nothing — the check could never have passed.
+    // Target the indicator menu by name: the toolbar has more than one
+    // `aria-haspopup="menu"` button and the first one is the interval list, so a
+    // positional selector opened the wrong menu and found no checkboxes.
+    const clickInd = async (label) => {
+      await s.evaluate(`(() => {
+        const b = [...document.querySelectorAll('button[aria-haspopup="menu"]')]
+          .find(x => x.textContent.includes('Chỉ báo'));
+        if (b && b.getAttribute('aria-expanded') === 'false') b.click();
+      })()`);
+      await sleep(150);
+      return s.evaluate(
+        `[...document.querySelectorAll('[role=menuitemcheckbox]')]` +
+        `.find(b => b.textContent.trim().startsWith(${JSON.stringify(label)}))?.click()`,
+      );
+    };
+    await clickInd("RSI (14)"); await sleep(400);
     const afterRsi = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("adding an oscillator adds a pane", afterRsi > panesBefore, `${panesBefore} → ${afterRsi}`);
-    await clickInd("RSI"); await sleep(400);
+    await clickInd("RSI (14)"); await sleep(400);
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
@@ -702,7 +745,11 @@ try {
 
       // THE regression this guards: the alert price field is on this page, and a
       // shortcut that ignores focus changes the chart every time you type a price.
-      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      // `?rail=alerts` is required: the rail opens on the watchlist tab, so
+      // #alert-price was not in the DOM at all, `?.focus()` was a no-op, and the
+      // keystrokes went to the chart — the check reported the regression it
+      // guards against even when the guard was working.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&rail=alerts", { scheme: "light" });
       await s.evaluate(`document.querySelector('#alert-price')?.focus()`);
       await press("1"); await press("5"); await press("m"); await sleep(800);
       check("typing in the alert field does not move the chart", (await tfNow()) === "1D", String(await tfNow()));
@@ -1010,12 +1057,17 @@ try {
 
       // ── price alerts ────────────────────────────────────────────
       await s.evaluate("localStorage.removeItem('alerts')");
-      await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
+      // The rail opens on the watchlist tab, so the alert form is not mounted
+      // without `?rail=alerts`. `#alert-price` was null and the very next
+      // evaluate called a setter against it — "Illegal invocation", which threw
+      // out of the whole run rather than failing one check.
+      await s.goto(BASE + "/vi/bieu-do/VNM?rail=alerts", { scheme: "light" });
       const hasForm = await s.evaluate(`!!document.querySelector('#alert-price')`);
       check("pro can create alerts", hasForm === true);
 
       await s.evaluate(`(() => {
         const i = document.querySelector('#alert-price');
+        if (!i) return;
         const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
         set.call(i, '999');
         i.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1048,10 +1100,14 @@ try {
 
     // ── heatmap ───────────────────────────────────────────────────
     await s.goto(BASE + "/vi/ban-do-nhiet", { scheme: "light" });
-    const tiles = await s.evaluate(`document.querySelectorAll('main a[href*="/chung-khoan/"]').length`);
+    // Tiles link to the terminal (`PATHS.terminal`), not `/chung-khoan/` — the
+    // symbol page was merged into the chart and now permanently redirects, so
+    // the old selector matched nothing and reported an empty heatmap.
+    const TILE = 'main a[href*="/bieu-do/"]';
+    const tiles = await s.evaluate(`document.querySelectorAll('${TILE}').length`);
     check("heatmap renders tiles", tiles >= 10, `${tiles} tiles`);
     const pctOnTiles = await s.evaluate(`(() => {
-      const t = [...document.querySelectorAll('main a[href*="/chung-khoan/"]')].map(a => a.innerText);
+      const t = [...document.querySelectorAll('${TILE}')].map(a => a.innerText);
       return t.filter(x => /%/.test(x)).length;
     })()`);
     check("heatmap tiles print their percentage", pctOnTiles > 0, `${pctOnTiles} labelled`);

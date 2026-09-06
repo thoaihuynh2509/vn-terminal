@@ -32,6 +32,10 @@ export async function PricingView({ locale }: { locale: Locale }) {
   const TIERS = ["free", "plus", "pro"] as const;
   const features: { label: string; values: (string | boolean)[] }[] = [
     { label: dict.pricing.fCharts, values: TIERS.map((t) => can(t, "chart:basic")) },
+    // Intraday is enforced in three places (the bars API, the timeframe picker
+    // and the server-side downgrade) but was missing from the matrix, so the one
+    // gate a reader is most likely to hit was also the one we never advertised.
+    { label: dict.pricing.fIntraday, values: TIERS.map((t) => can(t, "chart:intraday")) },
     { label: dict.pricing.fIndicators, values: TIERS.map((t) => String(INDICATOR_LIMIT[t])) },
     { label: dict.pricing.fLibrary, values: TIERS.map((t) => can(t, "chart:indicators")) },
     { label: dict.pricing.fWatchlist, values: TIERS.map((t) => can(t, "save:watchlist")) },

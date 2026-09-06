@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChartPro } from "@/components/chart/ChartPro";
 import { ChartRail } from "@/components/chart/ChartRail";
+import { ChartViewed } from "@/components/chart/ChartViewed";
 import { PageHeader } from "@/components/editorial";
 import { FeedBanner } from "@/components/FeedBanner";
 import { PageShell } from "@/components/layout";
+import { LiveStamp } from "@/components/LiveStamp";
 import { SymbolSearchButton } from "@/components/SymbolSearch";
 import { WatchButton } from "@/components/WatchButton";
 import { Delta } from "@/components/Delta";
@@ -133,6 +135,10 @@ export async function TerminalView({
         />
       }
     >
+      <ChartViewed
+        symbol={sym} tf={view.id} intraday={!!view.intraday} layout={cells}
+        tier={tier} hasCmp={!!compare} hasFr={!!foreign}
+      />
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -141,6 +147,9 @@ export async function TerminalView({
             <SymbolSearchButton label={dict.chart.changeSymbol} compact />
           </div>
           <p className="mt-0.5 text-[12px] text-muted">HOSE · {dict.common.unit}: {dict.common.thousandVnd}</p>
+          {/* Session-aware: the chart was the one live surface with no refresh at
+              all, but it must not pulse "live" at a price frozen since 15:00. */}
+          <div className="mt-1"><LiveStamp locale={locale} sessionAware /></div>
         </div>
         <div className="text-right">
           <div className="text-[30px] font-semibold leading-none tracking-tight">{equityPrice(last.c, locale)}</div>

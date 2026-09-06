@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { can } from "@/lib/auth/entitlement";
 import { byGroup, GROUPS, isCustom, parseCustom, timeframe, TIMEFRAMES, type TfGroup, type Timeframe } from "@/lib/chart/timeframes";
 import { isBufferKey, isEditable, resolveTyped, stepTimeframe } from "@/lib/chart/tf-keys";
+import { track } from "@/lib/analytics/posthog";
 import type { Dict } from "@/lib/i18n";
 import type { Tier } from "@/lib/types";
 
@@ -144,6 +145,7 @@ export function TimeframePicker({
               </span>
             ) : (
               <Link key={t.id} href={href(t.id)} aria-current={on ? "page" : undefined}
+                onClick={() => { if (!on) track("chart_tf_changed", { from: active.id, to: t.id, intraday: !!t.intraday }); }}
                 className={`${seg} tnum first:rounded-l ${
                   on ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
                 }`}>
