@@ -14,6 +14,7 @@ import { activeProvider } from "@/lib/ask/provider";
 import { equityPrice } from "@/lib/format";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
 import { BAND, getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
+import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { TimeframePicker } from "@/components/chart/TimeframePicker";
@@ -27,7 +28,7 @@ import type { Locale } from "@/lib/types";
  * is never client-supplied.
  */
 export async function TerminalView({
-  locale, symbol, extra = [], layout = 1, tf, rail, cmp = false,
+  locale, symbol, extra = [], layout = 1, tf, rail, cmp = false, fr = false,
 }: {
   locale: Locale;
   symbol: string;
@@ -40,6 +41,8 @@ export async function TerminalView({
   rail?: string;
   /** Overlay VNINDEX for relative strength (`?cmp=1`). Gated to Plus. */
   cmp?: boolean;
+  /** Foreign net buy/sell pane (`?fr=1`), from SSI FastConnect. Gated to Plus. */
+  fr?: boolean;
 }) {
   const dict = getDict(locale);
   const sym = symbol.toUpperCase();
@@ -105,6 +108,21 @@ export async function TerminalView({
     }
   }
 
+  // Foreign net buy/sell (khối ngoại) from SSI FastConnect — daily only, gated
+  // to Plus, and only offered when the owner has wired SSI credentials. Aligned
+  // to the bars by trading DAY (sources keep different epochs for the same day).
+  const foreignReady = foreignFlowAvailable();
+  let foreign: CompareSeries | null = null;
+  if (fr && canCompare && foreignReady && !view.intraday) {
+    const flow = await getForeignFlow(sym, 250).catch(() => []);
+    if (flow.length) {
+      const byDate = new Map(flow.map((f) => [f.date, f.netVal]));
+      const isoDay = (t: number) =>
+        new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(t * 1000));
+      foreign = { label: dict.chart.foreignPane, series: bars.map((b) => byDate.get(isoDay(b.t)) ?? null) };
+    }
+  }
+
   return (
     <PageShell
       rail={
@@ -142,14 +160,21 @@ export async function TerminalView({
         <LayoutSwitcher locale={locale} dict={dict} symbol={sym} extra={extra} layout={cells} multi={multi} tf={view.id} />
         <CompareToggle
           locale={locale} dict={dict} symbol={sym} tf={view.id}
-          on={!!compare} canCompare={canCompare}
+          on={!!compare} canCompare={canCompare} frOn={!!foreign}
           extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
         />
+        {foreignReady && !view.intraday && (
+          <ForeignToggle
+            locale={locale} dict={dict} symbol={sym} tf={view.id}
+            on={!!foreign} canForeign={canCompare} cmpOn={!!compare}
+            extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
+          />
+        )}
       </div>
 
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} />
+          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
@@ -223,11 +248,12 @@ function LayoutSwitcher({
  * that upsells rather than a control that 402s.
  */
 function CompareToggle({
-  locale, dict, symbol, tf, on, canCompare, extraQuery,
+  locale, dict, symbol, tf, on, canCompare, frOn, extraQuery,
 }: {
-  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canCompare: boolean; extraQuery: string;
+  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canCompare: boolean; frOn: boolean; extraQuery: string;
 }) {
-  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}`;
+  // Preserve the foreign-flow flag so the two overlays are independent toggles.
+  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}${frOn ? "&fr=1" : ""}`;
   if (!canCompare) {
     return (
       <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.compareLock}
@@ -245,6 +271,34 @@ function CompareToggle({
       }`}
     >
       {on ? dict.chart.compareOff : dict.chart.compareOn}
+    </Link>
+  );
+}
+
+/** Foreign net buy/sell pane toggle (?fr=1). Same URL-driven, gated pattern. */
+function ForeignToggle({
+  locale, dict, symbol, tf, on, canForeign, cmpOn, extraQuery,
+}: {
+  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canForeign: boolean; cmpOn: boolean; extraQuery: string;
+}) {
+  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}${cmpOn ? "&cmp=1" : ""}`;
+  if (!canForeign) {
+    return (
+      <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.foreignLock}
+        className="text-[11px] font-medium text-accent hover:underline">
+        🔒 {dict.chart.foreignOn} →
+      </Link>
+    );
+  }
+  return (
+    <Link
+      href={on ? base : `${base}&fr=1`}
+      aria-pressed={on}
+      className={`rounded border px-2.5 py-1 text-[12px] font-medium ${
+        on ? "border-accent bg-accent text-page" : "border-line text-ink-2 hover:text-ink"
+      }`}
+    >
+      {on ? dict.chart.foreignOff : dict.chart.foreignOn}
     </Link>
   );
 }

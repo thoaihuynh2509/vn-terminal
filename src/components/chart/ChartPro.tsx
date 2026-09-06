@@ -67,6 +67,7 @@ export function ChartPro({
   intraday = false,
   refLines = [],
   compare = null,
+  foreign = null,
 }: {
   bars: Bar[];
   symbol: string;
@@ -82,6 +83,8 @@ export function ChartPro({
   /** A second series (e.g. VNINDEX) drawn as a normalised shape for relative
    *  strength. Isolated from the price scale — it never moves the candles. */
   compare?: CompareSeries | null;
+  /** Foreign net buy/sell per bar (VND), drawn as signed bars in its own pane. */
+  foreign?: CompareSeries | null;
 }) {
   const [type, setType] = useState<ChartType>("candle");
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
@@ -142,6 +145,10 @@ export function ChartPro({
   const compareView = useMemo(
     () => (compare ? compare.series.slice(wStart, wEnd) : null),
     [compare, wStart, wEnd],
+  );
+  const foreignView = useMemo(
+    () => (foreign ? foreign.series.slice(wStart, wEnd) : null),
+    [foreign, wStart, wEnd],
   );
   const canPan = range > 0 && range < bars.length;
   const drag = useRef<{ x: number; offset: number; moved: boolean } | null>(null);
@@ -498,6 +505,12 @@ export function ChartPro({
             onMove={onMove} onLeave={() => setHover(null)} onKey={onKey} onUp={onUp} canPan={canPan}
           />
           <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday} locale={locale} />
+          {foreignView && (
+            <ForeignPane
+              view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday}
+              net={foreignView} label={foreign?.label ?? "Khối ngoại"} locale={locale}
+            />
+          )}
           {computed.panes.map(({ def, plots }) => (
             <OscillatorPane
               intraday={intraday}
@@ -909,6 +922,42 @@ function VolumePane({ view, width, band, x, PAD, hover, locale }: PaneGeom & { l
       })()}
       {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
       <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">VOL {fmtVol(maxV, locale)}</text>
+    </svg>
+  );
+}
+
+/**
+ * Foreign net buy/sell (khối ngoại), one signed bar per session about a zero
+ * line: green above for a net-buy day, red below for a net-sell day. Its own
+ * pane and its own scale — it never touches price. A missing session (null)
+ * simply has no bar; nothing is drawn as a fake zero.
+ */
+function ForeignPane({
+  width, band, x, PAD, hover, net, label,
+}: PaneGeom & { net: (number | null)[]; label: string; locale: Locale }) {
+  const H = 54;
+  const mid = H / 2;
+  const vals = net.filter((v): v is number => v !== null);
+  const maxAbs = Math.max(1, ...vals.map((v) => Math.abs(v)));
+  const bw = Math.max(1, Math.min(band * 0.62, 14));
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="block">
+      <line x1={PAD.left} x2={PAD.left + (width - PAD.left - PAD.right)} y1={mid} y2={mid} stroke="var(--grid)" strokeWidth={1} />
+      {net.map((v, i) => {
+        if (v === null || v === 0) return null;
+        const h = (Math.abs(v) / maxAbs) * (mid - 6);
+        const up = v > 0;
+        return (
+          <rect
+            key={i}
+            x={x(i) - bw / 2} width={bw}
+            y={up ? mid - h : mid} height={h}
+            className={up ? "text-up" : "text-down"} fill="currentColor" opacity={0.55}
+          />
+        );
+      })}
+      {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+      <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
     </svg>
   );
 }
