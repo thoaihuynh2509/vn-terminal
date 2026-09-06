@@ -1,5 +1,7 @@
+import { notFound } from "next/navigation";
 import { CoinDetail } from "@/views/CoinDetail";
 import { guard } from "@/views/guard";
+import { cryptoEnabled } from "@/lib/flags";
 
 export const revalidate = 300;
 
@@ -10,5 +12,6 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function Page({ params }: { params: Promise<{ locale: string; id: string }> }) {
   const { locale, id } = await params;
+  if (!cryptoEnabled()) notFound();
   return <CoinDetail locale={guard(locale, "crypto", "crypto")} id={id} />;
 }

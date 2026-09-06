@@ -21,7 +21,12 @@ export async function PricingView({ locale }: { locale: Locale }) {
   // The reader's own referral code, to share. Read only when signed in.
   let referralCode: string | null = null;
   if (session?.email && dbAvailable()) {
-    referralCode = (await (await getDb()).users.findByEmail(session.email))?.referralCode ?? null;
+    try {
+      referralCode = (await (await getDb()).users.findByEmail(session.email))?.referralCode ?? null;
+    } catch {
+      // A DB hiccup must not take down the pricing page; the share link is a nicety.
+      referralCode = null;
+    }
   }
 
   const TIERS = ["free", "plus", "pro"] as const;

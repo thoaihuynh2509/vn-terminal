@@ -10,6 +10,7 @@ import { WatchlistSync } from "@/components/WatchlistSync";
 import { Analytics } from "@/components/Analytics";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { getSession } from "@/lib/auth/session";
+import { cryptoEnabled } from "@/lib/flags";
 import { VN30 } from "@/lib/providers/vnstock";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://vn-terminal.vercel.app";
@@ -73,7 +74,7 @@ export default async function LocaleLayout({
         >
           {locale === "vi" ? "Tới nội dung chính" : "Skip to content"}
         </a>
-        <Header locale={locale} dict={dict} email={session?.email ?? null} tier={session?.tier ?? "anon"} symbols={[...VN30]} />
+        <Header locale={locale} dict={dict} email={session?.email ?? null} tier={session?.tier ?? "anon"} symbols={[...VN30]} cryptoEnabled={cryptoEnabled()} />
         <TickerStrip locale={locale} />
         <WatchlistSync email={session?.email ?? null} />
         <Analytics />

@@ -21,6 +21,7 @@ import { buildBrief } from "@/lib/brief";
 import { dirOf, equityPrice, num, pct } from "@/lib/format";
 import { getDict, href, isLocale, PATHS } from "@/lib/i18n";
 import { getCoins } from "@/lib/providers/crypto";
+import { cryptoEnabled } from "@/lib/flags";
 import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBoard, getIndexSparks, getIndices } from "@/lib/providers/vnstock";
 import type { Locale, Quote } from "@/lib/types";
@@ -51,7 +52,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const session = await getSession();
 
   const [indicesR, boardR, goldR, coinsR] = await Promise.allSettled([
-    getIndices(), getBoard(), getGold(), getCoins(20),
+    getIndices(), getBoard(), getGold(), cryptoEnabled() ? getCoins(20) : Promise.resolve([]),
   ]);
   const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
   const board = boardR.status === "fulfilled" ? boardR.value : [];
