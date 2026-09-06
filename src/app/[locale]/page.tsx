@@ -4,6 +4,7 @@ import { AskBox } from "@/components/AskBox";
 import { BreadthBar } from "@/components/BreadthBar";
 import { Delta } from "@/components/Delta";
 import { LiveStamp } from "@/components/LiveStamp";
+import { OnboardingWatchlist } from "@/components/OnboardingWatchlist";
 import { FeedBanner } from "@/components/FeedBanner";
 import { Heatmap, HeatmapLegend } from "@/components/Heatmap";
 import { QuoteTable } from "@/components/QuoteTable";
@@ -139,6 +140,9 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
           )}
         </div>
       )}
+
+      {/* First-visit activation: pick a few symbols → the watchlist loop starts now. */}
+      <OnboardingWatchlist dict={dict} />
 
       {/* Signed-in personalisation, up top: the reader's own board comes first. */}
       {watch.length > 0 && (

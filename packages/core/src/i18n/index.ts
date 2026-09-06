@@ -99,6 +99,10 @@ const vi = {
     saveCta: "Đăng nhập miễn phí",
     saveCta2: "Xem gói dịch vụ",
     yourWatch: "Danh mục theo dõi của bạn",
+    onboardTitle: "Chọn vài mã để bắt đầu",
+    onboardSub: "Thêm vào danh mục theo dõi để xem nhanh biến động và nhận cảnh báo — lưu ngay trên trình duyệt, đăng nhập để đồng bộ mọi thiết bị.",
+    onboardAdd: "Thêm vào danh mục",
+    onboardSkip: "Để sau",
   },
 
   stocks: {
@@ -531,6 +535,10 @@ const en: typeof vi = {
     saveCta: "Sign in — free",
     saveCta2: "See plans",
     yourWatch: "Your watchlist",
+    onboardTitle: "Pick a few to get started",
+    onboardSub: "Add them to your watchlist to track at a glance and get alerts — saved in this browser, sign in to sync across devices.",
+    onboardAdd: "Add to watchlist",
+    onboardSkip: "Maybe later",
   },
 
   stocks: {
