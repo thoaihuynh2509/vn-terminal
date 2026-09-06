@@ -91,7 +91,7 @@ export function LoginForm({
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         className="mt-1.5 w-full rounded border border-line bg-surface px-3 py-2 text-[14px] text-ink placeholder:text-muted"
-        placeholder="ban@example.com"
+        placeholder={dict.auth.emailPlaceholder}
       />
 
       {provider === "dev" && (

@@ -11,6 +11,19 @@ export function ok<T>(data: T, sMaxAge = 60) {
   );
 }
 
+/**
+ * Same envelope, but never shared. Use for a response whose contents depend on
+ * the reader's tier/session: a `public` cache keyed on the URL alone would let
+ * one entitled request populate the edge and serve the paid payload to everyone
+ * after it. `private, no-store` keeps a gated response off the shared cache.
+ */
+export function okPrivate<T>(data: T) {
+  return NextResponse.json(
+    { ok: true as const, data, at: new Date().toISOString() },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
+}
+
 export function fail(err: unknown, status = 502) {
   const message = err instanceof Error ? err.message : "unknown error";
   // Upstream detail is safe here (public endpoints, no credentials) and makes

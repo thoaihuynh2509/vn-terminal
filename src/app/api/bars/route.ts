@@ -2,7 +2,7 @@ import { getTimeframeBars, type Kind } from "@/lib/providers/vnstock";
 import { timeframe } from "@/lib/chart/timeframes";
 import { can } from "@/lib/auth/entitlement";
 import { getSession } from "@/lib/auth/session";
-import { fail, ok } from "@/lib/api";
+import { fail, ok, okPrivate } from "@/lib/api";
 
 export const revalidate = 0;
 
@@ -23,7 +23,10 @@ export async function GET(req: Request) {
     const bars = await getTimeframeBars(symbol, asked, {
       kind: (p.get("kind") as Kind) === "index" ? "index" : "stock",
     });
-    return ok(bars, 60);
+    // Intraday is a PAID, tier-gated payload — it must never reach a shared edge
+    // cache, or an anon request for the same URL is served the paid data and the
+    // 402 above never runs. Daily bars are ungated and stay publicly cacheable.
+    return asked.intraday ? okPrivate(bars) : ok(bars, 60);
   } catch (e) {
     return fail(e);
   }

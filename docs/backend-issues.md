@@ -22,7 +22,9 @@ Each entry: what · where · symptom · evidence · date · status.
 - **Suggested fix:** return intraday responses with `Cache-Control: private, no-store` — the pattern
   `src/app/api/watchlist/route.ts:19` already uses — or put the tier in the cache key and add
   `Vary: Cookie`. The first is safer.
-- **Status:** OPEN. Material to monetisation: it gives away the exact surface the paid tiers sell.
+- **Status:** FIXED 2026-09-06. `/api/bars` returns `okPrivate` (private, no-store) for
+  intraday timeframes, so the gated payload never populates the shared edge cache; daily
+  (ungated) bars stay publicly cacheable.
 
 ## 2026-09-05 — `getSession()` in the locale layout makes all 49 routes dynamic
 
@@ -55,7 +57,8 @@ Each entry: what · where · symptom · evidence · date · status.
   states without exception. It renders the Vietnamese-flavoured `ban@` on `/en/login`.
 - **Evidence:** `review-conventions`, 2026-09-05. Confirmed pre-existing by the orchestrator: the
   file read at session start, before any edit, already contained this placeholder.
-- **Status:** OPEN, nit.
+- **Status:** PARTIAL 2026-09-06. Email placeholder now localized via `dict.auth.emailPlaceholder`;
+  the dev-only tier buttons still render raw `free/plus/pro` (dev provider never runs in prod).
 
 ## 2026-09-05 — A magic-link ceiling can lock one account out of sign-in for an hour
 
