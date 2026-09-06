@@ -61,8 +61,14 @@ every secret in **Vercel → Project → Settings → Environment Variables**
 ## 5. Scheduled jobs (Vercel Cron) — retention
 - [ ] **`CRON_SECRET`** — `openssl rand -hex 32`. Vercel sends it as the cron Bearer;
       without it the cron routes answer 501 (never open).
-- [ ] Confirm `vercel.json` crons are present: `/api/cron/alerts` (market hours),
-      `/api/cron/brief`, `/api/cron/renewals`, `/api/cron/teaser`. Times are **UTC**.
+- [ ] Confirm `vercel.json` crons are present: `/api/cron/alerts`, `/api/cron/brief`,
+      `/api/cron/renewals`, `/api/cron/teaser`. Times are **UTC**.
+- [ ] **Vercel plan note**: Hobby (free) allows each cron **at most once per day**.
+      `vercel.json` is set to comply — price alerts run once, at 15:30 ICT (after
+      close). For **15-minute** alerting either upgrade to **Pro** and change the
+      alerts schedule back to `*/15 2-8 * * 1-5`, or keep Hobby and hit
+      `/api/cron/alerts` from an **external scheduler** (cron-job.org, GitHub
+      Actions…) every 15 min with header `Authorization: Bearer $CRON_SECRET`.
 - [ ] Verify after deploy: `curl -H "Authorization: Bearer $CRON_SECRET"
       $SITE/api/cron/renewals` → `{ok:true,...}`; no header → 401; no secret → 501.
 
