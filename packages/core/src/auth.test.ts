@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { can, atLeast, capabilitiesFor, INDICATOR_LIMIT } from "./auth/entitlement.ts";
+import { can, atLeast, capabilitiesFor, ALERT_LIMIT, DRAWING_LIMIT, INDICATOR_LIMIT, LAYOUT_LIMIT } from "./auth/entitlement.ts";
 
 test("anonymous readers cannot reach paid capabilities", () => {
   assert.equal(can("anon", "chart:basic"), true);
@@ -16,11 +16,51 @@ test("plus and pro unlock the assistant and the indicator library", () => {
   }
 });
 
-test("only pro gets multi-chart layouts and drawings", () => {
+test("only pro gets multi-chart layouts", () => {
   assert.equal(can("pro", "chart:multi"), true);
   assert.equal(can("plus", "chart:multi"), false);
-  assert.equal(can("pro", "chart:drawings"), true);
-  assert.equal(can("plus", "chart:drawings"), false);
+});
+
+// The retention thesis, expressed as assertions: a reader must be able to leave
+// something behind on the free tier, because a reader who never returns never
+// buys. What is sold is depth, reach and portability — not the first drawing.
+test("free may draw and set alerts — the artifacts that bring a reader back", () => {
+  assert.equal(can("free", "chart:drawings"), true);
+  assert.equal(can("free", "alerts:create"), true);
+  assert.equal(can("anon", "chart:drawings"), false, "there is no account to save against");
+  assert.equal(can("anon", "alerts:create"), false);
+});
+
+test("free alerts stay in the tab: delivery and sync are the paid line", () => {
+  assert.equal(can("free", "alerts:email"), false, "email is the Plus upsell, not the alert");
+  assert.equal(can("free", "sync:docs"), false, "free work lives on one device");
+  for (const t of ["plus", "pro"] as const) {
+    assert.equal(can(t, "alerts:email"), true);
+    assert.equal(can(t, "sync:docs"), true);
+  }
+});
+
+// Guards a live paywall hole: the alert cron used to gate delivery on
+// `alerts:create`. The moment free gained that capability, every free account
+// would have been emailed. Delivery must key on `alerts:email` alone.
+test("creating an alert never by itself implies being emailed one", () => {
+  const canCreateButNotEmail = (["free"] as const).every(
+    (t) => can(t, "alerts:create") && !can(t, "alerts:email"),
+  );
+  assert.ok(canCreateButNotEmail, "free is exactly the tier that separates the two");
+});
+
+test("drawing and alert budgets increase with tier, and anon has none", () => {
+  const order = ["anon", "free", "plus", "pro"] as const;
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(DRAWING_LIMIT[order[i]] > DRAWING_LIMIT[order[i - 1]], "drawings");
+    assert.ok(ALERT_LIMIT[order[i]] >= ALERT_LIMIT[order[i - 1]], "alerts");
+    assert.ok(LAYOUT_LIMIT[order[i]] >= LAYOUT_LIMIT[order[i - 1]], "saved setups");
+  }
+  assert.equal(DRAWING_LIMIT.anon, 0);
+  assert.equal(ALERT_LIMIT.anon, 0);
+  assert.equal(LAYOUT_LIMIT.anon, 0);
+  assert.ok(LAYOUT_LIMIT.free >= 1, "free must be able to save one setup to have something to return to");
 });
 
 test("indicator limits increase strictly with tier", () => {

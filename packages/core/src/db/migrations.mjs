@@ -90,4 +90,28 @@ ALTER TABLE users ADD COLUMN marketing_opt_out boolean NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN teaser_sent_at timestamptz;
 `,
   },
+  {
+    // One table for every saved chart artifact — drawings, layouts, indicator
+    // templates, chart settings — rather than four near-identical tables. They
+    // share a shape (a small per-user JSON blob addressed by a name) and a
+    // lifecycle, so they share storage; `kind` keeps them apart and lets a new
+    // artifact type ship without a migration.
+    //
+    // `version` is the optimistic-concurrency counter the sync uses to decide a
+    // last-write-wins conflict between two devices. `data` is jsonb so a future
+    // query can reach inside it; the app treats it as opaque.
+    id: "006_user_docs",
+    sql: `
+CREATE TABLE user_docs (
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind ~ '^[a-z][a-z0-9_]{0,31}$'),
+  key text NOT NULL CHECK (length(key) BETWEEN 1 AND 64),
+  data jsonb NOT NULL,
+  version integer NOT NULL DEFAULT 1 CHECK (version > 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, kind, key)
+);
+CREATE INDEX user_docs_user_kind_idx ON user_docs (user_id, kind);
+`,
+  },
 ];

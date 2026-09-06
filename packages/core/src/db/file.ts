@@ -15,7 +15,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PriceAlert } from "../alerts/alerts.ts";
-import type { Db, NewMagicToken, NewOrder, OrderRecord, OrderStatus, StoredTier, UserRecord } from "./types.ts";
+import type { Db, DocRecord, NewMagicToken, NewOrder, OrderRecord, OrderStatus, StoredTier, UserRecord } from "./types.ts";
 import { newReferralCode, normalizeCode } from "../billing/referral.ts";
 
 interface UserRow {
@@ -65,6 +65,25 @@ interface AlertRow {
   alert: PriceAlert;
 }
 
+interface DocRow {
+  userId: string;
+  kind: string;
+  key: string;
+  data: unknown;
+  version: number;
+  updatedAt: string;
+}
+
+/** Rows are handed out as copies: the store is a live object in this process,
+ *  and a caller mutating a returned doc would silently edit the database. */
+const toDoc = (r: DocRow): DocRecord => ({
+  kind: r.kind,
+  key: r.key,
+  data: structuredClone(r.data),
+  version: r.version,
+  updatedAt: new Date(r.updatedAt),
+});
+
 interface FileState {
   version: 1;
   users: UserRow[];
@@ -72,6 +91,7 @@ interface FileState {
   watchlistItems: WatchlistRow[];
   alerts: AlertRow[];
   orders: OrderRow[];
+  docs: DocRow[];
 }
 
 interface Store {
@@ -92,6 +112,7 @@ const empty = (): FileState => ({
   watchlistItems: [],
   alerts: [],
   orders: [],
+  docs: [],
 });
 
 function store(dir: string): Store {
@@ -137,6 +158,7 @@ async function load(s: Store): Promise<FileState> {
   // column are backfilled, not treated as a shape mismatch that wipes dev data.
   if (isFileState(parsed)) {
     parsed.orders ??= [];
+    parsed.docs ??= [];
     for (const u of parsed.users) {
       u.tierExpiresAt ??= null;
       u.renewalRemindedAt ??= null;
@@ -444,6 +466,53 @@ export async function createFileDb(dir: string): Promise<Db> {
           state.alerts = state.alerts.filter((a) => a.userId !== userId);
           for (const alert of alerts) state.alerts.push({ userId, alert: { ...alert } });
         }),
+    },
+
+    docs: {
+      list: (userId, kind) =>
+        withLock(s, false, (state) =>
+          state.docs
+            .filter((d) => d.userId === userId && d.kind === kind)
+            .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.key.localeCompare(b.key))
+            .map(toDoc),
+        ),
+
+      get: (userId, kind, key) =>
+        withLock(s, false, (state) => {
+          const row = state.docs.find((d) => d.userId === userId && d.kind === kind && d.key === key);
+          return row ? toDoc(row) : null;
+        }),
+
+      put: (userId, kind, key, data, now, ifVersion) =>
+        withLock(s, true, (state) => {
+          const row = state.docs.find((d) => d.userId === userId && d.kind === kind && d.key === key);
+          // A stale write loses and gets the current row back, so the caller can
+          // merge instead of overwriting another device's change.
+          if (ifVersion !== undefined && row && row.version !== ifVersion) {
+            return { saved: false, doc: toDoc(row) };
+          }
+          if (row) {
+            row.data = data;
+            row.version += 1;
+            row.updatedAt = now.toISOString();
+            return { saved: true, doc: toDoc(row) };
+          }
+          const fresh: DocRow = { userId, kind, key, data, version: 1, updatedAt: now.toISOString() };
+          state.docs.push(fresh);
+          return { saved: true, doc: toDoc(fresh) };
+        }),
+
+      remove: (userId, kind, key) =>
+        withLock(s, true, (state) => {
+          state.docs = state.docs.filter(
+            (d) => d.userId !== userId || d.kind !== kind || d.key !== key,
+          );
+        }),
+
+      count: (userId, kind) =>
+        withLock(s, false, (state) =>
+          state.docs.filter((d) => d.userId === userId && d.kind === kind).length,
+        ),
     },
   };
 }

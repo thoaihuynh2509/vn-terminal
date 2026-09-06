@@ -10,7 +10,7 @@
  */
 import postgres from "postgres";
 import type { PriceAlert } from "../alerts/alerts.ts";
-import type { Db, NewMagicToken, NewOrder, OrderRecord, OrderStatus, StoredTier, UserRecord } from "./types.ts";
+import type { Db, DocRecord, NewMagicToken, NewOrder, OrderRecord, OrderStatus, StoredTier, UserRecord } from "./types.ts";
 import { newReferralCode, normalizeCode } from "../billing/referral.ts";
 
 interface UserRow {
@@ -47,6 +47,14 @@ interface AlertRow {
   price: number;
   created_at: Date;
   triggered_at: Date | null;
+}
+
+interface DocRow {
+  kind: string;
+  key: string;
+  data: unknown;
+  version: number;
+  updated_at: Date;
 }
 
 type PgGlobal = typeof globalThis & { __vnt_pg?: { url: string; sql: postgres.Sql } };
@@ -96,6 +104,14 @@ const toAlert = (r: AlertRow): PriceAlert => ({
   price: r.price,
   createdAt: r.created_at.getTime(),
   ...(r.triggered_at ? { triggeredAt: r.triggered_at.getTime() } : {}),
+});
+
+const toDoc = (r: DocRow): DocRecord => ({
+  kind: r.kind,
+  key: r.key,
+  data: r.data,
+  version: r.version,
+  updatedAt: r.updated_at,
 });
 
 export async function createPostgresDb(url: string): Promise<Db> {
@@ -322,6 +338,62 @@ export async function createPostgresDb(url: string): Promise<Db> {
                       ${new Date(a.createdAt)}, ${a.triggeredAt ? new Date(a.triggeredAt) : null})`;
           }
         });
+      },
+    },
+
+    docs: {
+      async list(userId, kind) {
+        const rows = await sql<DocRow[]>`
+          SELECT kind, key, data, version, updated_at FROM user_docs
+          WHERE user_id = ${userId} AND kind = ${kind}
+          ORDER BY updated_at, key`;
+        return rows.map(toDoc);
+      },
+
+      async get(userId, kind, key) {
+        const [row] = await sql<DocRow[]>`
+          SELECT kind, key, data, version, updated_at FROM user_docs
+          WHERE user_id = ${userId} AND kind = ${kind} AND key = ${key}`;
+        return row ? toDoc(row) : null;
+      },
+
+      async put(userId, kind, key, data, now, ifVersion) {
+        // The guard is inside the UPDATE's WHERE, not a read-then-write: two
+        // devices saving at once would both pass a separate check and the second
+        // would still clobber the first.
+        const json = JSON.stringify(data);
+        if (ifVersion !== undefined) {
+          const [updated] = await sql<DocRow[]>`
+            UPDATE user_docs SET data = ${json}::jsonb, version = version + 1, updated_at = ${now}
+            WHERE user_id = ${userId} AND kind = ${kind} AND key = ${key} AND version = ${ifVersion}
+            RETURNING kind, key, data, version, updated_at`;
+          if (updated) return { saved: true, doc: toDoc(updated) };
+
+          // Either the row moved on (conflict) or it never existed (a first write
+          // that named a version). Hand back whatever is actually stored.
+          const [current] = await sql<DocRow[]>`
+            SELECT kind, key, data, version, updated_at FROM user_docs
+            WHERE user_id = ${userId} AND kind = ${kind} AND key = ${key}`;
+          if (current) return { saved: false, doc: toDoc(current) };
+        }
+
+        const [row] = await sql<DocRow[]>`
+          INSERT INTO user_docs (user_id, kind, key, data, version, updated_at)
+          VALUES (${userId}, ${kind}, ${key}, ${json}::jsonb, 1, ${now})
+          ON CONFLICT (user_id, kind, key) DO UPDATE
+            SET data = EXCLUDED.data, version = user_docs.version + 1, updated_at = EXCLUDED.updated_at
+          RETURNING kind, key, data, version, updated_at`;
+        return { saved: true, doc: toDoc(row) };
+      },
+
+      async remove(userId, kind, key) {
+        await sql`DELETE FROM user_docs WHERE user_id = ${userId} AND kind = ${kind} AND key = ${key}`;
+      },
+
+      async count(userId, kind) {
+        const [row] = await sql<{ n: string }[]>`
+          SELECT count(*)::text AS n FROM user_docs WHERE user_id = ${userId} AND kind = ${kind}`;
+        return Number(row?.n ?? 0);
       },
     },
   };

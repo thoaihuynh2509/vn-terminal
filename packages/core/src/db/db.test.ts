@@ -426,6 +426,136 @@ function contract(driver: string, makeDb: () => Promise<Db>) {
     assert.deepEqual(await db.alerts.list(id), []);
   });
 
+  // ── saved chart artifacts (user_docs) ────────────────────────────────────
+  // These back every saved drawing, layout and template, so the contract they
+  // have to keep is: a write survives, a stale write loses, and one reader's
+  // work is never visible to — or overwritten by — another's.
+
+  test(`[${driver}] a doc round-trips and reports version 1`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+
+    const { saved, doc } = await db.docs.put(id, "drawings", "VNM", { lines: [1, 2] }, T0);
+
+    assert.equal(saved, true);
+    assert.equal(doc.version, 1);
+    assert.deepEqual(doc.data, { lines: [1, 2] });
+    assert.deepEqual((await db.docs.get(id, "drawings", "VNM"))?.data, { lines: [1, 2] });
+  });
+
+  test(`[${driver}] rewriting a doc replaces the data and bumps the version`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(id, "drawings", "VNM", { lines: [1] }, T0);
+
+    const { doc } = await db.docs.put(id, "drawings", "VNM", { lines: [9] }, at(minutes(1)));
+
+    assert.equal(doc.version, 2, "the version is what a second device compares against");
+    assert.deepEqual(doc.data, { lines: [9] });
+  });
+
+  test(`[${driver}] a write naming the current version succeeds`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    const first = await db.docs.put(id, "settings", "chart", { type: "candle" }, T0);
+
+    const next = await db.docs.put(
+      id, "settings", "chart", { type: "line" }, at(minutes(1)), first.doc.version,
+    );
+
+    assert.equal(next.saved, true);
+    assert.deepEqual(next.doc.data, { type: "line" });
+  });
+
+  test(`[${driver}] a stale write is refused and hands back what is stored`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(id, "settings", "chart", { type: "candle" }, T0); // version 1
+    await db.docs.put(id, "settings", "chart", { type: "area" }, at(minutes(1))); // version 2
+
+    // A second device still believes it holds version 1.
+    const stale = await db.docs.put(
+      id, "settings", "chart", { type: "line" }, at(minutes(2)), 1,
+    );
+
+    assert.equal(stale.saved, false, "the older device must not clobber the newer write");
+    assert.deepEqual(stale.doc.data, { type: "area" }, "it gets the current row back to merge from");
+    assert.deepEqual((await db.docs.get(id, "settings", "chart"))?.data, { type: "area" });
+  });
+
+  test(`[${driver}] only one of 10 concurrent writes at the same version wins`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(id, "drawings", "HPG", { n: 0 }, T0); // version 1
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        db.docs.put(id, "drawings", "HPG", { n: i + 1 }, at(minutes(1)), 1)),
+    );
+
+    assert.equal(
+      results.filter((r) => r.saved).length, 1,
+      "the guard has to be part of the write, or every racer overwrites the last",
+    );
+  });
+
+  test(`[${driver}] list returns only the asked-for kind, and count agrees`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(id, "layout", "a", { g: 1 }, T0);
+    await db.docs.put(id, "layout", "b", { g: 2 }, at(minutes(1)));
+    await db.docs.put(id, "drawings", "VNM", { lines: [] }, at(minutes(2)));
+
+    const layouts = await db.docs.list(id, "layout");
+
+    assert.deepEqual(layouts.map((d) => d.key), ["a", "b"]);
+    assert.equal(await db.docs.count(id, "layout"), 2, "the tier cap is counted on this");
+    assert.equal(await db.docs.count(id, "drawings"), 1);
+  });
+
+  test(`[${driver}] one reader's docs are invisible to another`, async () => {
+    const db = await makeDb();
+    const mine = await db.users.upsertByEmail(anEmail());
+    const theirs = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(mine.id, "drawings", "VNM", { lines: ["mine"] }, T0);
+
+    await db.docs.put(theirs.id, "drawings", "VNM", { lines: ["theirs"] }, T0);
+
+    assert.deepEqual((await db.docs.get(mine.id, "drawings", "VNM"))?.data, { lines: ["mine"] });
+    assert.equal(await db.docs.count(theirs.id, "drawings"), 1);
+  });
+
+  test(`[${driver}] removing a doc leaves the other keys of that kind`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(id, "layout", "keep", { g: 1 }, T0);
+    await db.docs.put(id, "layout", "drop", { g: 2 }, T0);
+
+    await db.docs.remove(id, "layout", "drop");
+
+    assert.equal(await db.docs.get(id, "layout", "drop"), null);
+    assert.equal(await db.docs.count(id, "layout"), 1);
+  });
+
+  test(`[${driver}] an absent doc is null and an empty kind lists empty`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    assert.equal(await db.docs.get(id, "drawings", "NOPE"), null);
+    assert.deepEqual(await db.docs.list(id, "drawings"), []);
+    assert.equal(await db.docs.count(id, "drawings"), 0);
+  });
+
+  test(`[${driver}] a returned doc is a copy — mutating it cannot edit the store`, async () => {
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.docs.put(id, "drawings", "VNM", { lines: [1] }, T0);
+
+    const doc = await db.docs.get(id, "drawings", "VNM");
+    (doc!.data as { lines: number[] }).lines.push(999);
+
+    assert.deepEqual((await db.docs.get(id, "drawings", "VNM"))?.data, { lines: [1] });
+  });
+
   test(`[${driver}] replacing one reader's alerts leaves another's alone`, async () => {
     const db = await makeDb();
     const mine = await db.users.upsertByEmail(anEmail());

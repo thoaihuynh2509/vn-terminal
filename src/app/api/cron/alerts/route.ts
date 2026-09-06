@@ -37,7 +37,11 @@ export async function GET(req: Request) {
     const pending: { id: string; email: string; alerts: Awaited<ReturnType<typeof db.alerts.list>> }[] = [];
     const symbols = new Set<string>();
     for (const u of users) {
-      if (!can(effectiveTier(u, now), "alerts:create")) continue;
+      // `alerts:email`, NOT `alerts:create`. Free readers may now create alerts
+      // (they fire in the open tab), so gating delivery on the ability to create
+      // one would mail every free account and give away the Plus upsell — the
+      // paid part is reaching you while the tab is closed.
+      if (!can(effectiveTier(u, now), "alerts:email")) continue;
       const alerts = await db.alerts.list(u.id);
       if (!alerts.some((a) => !a.triggeredAt)) continue;
       pending.push({ id: u.id, email: u.email, alerts });

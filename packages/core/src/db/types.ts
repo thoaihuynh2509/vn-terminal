@@ -65,6 +65,15 @@ export interface NewOrder {
   provider: string;
 }
 
+/** One saved chart artifact. `data` is opaque to the database layer. */
+export interface DocRecord {
+  kind: string;
+  key: string;
+  data: unknown;
+  version: number;
+  updatedAt: Date;
+}
+
 export interface NewMagicToken {
   tokenHash: string;
   email: string;
@@ -126,6 +135,32 @@ export interface Db {
   alerts: {
     list(userId: string): Promise<PriceAlert[]>;
     replace(userId: string, alerts: PriceAlert[]): Promise<void>;
+  };
+  /**
+   * Saved chart artifacts — drawings, layouts, indicator templates, settings.
+   * One store for all of them, addressed by (kind, key); see migration 006.
+   */
+  docs: {
+    /** Every doc of one kind, oldest key first, for a rail listing. */
+    list(userId: string, kind: string): Promise<DocRecord[]>;
+    get(userId: string, kind: string, key: string): Promise<DocRecord | null>;
+    /**
+     * Insert or overwrite, bumping `version`. Rejects a stale write: when
+     * `ifVersion` is given and no longer matches the stored row, nothing is
+     * written and the CURRENT row comes back so the caller can merge rather than
+     * clobber a change another device made.
+     */
+    put(
+      userId: string,
+      kind: string,
+      key: string,
+      data: unknown,
+      now: Date,
+      ifVersion?: number,
+    ): Promise<{ saved: boolean; doc: DocRecord }>;
+    remove(userId: string, kind: string, key: string): Promise<void>;
+    /** How many docs of a kind this user has — the tier cap is counted on it. */
+    count(userId: string, kind: string): Promise<number>;
   };
 }
 
