@@ -17,6 +17,9 @@ import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { useSyncedDoc } from "@/lib/use-synced-doc";
 import { mergeById } from "@/lib/docs-sync";
+import {
+  DEFAULT_SETTINGS, SETTINGS_KEY, parseSettings, restorable, serializeSettings,
+} from "@/lib/chart/settings";
 import { track } from "@/lib/analytics/posthog";
 import type { Bar, Locale, Tier } from "@/lib/types";
 
@@ -89,11 +92,17 @@ export function ChartPro({
   /** Foreign net buy/sell per bar (VND), drawn as signed bars in its own pane. */
   foreign?: CompareSeries | null;
 }) {
-  const [type, setType] = useState<ChartType>("candle");
+  // null = the reader has not chosen this session, so the stored setup wins.
+  // Derived rather than copied into state by an effect: an effect would cascade
+  // a second render, and reading storage during render would disagree with the
+  // server markup. `useStored` yields null on the server, so the first client
+  // render matches and this settles on the next frame — the same mechanism the
+  // drawings below already rely on.
+  const [typeChoice, setTypeChoice] = useState<ChartType | null>(null);
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
   // How far back the window sits, in bars. See `lib/chart/pan`.
   const [offset, setOffset] = useState(0);
-  const [active, setActive] = useState<string[]>(["sma20"]);
+  const [activeChoice, setActiveChoice] = useState<string[] | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
   const [full, setFull] = useState(false);
@@ -183,6 +192,40 @@ export function ChartPro({
 
   const limit = INDICATOR_LIMIT[tier];
   const unlocked = can(tier, "chart:indicators");
+
+  const storedSettings = useStored(SETTINGS_KEY);
+  const saved = useMemo(() => {
+    const parsed = parseSettings(storedSettings);
+    if (!parsed) return null;
+    const usable = restorable(parsed, limit, (id) => INDICATORS.some((d) => d.id === id));
+    return {
+      type: usable.type,
+      // An indicator saved on Plus must not come back after the subscription
+      // lapsed — the stored setup is a preference, never an entitlement.
+      indicators: usable.indicators.filter(
+        (id) => unlocked || INDICATORS.find((d) => d.id === id)?.free,
+      ),
+    };
+  }, [storedSettings, limit, unlocked]);
+
+  const type = typeChoice ?? saved?.type ?? DEFAULT_SETTINGS.type;
+  const active = activeChoice ?? (saved?.indicators.length ? saved.indicators : DEFAULT_SETTINGS.indicators);
+
+  // Persist deliberately, from the two handlers that change the setup, rather
+  // than from an effect watching state — an effect would also fire for the
+  // restore itself and write back what it just read.
+  const persistSettings = useCallback((next: { type?: ChartType; indicators?: string[] }) => {
+    const current = parseSettings(storedSettings) ?? DEFAULT_SETTINGS;
+    writeStored(SETTINGS_KEY, serializeSettings({
+      type: next.type ?? current.type,
+      indicators: next.indicators ?? current.indicators,
+    }));
+  }, [storedSettings]);
+
+  const chooseType = useCallback((t: ChartType) => {
+    setTypeChoice(t);
+    persistSettings({ type: t });
+  }, [persistSettings]);
   const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, range, offset), [bars.length, range, offset]);
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
   // The compare series is aligned to the full bars, so slice it by the same
@@ -259,9 +302,10 @@ export function ChartPro({
     }
     const next = on ? prev.filter((x) => x !== def.id) : [...prev, def.id];
     activeRef.current = next;
-    setActive(next);
+    setActiveChoice(next);
+    persistSettings({ indicators: next });
     track("chart_indicator_toggled", { id: def.id, on: !on, active_count: next.length, limit, tier });
-  }, [limit, unlocked, tier]);
+  }, [limit, unlocked, tier, persistSettings]);
 
   const PAD = { left: 6, right: 58 };
   const plotW = width - PAD.left - PAD.right;
@@ -453,7 +497,7 @@ export function ChartPro({
     <div className={full ? "fixed inset-0 z-50 overflow-auto bg-page p-4" : ""}>
       <Toolbar
         dict={dict} locale={locale} unlocked={unlocked} limit={limit}
-        type={type} setType={setType} range={range} setRange={setRange}
+        type={type} setType={chooseType} range={range} setRange={setRange}
         active={active} toggle={toggle} asTable={asTable} setAsTable={setAsTable}
         full={full} toggleFull={() => setFull((v) => !v)} canDraw={canDraw}
       />
