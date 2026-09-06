@@ -6,7 +6,7 @@ import { PATHS, type Dict } from "@/lib/i18n";
 import { COLOR_VAR, INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { IndicatorMenu } from "./IndicatorMenu";
 import { useDismiss } from "@/lib/ui/use-dismiss";
-import { INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
+import { DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
 import {
   channelParallel, distanceToChannel, distanceToFib, distanceToHLine, distanceToTrend,
   fibLevels, newId, parseDrawings, serializeDrawings, storageKey, trendPriceAt,
@@ -15,6 +15,8 @@ import {
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { useStored, writeStored } from "@/lib/browser-store";
+import { useSyncedDoc } from "@/lib/use-synced-doc";
+import { mergeById } from "@/lib/docs-sync";
 import { track } from "@/lib/analytics/posthog";
 import type { Bar, Locale, Tier } from "@/lib/types";
 
@@ -105,9 +107,51 @@ export function ChartPro({
   const canDraw = can(tier, "chart:drawings");
   const stored = useStored(storageKey(symbol));
   const drawings = useMemo(() => parseDrawings(stored), [stored]);
-  const saveDrawings = useCallback(
+  const writeDrawings = useCallback(
     (next: Drawing[]) => writeStored(storageKey(symbol), next.length ? serializeDrawings(next) : null),
     [symbol],
+  );
+
+  // Drawings follow the account only on a tier that bought portability; on free
+  // they stay in this browser, which is exactly what the pricing page promises.
+  const canSync = can(tier, "sync:docs");
+  const drawLimit = DRAWING_LIMIT[tier];
+  const mergeDrawings = useCallback(
+    (mine: Drawing[], theirs: Drawing[]) => mergeById(mine, theirs).slice(0, drawLimit),
+    [drawLimit],
+  );
+  const { markDirty } = useSyncedDoc<Drawing[]>({
+    kind: "drawings",
+    docKey: symbol,
+    local: drawings,
+    applyRemote: writeDrawings,
+    merge: mergeDrawings,
+    canSync,
+  });
+
+  // Every mutation goes through here so a local edit is both stored and queued.
+  const saveDrawings = useCallback(
+    (next: Drawing[]) => {
+      writeDrawings(next);
+      markDirty();
+    },
+    [writeDrawings, markDirty],
+  );
+
+  // The free ceiling is enforced here because free drawings never reach the
+  // server; the paid ceiling is re-checked there. Both read DRAWING_LIMIT, so
+  // the two cannot drift.
+  const addDrawing = useCallback(
+    (d: Drawing) => {
+      if (drawings.length >= drawLimit) {
+        track("chart_limit_hit", { gate: "drawing", tier, limit: drawLimit, symbol });
+        return false;
+      }
+      saveDrawings([...drawings, d]);
+      track("chart_drawing_created", { kind: d.kind, count: drawings.length + 1, symbol });
+      return true;
+    },
+    [drawings, drawLimit, saveDrawings, tier, symbol],
   );
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -297,7 +341,7 @@ export function ChartPro({
     const t = view[barAtX(px)].t;
 
     if (mode === "hline") {
-      saveDrawings([...drawings, { id: newId(), kind: "hline", price }]);
+      addDrawing({ id: newId(), kind: "hline", price });
       return;
     }
     if (mode !== "cursor") {
@@ -307,9 +351,9 @@ export function ChartPro({
       const pts = [...pending, { t, p: price }];
       if (pts.length < TOOL_POINTS[mode]) return setPending(pts);
       const [a, b, c] = pts;
-      saveDrawings([...drawings, mode === "channel"
+      addDrawing(mode === "channel"
         ? { id: newId(), kind: "channel", t1: a.t, p1: a.p, t2: b.t, p2: b.p, t3: c.t, p3: c.p }
-        : { id: newId(), kind: mode, t1: a.t, p1: a.p, t2: b.t, p2: b.p }]);
+        : { id: newId(), kind: mode, t1: a.t, p1: a.p, t2: b.t, p2: b.p });
       setPending([]);
       return;
     }
@@ -324,7 +368,10 @@ export function ChartPro({
       if (d.kind === "channel") return distanceToChannel(d, t, price, nrm) < 0.012;
       return distanceToFib(d, t, price) / pSpan < 0.012;
     });
-    if (hit) saveDrawings(drawings.filter((d) => d.id !== hit.id));
+    if (hit) {
+      saveDrawings(drawings.filter((d) => d.id !== hit.id));
+      track("chart_drawing_deleted", { kind: hit.kind, symbol });
+    }
   };
 
   // A press is ambiguous until it moves: held still it is a click (draw or
