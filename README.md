@@ -14,6 +14,43 @@ cp .env.example .env.local   # optional; sensible defaults are built in
 npm run dev                  # http://localhost:3000 → redirects to /vi
 ```
 
+## Deploy to Vercel
+
+The app is **fail-closed**: with nothing configured the board still serves, and
+each unset integration degrades to a 501 or a "coming soon" — so you can ship
+first and switch things on as accounts come online. Full detail:
+[`docs/deploy-checklist.md`](docs/deploy-checklist.md) and
+[`docs/database-setup.md`](docs/database-setup.md).
+
+1. **Provision the database first** (Supabase — see the DB doc) so you have the
+   two connection strings before importing.
+2. **Import the repo**: vercel.com → *Add New… → Project* → import this repo.
+   Next.js is auto-detected; leave Build/Output as-is — `vercel.json` sets the
+   build command to run migrations then build, and registers the retention crons.
+3. **Set environment variables** (Production). Minimum to run sign-in + accounts:
+
+   | Var | Value |
+   |---|---|
+   | `AUTH_SECRET` | `openssl rand -hex 32` |
+   | `NEXT_PUBLIC_SITE_URL` | your final origin (fix after step 5) |
+   | `AUTH_PROVIDER` | `magic` |
+   | `DATABASE_URL` | Supabase **transaction pooler** (`:6543`) |
+   | `MIGRATE_DATABASE_URL` | Supabase **direct/session** (`:5432`) — advisory locks need a session |
+   | `MAIL_PROVIDER` / `RESEND_API_KEY` / `MAIL_FROM` | Resend (magic link + retention mail) |
+   | `CRON_SECRET` | `openssl rand -hex 32` (Vercel sends it as the cron Bearer) |
+
+   Turn on when ready (each optional, fail-closed): `MOMO_*` / `VNPAY_*` /
+   `SEPAY_*` (payments), `ADMIN_EMAILS` (`/:locale/admin`),
+   `NEXT_PUBLIC_POSTHOG_KEY` (analytics funnel), `ASK_PROVIDER=claude` +
+   `ANTHROPIC_API_KEY` (real AI; default `mock` ships free). Prices live in
+   `src/lib/billing/plans.ts`.
+4. **Deploy.**
+5. Once you have the domain, set `NEXT_PUBLIC_SITE_URL` to it exactly and
+   **redeploy** — magic links and payment returns are built from it.
+
+Migrations run automatically on every deploy (idempotent; a no-op with no DB
+URL). Verify locally any time with `npm run verify`.
+
 ## Routes
 
 | Route | What it is |
