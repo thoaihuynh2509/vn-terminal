@@ -11,9 +11,10 @@ import { Analytics } from "@/components/Analytics";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { getSession } from "@/lib/auth/session";
 import { cryptoEnabled } from "@/lib/flags";
+import { siteUrl } from "@/lib/site";
 import { VN30 } from "@/lib/providers/vnstock";
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://vn-terminal.vercel.app";
+const SITE = siteUrl();
 
 const inter = Inter({ subsets: ["latin", "vietnamese"], variable: "--font-inter", display: "swap" });
 

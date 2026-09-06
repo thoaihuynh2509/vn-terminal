@@ -1,8 +1,9 @@
 import type { MetadataRoute } from "next";
 import { LOCALES, PATHS } from "@/lib/i18n";
 import { VN30 } from "@/lib/providers/vnstock";
+import { siteUrl } from "@/lib/site";
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://vn-terminal.vercel.app";
+const SITE = siteUrl();
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
