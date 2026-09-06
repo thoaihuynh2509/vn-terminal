@@ -6,10 +6,23 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test:actions": "node scripts/cdp.mjs actions",
+    "test:a11y": "node scripts/cdp.mjs audit",
+    "shots": "node scripts/cdp.mjs shots",
+    "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run build",
+    "test:unit": "node --test packages/core/src/*.test.ts packages/core/src/ta/*.test.ts packages/core/src/chart/*.test.ts packages/core/src/alerts/*.test.ts packages/core/src/auth/*.test.ts packages/core/src/db/*.test.ts packages/core/src/billing/*.test.ts packages/core/src/retention/*.test.ts",
+    "test:paywall": "node scripts/test-paywall.mjs",
+    "test:magic": "node scripts/test-magic.mjs",
+    "db:migrate": "node scripts/db-migrate.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
+    "gray-matter": "^4.0.3",
+    "marked": "^18.0.11",
     "next": "16.3.4",
+    "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -22,5 +35,8 @@
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

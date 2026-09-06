@@ -1,26 +1,235 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   Design tokens. Chrome/ink values from the validated reference
+   palette; --up/--down validated all-pairs in BOTH modes:
+     light #008300 / #e34948  → NV ΔE 33.1, CVD ΔE 7.2 (warn band)
+     dark  #008300 / #e66767  → NV ΔE 32.6, CVD ΔE 8.6 (pass)
+   The light pair sits in the 6–8 CVD band, which is legal ONLY with
+   secondary encoding — every colored value in this app also carries a
+   ▲/▼ glyph and an explicit sign, and candle bodies encode direction
+   as hollow/filled. Never change these without re-running the
+   validator against BOTH surfaces.
+   ───────────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  color-scheme: light;
+  --page: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f6f7;
+  --ink: #1a1a1a;
+  --ink-2: #4b5563;
+  --muted: #8a8f98;
+  --grid: #eceef1;
+  --axis: #d7dade;
+  --line: #e6e8eb;
+  --up: #008300;
+  --down: #e34948;
+  --accent: #2a78d6;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #161719;
+    --surface-2: #1f2124;
+    --ink: #f5f6f7;
+    --ink-2: #b6bcc4;
+    --muted: #8a8f98;
+    --grid: #26282c;
+    --axis: #34373c;
+    --line: #26282c;
+    --up: #008300;
+    --down: #e66767;
+    --accent: #3987e5;
   }
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #161719;
+  --surface-2: #1f2124;
+  --ink: #f5f6f7;
+  --ink-2: #b6bcc4;
+  --muted: #8a8f98;
+  --grid: #26282c;
+  --axis: #34373c;
+  --line: #26282c;
+  --up: #008300;
+  --down: #e66767;
+  --accent: #3987e5;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-grid: var(--grid);
+  --color-axis: var(--axis);
+  --color-line: var(--line);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-accent: var(--accent);
+  /* Wired to next/font in the layout. */
+  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-synthesis-weight: none;
+}
+
+/* Columns that must align vertically get tabular figures; standalone
+   hero numbers keep proportional figures per the type spec. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Visible focus ring for keyboard users on every interactive element. */
+:where(a, button, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ─── Article prose ────────────────────────────────────────────
+   Applied to markdown-rendered HTML. Measure is capped by the
+   wrapper; these rules only handle rhythm and the elements that
+   markdown actually emits. */
+.prose-vn > * + * { margin-top: 1.1em; }
+.prose-vn h2 {
+  margin-top: 2em;
+  font-size: 1.15em;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+.prose-vn h3 {
+  margin-top: 1.6em;
+  font-size: 1.02em;
+  font-weight: 600;
+}
+.prose-vn a { color: var(--accent); text-underline-offset: 2px; }
+.prose-vn a:hover { text-decoration: underline; }
+.prose-vn strong { font-weight: 600; }
+.prose-vn ul, .prose-vn ol { padding-left: 1.3em; }
+.prose-vn ul { list-style: disc; }
+.prose-vn ol { list-style: decimal; }
+.prose-vn li + li { margin-top: 0.4em; }
+.prose-vn code {
+  background: var(--surface-2);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.88em;
+}
+.prose-vn pre {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.85em 1em;
+  overflow-x: auto;          /* wide code scrolls itself, never the page */
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+.prose-vn pre code { background: none; padding: 0; font-size: 0.86em; }
+.prose-vn blockquote {
+  border-left: 2px solid var(--axis);
+  padding-left: 1em;
+  color: var(--ink-2);
+}
+/* Tables inside prose scroll in their own box rather than widening the page. */
+.prose-vn table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  display: block;
+  overflow-x: auto;
+}
+.prose-vn th, .prose-vn td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.5em 0.7em;
+  text-align: left;
+  white-space: nowrap;
+}
+.prose-vn th { color: var(--muted); font-weight: 600; font-size: 0.92em; }
+.prose-vn hr { border: 0; border-top: 1px solid var(--line); }
+
+/* ─── Surface & rhythm ─────────────────────────────────────────
+   The first pass read flat: every element sat on the same plane
+   with a hairline border and nothing else. Cards now carry a
+   very soft elevation that lifts on hover, which is what gives
+   a dense board page a sense of depth without adding chrome. */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: box-shadow 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+.card-hover:hover {
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.09);
+  border-color: color-mix(in oklab, var(--accent) 32%, var(--line));
+}
+:root[data-theme="dark"] .card,
+:root:not([data-theme="light"]) .card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme="dark"] .card-hover:hover,
+:root:not([data-theme="light"]) .card-hover:hover {
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6);
+}
+
+/* Data tables: taller rows and a hover wash. The previous 1.5-unit
+   row padding made 30-row boards hard to track across. */
+.data-table th,
+.data-table td { padding-block: 0.6rem; }
+.data-table tbody tr { transition: background-color 120ms ease; }
+.data-table tbody tr:hover { background: var(--surface-2); }
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  z-index: 1;
+}
+
+/* ─── Heatmap diverging scale ──────────────────────────────────
+   Two opposed hues with a neutral grey midpoint and equal steps
+   per arm, stepped from the validated --up / --down anchors.
+   A meaningful zero means diverging, never a single-hue ramp. */
+:root {
+  --up-1: #cfe8cf; --up-2: #8fc98f; --up-3: #3f9b3f; --up-4: #008300;
+  --down-1: #f8d7d6; --down-2: #efa5a3; --down-3: #e46c6a; --down-4: #c62d2b;
+  --heat-zero: #eceef1;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --up-1: #16321a; --up-2: #1d5526; --up-3: #1c7a2c; --up-4: #24a13a;
+    --down-1: #3a1e1f; --down-2: #6b2e2f; --down-3: #a34443; --down-4: #d15b59;
+    --heat-zero: #24262a;
+  }
+}
+:root[data-theme="dark"] {
+  --up-1: #16321a; --up-2: #1d5526; --up-3: #1c7a2c; --up-4: #24a13a;
+  --down-1: #3a1e1f; --down-2: #6b2e2f; --down-3: #a34443; --down-4: #d15b59;
+  --heat-zero: #24262a;
 }

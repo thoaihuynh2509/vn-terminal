@@ -1,0 +1,76 @@
+import { NextResponse } from "next/server";
+import { dbAvailable, getDb, DbUnavailableError } from "@/lib/db";
+import { effectiveTier } from "@/lib/auth/provider";
+import { atLeast } from "@/lib/auth/entitlement";
+import { sendEmail } from "@/lib/auth/mailer";
+import { buildBrief } from "@/lib/brief";
+import { getGold, headlineRow, premium } from "@/lib/providers/gold";
+import { getBoard, getIndices } from "@/lib/providers/vnstock";
+import { getCoins } from "@/lib/providers/crypto";
+import { cronAuthorized } from "@/lib/retention/cron-auth";
+import { briefEmail } from "@/lib/retention/run";
+
+export const runtime = "nodejs";
+export const revalidate = 0;
+
+const USD_VND = Number(process.env.NEXT_PUBLIC_USD_VND ?? 26_300);
+
+/**
+ * Daily brief email — a paid perk and a reason to return.
+ *
+ * Sent only to current subscribers (`effectiveTier` ≥ plus): a broadcast to
+ * every signed-up address would need an explicit consent and unsubscribe flow,
+ * which this does not yet have, so it stays scoped to people who bought a plan.
+ * One dead feed degrades its own section of the brief, never the send.
+ */
+export async function GET(req: Request) {
+  const auth = cronAuthorized(req);
+  if (auth === "not_configured" || !dbAvailable()) {
+    return NextResponse.json({ ok: false, error: "cron_not_configured" }, { status: 501 });
+  }
+  if (auth === "unauthorized") {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const db = await getDb();
+    const now = new Date();
+    const recipients = (await db.users.all()).filter((u) => atLeast(effectiveTier(u, now), "plus"));
+    if (recipients.length === 0) {
+      return NextResponse.json({ ok: true, data: { recipients: 0, emailed: 0 } });
+    }
+
+    const [indicesR, boardR, goldR, coinsR] = await Promise.allSettled([
+      getIndices(),
+      getBoard(),
+      getGold(),
+      getCoins(20),
+    ]);
+    const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
+    const board = boardR.status === "fulfilled" ? boardR.value : [];
+    const gold = goldR.status === "fulfilled" ? goldR.value : null;
+    const coins = coinsR.status === "fulfilled" ? coinsR.value : [];
+    const top = gold ? headlineRow(gold.rows) : undefined;
+    const premiumPct = gold?.world && top ? premium(gold.world.buy, top.sell, USD_VND).pct : undefined;
+
+    // Emails default to Vietnamese, the primary audience; a stored per-user
+    // locale would drive this once the account carries one.
+    const brief = buildBrief("vi", { indices, board, gold, goldHeadline: top, coins, premiumPct });
+    const { subject, text } = briefEmail(brief, "vi");
+
+    let emailed = 0;
+    for (const u of recipients) {
+      try {
+        if (await sendEmail({ to: u.email, subject, text })) emailed += 1;
+      } catch {
+        /* one failure must not abort the batch */
+      }
+    }
+    return NextResponse.json({ ok: true, data: { recipients: recipients.length, emailed } });
+  } catch (err) {
+    if (err instanceof DbUnavailableError) {
+      return NextResponse.json({ ok: false, error: "cron_not_configured" }, { status: 501 });
+    }
+    throw err;
+  }
+}

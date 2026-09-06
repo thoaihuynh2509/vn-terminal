@@ -1,0 +1,13 @@
+{
+  "name": "@vnt/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Domain layer for VN Terminal: providers, auth, billing, alerts, retention, DB. Framework-agnostic except the two transport adapters (api.ts, auth/session.ts). Consumed by apps via the @/lib path alias today; import as @vnt/core after a full extraction.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "node --test src/*.test.ts src/ta/*.test.ts src/chart/*.test.ts src/alerts/*.test.ts src/auth/*.test.ts src/db/*.test.ts src/billing/*.test.ts src/retention/*.test.ts"
+  }
+}

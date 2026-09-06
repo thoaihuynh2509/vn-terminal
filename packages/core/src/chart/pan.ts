@@ -1,0 +1,104 @@
+/**
+ * The visible window: panning and zooming.
+ *
+ * `offset` counts bars backwards from the newest bar: 0 shows the latest close
+ * on the right edge, and a larger offset walks into the past. Keeping it in BARS
+ * rather than pixels means a pan survives a resize, a range change and a
+ * timeframe change without the window silently sliding.
+ */
+
+/** How far back the window can go before it would run off the loaded history. */
+export function maxOffset(total: number, range: number): number {
+  return Math.max(0, total - Math.max(1, range));
+}
+
+export function clampOffset(offset: number, total: number, range: number): number {
+  if (!Number.isFinite(offset)) return 0;
+  return Math.min(Math.max(0, Math.round(offset)), maxOffset(total, range));
+}
+
+/**
+ * Index bounds of the visible slice, as [start, end).
+ *
+ * Callers need the BOUNDS and not just the bars, because indicators are computed
+ * once over the whole loaded series and then sliced to the window. Recomputing
+ * them per window is both slower and wrong: a 50-bar average computed on a
+ * 60-bar view is undefined for its first 49 bars, so zooming in would blank the
+ * start of every moving average and change the values that remain.
+ */
+export function windowBounds(total: number, range: number, offset: number): [number, number] {
+  if (range <= 0 || range >= total) return [0, total];
+  const end = total - clampOffset(offset, total, range);
+  return [Math.max(0, end - range), end];
+}
+
+/** The visible slice. `range <= 0` means "everything loaded", which cannot pan. */
+export function windowOf<T>(bars: T[], range: number, offset: number): T[] {
+  const [a, b] = windowBounds(bars.length, range, offset);
+  return a === 0 && b === bars.length ? bars : bars.slice(a, b);
+}
+
+/**
+ * Index of the bar nearest a timestamp. Binary search rather than a scan: this
+ * runs for every endpoint of every drawing on every frame of a pan.
+ */
+export function nearestIndex(times: { t: number }[], t: number): number {
+  if (!times.length) return 0;
+  let lo = 0, hi = times.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid].t < t) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(times[lo - 1].t - t) <= Math.abs(times[lo].t - t)) return lo - 1;
+  return lo;
+}
+
+/**
+ * Offset after a drag. Dragging to the RIGHT pulls older bars into view, which
+ * is the direction every chart tool agrees on: the content follows the hand.
+ */
+export function offsetFromDrag(
+  startOffset: number, dxPixels: number, band: number, total: number, range: number,
+): number {
+  const perBar = Math.max(band, 0.5); // a zero band would divide to Infinity
+  return clampOffset(startOffset + dxPixels / perBar, total, range);
+}
+
+
+/** Fewer bars than this and the chart stops being a chart. */
+export const MIN_RANGE = 20;
+
+/** One wheel notch. Multiplicative so zooming feels the same at every scale. */
+const ZOOM_STEP = 1.2;
+
+/**
+ * Zoom about a point.
+ *
+ * The bar under the cursor must stay under the cursor. Zooming about the centre
+ * (or about the right edge) is the common shortcut and it is the thing that
+ * makes a chart feel wrong: the reader points at a candle, scrolls, and the
+ * candle they were reading slides out from under the pointer.
+ *
+ * `fraction` is where the pointer sits across the plot, 0 at the left edge and
+ * 1 at the right. `direction` is +1 to zoom out (more bars) and -1 to zoom in.
+ */
+export function zoomAt(
+  { total, range, offset, fraction, direction }: {
+    total: number; range: number; offset: number; fraction: number; direction: 1 | -1;
+  },
+): { range: number; offset: number } {
+  // "Everything loaded" has to become a concrete count before it can be scaled.
+  const cur = Math.min(range > 0 ? range : total, total);
+  const safeOffset = clampOffset(offset, total, cur);
+  const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0.5));
+
+  const scaled = direction > 0 ? cur * ZOOM_STEP : cur / ZOOM_STEP;
+  const next = Math.min(total, Math.max(MIN_RANGE, Math.round(scaled)));
+  if (next === cur) return { range: cur, offset: safeOffset };
+
+  const start = total - cur - safeOffset;
+  const anchor = start + f * cur;
+  const nextStart = Math.round(anchor - f * next);
+  return { range: next, offset: clampOffset(total - next - nextStart, total, next) };
+}
