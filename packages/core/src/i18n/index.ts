@@ -368,6 +368,10 @@ const vi = {
     mMomo: "MoMo",
     mVnpay: "VNPay",
     mSepay: "Chuyển khoản QR",
+    mManual: "MoMo QR",
+    qrAmount: "Số tiền",
+    qrNote: "Nội dung",
+    qrManualNote: "Sau khi chuyển, gói sẽ được kích hoạt trong vài giờ sau khi xác nhận. Bạn có thể đóng trang.",
     qrTitle: "Quét mã để thanh toán",
     qrHint: "Mở app ngân hàng và quét mã. Trang sẽ tự cập nhật khi nhận được tiền — giữ mở tab này.",
     refTitle: "Mời bạn bè, nhận 1 tháng",
@@ -405,6 +409,9 @@ const vi = {
     pAnnual: "Năm",
     empty: "Chưa có đơn hàng nào.",
     unavailable: "Cơ sở dữ liệu chưa được cấu hình.",
+    confirmPaid: "Xác nhận đã nhận",
+    confirming: "Đang xác nhận…",
+    confirmFailed: "Không xác nhận được. Thử lại.",
   },
 
 
@@ -811,6 +818,10 @@ const en: typeof vi = {
     mMomo: "MoMo",
     mVnpay: "VNPay",
     mSepay: "Bank transfer (QR)",
+    mManual: "MoMo QR",
+    qrAmount: "Amount",
+    qrNote: "Note",
+    qrManualNote: "After you transfer, your plan is activated within a few hours once confirmed. You can close this page.",
     qrTitle: "Scan to pay",
     qrHint: "Open your banking app and scan. This page updates when the transfer arrives — keep this tab open.",
     refTitle: "Invite a friend, get a month",
@@ -848,6 +859,9 @@ const en: typeof vi = {
     pAnnual: "Annual",
     empty: "No orders yet.",
     unavailable: "The database is not configured.",
+    confirmPaid: "Confirm received",
+    confirming: "Confirming…",
+    confirmFailed: "Could not confirm. Try again.",
   },
 
 

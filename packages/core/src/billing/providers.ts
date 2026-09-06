@@ -10,24 +10,36 @@ import { momoConfig } from "./momo.ts";
 import { vnpayConfig } from "./vnpay.ts";
 import { sepayConfig } from "./sepay.ts";
 
-export type Provider = "momo" | "vnpay" | "sepay";
-export const PROVIDERS: readonly Provider[] = ["momo", "vnpay", "sepay"];
+export type Provider = "momo" | "vnpay" | "sepay" | "manual";
+export const PROVIDERS: readonly Provider[] = ["momo", "vnpay", "sepay", "manual"];
 
 /** How the reader completes payment — a redirect to a gateway, or a QR to scan. */
 export const PROVIDER_KIND: Record<Provider, "redirect" | "qr"> = {
   momo: "redirect",
   vnpay: "redirect",
   sepay: "qr",
+  manual: "qr",
 };
 
 export function isProvider(v: unknown): v is Provider {
-  return v === "momo" || v === "vnpay" || v === "sepay";
+  return v === "momo" || v === "vnpay" || v === "sepay" || v === "manual";
+}
+
+/**
+ * Manual QR: show a static QR the owner uploaded (their MoMo/bank receive code)
+ * and confirm payment by hand in /admin. No gateway account or keys — the
+ * simplest way to take money on day one. Enabled by pointing MANUAL_QR_URL at an
+ * image of that QR.
+ */
+export function manualQrUrl(): string | null {
+  return process.env.MANUAL_QR_URL || null;
 }
 
 export function providerEnabled(p: Provider): boolean {
   if (p === "momo") return momoConfig() !== null;
   if (p === "vnpay") return vnpayConfig() !== null;
-  return sepayConfig() !== null;
+  if (p === "sepay") return sepayConfig() !== null;
+  return manualQrUrl() !== null;
 }
 
 export function enabledProviders(): Provider[] {

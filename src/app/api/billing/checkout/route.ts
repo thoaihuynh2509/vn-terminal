@@ -6,7 +6,7 @@ import { isPaidTier, isPlan, priceFor } from "@/lib/billing/plans";
 import { createRequestBody, momoConfig } from "@/lib/billing/momo";
 import { buildPayUrl, vnpayConfig, vnpDate } from "@/lib/billing/vnpay";
 import { qrImageUrl, sepayConfig } from "@/lib/billing/sepay";
-import { isProvider, providerEnabled, type Provider } from "@/lib/billing/providers";
+import { isProvider, manualQrUrl, providerEnabled, type Provider } from "@/lib/billing/providers";
 import { isLocale, PATHS } from "@/lib/i18n";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ const limited = createLimiter({ windowMs: 60_000, max: 10 });
 
 type CheckoutData =
   | { kind: "redirect"; url: string; orderId: string }
-  | { kind: "qr"; imageUrl: string; orderId: string };
+  | { kind: "qr"; imageUrl: string; orderId: string; amount?: number; note?: string; manual?: boolean };
 
 /**
  * Start a payment for a tier upgrade with the chosen provider.
@@ -102,8 +102,12 @@ export async function POST(req: Request) {
         createDate: vnpDate(new Date()),
       });
       data = { kind: "redirect", url, orderId };
-    } else {
+    } else if (provider === "sepay") {
       data = { kind: "qr", imageUrl: qrImageUrl(sepayConfig()!, orderId, amount), orderId };
+    } else {
+      // Manual: show the owner's static QR; a human confirms in /admin. The short
+      // note lets the payer tag the transfer so the owner can match it.
+      data = { kind: "qr", imageUrl: manualQrUrl()!, orderId, amount, note: orderId.slice(-6).toUpperCase(), manual: true };
     }
 
     return NextResponse.json({ ok: true, data }, { headers: { "Cache-Control": "private, no-store" } });

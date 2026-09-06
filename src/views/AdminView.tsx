@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/editorial";
 import { StatTile } from "@/components/ui";
 import { EmptyState } from "@/components/layout";
+import { ConfirmPaidButton } from "@/components/ConfirmPaidButton";
 import { vnd } from "@/lib/format";
 import { getDict } from "@/lib/i18n";
 import type { OrderRecord } from "@/lib/db";
@@ -63,7 +64,19 @@ export function AdminView({ locale, orders }: { locale: Locale; orders: OrderRec
                   <td className="px-3 py-2 uppercase">{o.tier}</td>
                   <td className="px-3 py-2">{o.plan === "annual" ? dict.admin.pAnnual : dict.admin.pMonthly}</td>
                   <td className="tnum px-3 py-2 text-right">{vnd(o.amount, locale)}</td>
-                  <td className={`px-3 py-2 font-medium ${statusClass(o.status)}`}>{status(o.status)}</td>
+                  <td className={`px-3 py-2 font-medium ${statusClass(o.status)}`}>
+                    <span className="inline-flex items-center gap-2">
+                      {status(o.status)}
+                      {o.status === "pending" && (
+                        <ConfirmPaidButton
+                          orderId={o.id}
+                          label={dict.admin.confirmPaid}
+                          busyLabel={dict.admin.confirming}
+                          failLabel={dict.admin.confirmFailed}
+                        />
+                      )}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>

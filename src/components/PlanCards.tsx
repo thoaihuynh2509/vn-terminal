@@ -47,6 +47,7 @@ export function PlanCards({
   const [order, setOrder] = useState<OrderState>("idle");
   const [paidTier, setPaidTier] = useState<string>("");
   const [qr, setQr] = useState<string | null>(null);
+  const [qrInfo, setQrInfo] = useState<{ amount?: number; note?: string; manual?: boolean }>({});
   const [copied, setCopied] = useState(false);
   const billingEnabled = providers.length > 0;
 
@@ -116,6 +117,7 @@ export function PlanCards({
       }
       if (res.ok && body?.data?.kind === "qr") {
         setQr(body.data.imageUrl);
+        setQrInfo({ amount: body.data.amount, note: body.data.note, manual: body.data.manual });
         pollOrder(body.data.orderId);
         return;
       }
@@ -145,6 +147,7 @@ export function PlanCards({
     momo: dict.pricing.mMomo,
     vnpay: dict.pricing.mVnpay,
     sepay: dict.pricing.mSepay,
+    manual: dict.pricing.mManual,
   };
 
   const cards = [
@@ -178,7 +181,17 @@ export function PlanCards({
             unoptimized
             className="my-3 rounded"
           />
-          <p className="max-w-[46ch] text-[12px] text-muted">{dict.pricing.qrHint}</p>
+          {(qrInfo.amount !== undefined || qrInfo.note) && (
+            <div className="mb-2 text-[13px]">
+              {qrInfo.amount !== undefined && (
+                <div><span className="text-muted">{dict.pricing.qrAmount}: </span><span className="tnum font-semibold">{vnd(qrInfo.amount, locale)}</span></div>
+              )}
+              {qrInfo.note && (
+                <div><span className="text-muted">{dict.pricing.qrNote}: </span><span className="tnum font-semibold">{qrInfo.note}</span></div>
+              )}
+            </div>
+          )}
+          <p className="max-w-[46ch] text-[12px] text-muted">{qrInfo.manual ? dict.pricing.qrManualNote : dict.pricing.qrHint}</p>
         </Card>
       )}
 
