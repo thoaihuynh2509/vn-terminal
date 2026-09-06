@@ -13,7 +13,8 @@ import { can } from "@/lib/auth/entitlement";
 import { activeProvider } from "@/lib/ask/provider";
 import { equityPrice } from "@/lib/format";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
-import { getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
+import { BAND, getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
+import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { TimeframePicker } from "@/components/chart/TimeframePicker";
 import type { Locale } from "@/lib/types";
@@ -26,7 +27,7 @@ import type { Locale } from "@/lib/types";
  * is never client-supplied.
  */
 export async function TerminalView({
-  locale, symbol, extra = [], layout = 1, tf, rail,
+  locale, symbol, extra = [], layout = 1, tf, rail, cmp = false,
 }: {
   locale: Locale;
   symbol: string;
@@ -37,6 +38,8 @@ export async function TerminalView({
   tf?: string;
   /** Rail tab to open (`?rail=ask`) — how the old assistant and watchlist URLs land. */
   rail?: string;
+  /** Overlay VNINDEX for relative strength (`?cmp=1`). Gated to Plus. */
+  cmp?: boolean;
 }) {
   const dict = getDict(locale);
   const sym = symbol.toUpperCase();
@@ -80,6 +83,28 @@ export async function TerminalView({
   const change = last.c - prev.c;
   const changePct = prev.c ? (change / prev.c) * 100 : 0;
 
+  // VN ceiling/floor (trần/sàn): the session's ±band limits off the reference
+  // (previous close). A daily concept, so only on daily+ timeframes.
+  const refLines: RefLine[] = view.intraday
+    ? []
+    : [
+        { price: prev.c * (1 + BAND.HOSE), label: dict.stocks.ceiling, dir: "up" },
+        { price: prev.c * (1 - BAND.HOSE), label: dict.stocks.floor, dir: "down" },
+      ];
+
+  // VNINDEX overlay for relative strength — gated to Plus, URL-driven so it is
+  // shareable. Aligned to the symbol's bars by timestamp; a normalised shape,
+  // not the price scale.
+  const canCompare = can(tier, "chart:compare");
+  let compare: CompareSeries | null = null;
+  if (cmp && canCompare) {
+    const idx = await getTimeframeBars("VNINDEX", view, { kind: "index" }).catch(() => []);
+    if (idx.length) {
+      const byTs = new Map(idx.map((b) => [b.t, b.c]));
+      compare = { label: "VNINDEX", series: bars.map((b) => byTs.get(b.t) ?? null) };
+    }
+  }
+
   return (
     <PageShell
       rail={
@@ -115,11 +140,16 @@ export async function TerminalView({
           pricingHref={`/${locale}/${PATHS.pricing[locale]}?plan=plus`}
         />
         <LayoutSwitcher locale={locale} dict={dict} symbol={sym} extra={extra} layout={cells} multi={multi} tf={view.id} />
+        <CompareToggle
+          locale={locale} dict={dict} symbol={sym} tf={view.id}
+          on={!!compare} canCompare={canCompare}
+          extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
+        />
       </div>
 
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} />
+          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
@@ -184,5 +214,37 @@ function LayoutSwitcher({
         </Link>
       )}
     </div>
+  );
+}
+
+/**
+ * VNINDEX overlay toggle. URL-driven (`?cmp=1`) so the compared view is
+ * shareable and re-renders server-side. Gated: a non-Plus reader sees a lock
+ * that upsells rather than a control that 402s.
+ */
+function CompareToggle({
+  locale, dict, symbol, tf, on, canCompare, extraQuery,
+}: {
+  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canCompare: boolean; extraQuery: string;
+}) {
+  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}`;
+  if (!canCompare) {
+    return (
+      <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.compareLock}
+        className="text-[11px] font-medium text-accent hover:underline">
+        🔒 {dict.chart.compareOn} →
+      </Link>
+    );
+  }
+  return (
+    <Link
+      href={on ? base : `${base}&cmp=1`}
+      aria-pressed={on}
+      className={`rounded border px-2.5 py-1 text-[12px] font-medium ${
+        on ? "border-accent bg-accent text-page" : "border-line text-ink-2 hover:text-ink"
+      }`}
+    >
+      {on ? dict.chart.compareOff : dict.chart.compareOn}
+    </Link>
   );
 }

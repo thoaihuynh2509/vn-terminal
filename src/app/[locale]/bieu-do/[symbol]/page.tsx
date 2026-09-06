@@ -13,7 +13,7 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ locale: string; symbol: string }>;
-  searchParams: Promise<{ layout?: string; s?: string; tf?: string; rail?: string }>;
+  searchParams: Promise<{ layout?: string; s?: string; tf?: string; rail?: string; cmp?: string }>;
 }) {
   const { locale, symbol } = await params;
   const sp = await searchParams;
@@ -25,6 +25,6 @@ export default async function Page({
     .filter(Boolean)
     .slice(0, 3);
   return (
-    <TerminalView locale={guard(locale, "terminal", "bieu-do")} symbol={symbol} extra={extra} layout={layout} tf={sp.tf} rail={sp.rail} />
+    <TerminalView locale={guard(locale, "terminal", "bieu-do")} symbol={symbol} extra={extra} layout={layout} tf={sp.tf} rail={sp.rail} cmp={sp.cmp === "1"} />
   );
 }

@@ -65,6 +65,8 @@ export function ChartPro({
   tier,
   digits = 2,
   intraday = false,
+  refLines = [],
+  compare = null,
 }: {
   bars: Bar[];
   symbol: string;
@@ -74,6 +76,12 @@ export function ChartPro({
   digits?: number;
   /** Minute/hour bars need a clock on the axis; daily bars need a date. */
   intraday?: boolean;
+  /** Horizontal reference levels — VN ceiling/floor (trần/sàn). Folded into the
+   *  price scale so they are always visible. */
+  refLines?: RefLine[];
+  /** A second series (e.g. VNINDEX) drawn as a normalised shape for relative
+   *  strength. Isolated from the price scale — it never moves the candles. */
+  compare?: CompareSeries | null;
 }) {
   const [type, setType] = useState<ChartType>("candle");
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
@@ -129,6 +137,12 @@ export function ChartPro({
   const unlocked = can(tier, "chart:indicators");
   const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, range, offset), [bars.length, range, offset]);
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
+  // The compare series is aligned to the full bars, so slice it by the same
+  // window as the visible candles.
+  const compareView = useMemo(
+    () => (compare ? compare.series.slice(wStart, wEnd) : null),
+    [compare, wStart, wEnd],
+  );
   const canPan = range > 0 && range < bars.length;
   const drag = useRef<{ x: number; offset: number; moved: boolean } | null>(null);
   // A pointer can fire many moves per frame; the chart can only paint once.
@@ -214,14 +228,19 @@ export function ChartPro({
     return () => el.removeEventListener("wheel", onWheel);
   }, [bars.length, range, offset, plotW, PAD.left]);
 
+  // Reference-line prices join the domain so a ceiling above every high is still
+  // on screen; PricePane repeats this exact fold, so the crosshair inverse here
+  // and the drawn scale stay identical. A stable string key drives the memo.
+  const refKey = refLines.map((r) => r.price).join(",");
   const priceGeom = useMemo(() => {
     if (!view.length) return { yMin: 0, yMax: 1, H: priceH };
+    const refPrices = refKey ? refKey.split(",").map(Number) : [];
     const overlayVals = computed.price.flatMap((o) => o.series.filter((v): v is number => v !== null));
-    const min = Math.min(...view.map((b) => b.l), ...overlayVals);
-    const max = Math.max(...view.map((b) => b.h), ...overlayVals);
+    const min = Math.min(...view.map((b) => b.l), ...overlayVals, ...refPrices);
+    const max = Math.max(...view.map((b) => b.h), ...overlayVals, ...refPrices);
     const pad = (max - min) * 0.06 || max * 0.02 || 1;
     return { yMin: min - pad, yMax: max + pad, H: priceH };
-  }, [view, computed.price, priceH]);
+  }, [view, computed.price, priceH, refKey]);
 
   const priceAtY = useCallback((py: number) => {
     const { yMin, yMax, H } = priceGeom;
@@ -473,6 +492,7 @@ export function ChartPro({
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
             type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
+            refLines={refLines} compareView={compareView} compareLabel={compare?.label ?? null}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => setHover(null)} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -591,6 +611,18 @@ interface PaneGeom {
   intraday: boolean;
 }
 
+export interface RefLine {
+  price: number;
+  label: string;
+  dir: "up" | "down";
+}
+
+export interface CompareSeries {
+  label: string;
+  /** Aligned 1:1 with the full `bars` array; null where the index has no bar. */
+  series: (number | null)[];
+}
+
 function niceTicks(min: number, max: number, count = 4): number[] {
   if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return [min];
   return Array.from({ length: count + 1 }, (_, i) => min + ((max - min) * i) / count);
@@ -599,9 +631,11 @@ function niceTicks(min: number, max: number, count = 4): number[] {
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
+  refLines, compareView, compareLabel,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
+  refLines: RefLine[]; compareView: (number | null)[] | null; compareLabel: string | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
   onClick: (e: React.PointerEvent<SVGSVGElement>) => void;
   onMove: (e: React.PointerEvent<SVGSVGElement>) => void; onLeave: () => void;
@@ -609,12 +643,27 @@ function PricePane({
   onKey: (e: React.KeyboardEvent<SVGSVGElement>) => void;
 }) {
   const overlayVals = overlays.flatMap((o) => o.series.filter((v): v is number => v !== null));
-  const min = Math.min(...view.map((b) => b.l), ...overlayVals);
-  const max = Math.max(...view.map((b) => b.h), ...overlayVals);
+  const refPrices = refLines.map((r) => r.price);
+  const min = Math.min(...view.map((b) => b.l), ...overlayVals, ...refPrices);
+  const max = Math.max(...view.map((b) => b.h), ...overlayVals, ...refPrices);
   const pad = (max - min) * 0.06 || max * 0.02 || 1;
   const yMin = min - pad;
   const yMax = max + pad;
   const y = (v: number) => 10 + (H - 20) - ((v - yMin) / (yMax - yMin)) * (H - 20);
+
+  // Compare line: its OWN min/max mapped to the pane's pixel band, so it shows
+  // relative SHAPE without touching the price scale, candles or crosshair.
+  const cVals = (compareView ?? []).filter((v): v is number => v !== null);
+  const cMin = cVals.length ? Math.min(...cVals) : 0;
+  const cMax = cVals.length ? Math.max(...cVals) : 1;
+  const cy = (v: number) => 10 + (H - 20) - ((v - cMin) / ((cMax - cMin) || 1)) * (H - 20);
+  const comparePath = compareView
+    ? compareView
+        .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${cy(v).toFixed(1)}`))
+        .filter(Boolean)
+        .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
+        .join(" ")
+    : "";
 
   const linePath = view.map((b, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(b.c).toFixed(1)}`).join(" ");
 
@@ -671,6 +720,35 @@ function PricePane({
               opacity={o.style === "band" ? 0.8 : 1} />
           );
         })}
+
+        {/* VN ceiling/floor reference levels (trần/sàn), on the price scale. */}
+        {refLines.map((r) => (
+          <g key={r.label}>
+            <line
+              x1={PAD.left} x2={PAD.left + plotW} y1={y(r.price)} y2={y(r.price)}
+              className={r.dir === "up" ? "text-up" : "text-down"}
+              stroke="currentColor" strokeWidth={1} strokeDasharray="2 4" opacity={0.7}
+            />
+            <text
+              x={PAD.left + 4} y={y(r.price) - 3} fontSize={10}
+              className={`tnum ${r.dir === "up" ? "text-up" : "text-down"}`} fill="currentColor"
+            >
+              {r.label} {num(r.price, locale, digits)}
+            </text>
+          </g>
+        ))}
+
+        {/* Compare line (e.g. VNINDEX): normalised shape only, not the price scale. */}
+        {comparePath && (
+          <>
+            <path d={comparePath} fill="none" stroke="var(--muted)" strokeWidth={1.5} strokeDasharray="5 3" opacity={0.85} />
+            {compareLabel && (
+              <text x={PAD.left + 4} y={H - 8} fontSize={10} fill="var(--muted)">
+                ┄ {compareLabel}
+              </text>
+            )}
+          </>
+        )}
 
         {/* Drawings map from data space through the same scales as the bars,
             so they stay pinned when the range changes. */}
