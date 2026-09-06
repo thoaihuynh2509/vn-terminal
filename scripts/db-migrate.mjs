@@ -9,9 +9,30 @@
 // Supabase Supavisor on :6543) does not hold across statements. Prefer a direct
 // / session connection here via MIGRATE_DATABASE_URL, falling back to
 // DATABASE_URL for local dev where they are the same.
-const url = process.env.MIGRATE_DATABASE_URL || process.env.DATABASE_URL;
+const raw = process.env.MIGRATE_DATABASE_URL || process.env.DATABASE_URL;
+const url = raw && raw.trim();
 if (!url) {
   console.log("db:migrate — DATABASE_URL is not set, nothing to migrate.");
+  process.exit(0);
+}
+
+// A malformed connection string — an unreplaced "[YOUR-PASSWORD]" placeholder
+// (the brackets parse as an IPv6 host), a password with an unencoded @ # ? / :,
+// or stray quotes/whitespace — makes postgres() throw a raw "Invalid URL" that
+// would fail the WHOLE build (db:migrate && next build). Treat it like an
+// unusable database: warn loudly with the fix and skip (exit 0), so the site
+// still deploys and DB features stay fail-closed at runtime, instead of the
+// deploy dying on an env-var typo.
+const BAD_URL_HINT =
+  "MIGRATE_DATABASE_URL is not a valid Postgres URL. Check that: (1) the " +
+  "[YOUR-PASSWORD] placeholder is actually replaced, (2) special characters in " +
+  "the password are percent-encoded (@ -> %40, # -> %23, / -> %2F, : -> %3A), " +
+  "(3) there are no surrounding quotes or spaces. Use the :5432 Session/Direct " +
+  "string from Supabase -> Connect.";
+try {
+  new URL(url);
+} catch {
+  console.error(`db:migrate — skipped: ${BAD_URL_HINT}`);
   process.exit(0);
 }
 
@@ -35,9 +56,15 @@ const [{ default: postgres }, { runMigrations }] = await Promise.all([
 ]);
 
 // The ledger bootstrap re-emits "already exists, skipping" on every run.
-const sql = postgres(url, {
-  prepare: false, max: 1, idle_timeout: 20, connect_timeout: 10, onnotice: () => {},
-});
+let sql;
+try {
+  sql = postgres(url, {
+    prepare: false, max: 1, idle_timeout: 20, connect_timeout: 10, onnotice: () => {},
+  });
+} catch {
+  console.error(`db:migrate — skipped: ${BAD_URL_HINT}`);
+  process.exit(0);
+}
 
 let timer;
 const timeout = new Promise((_resolve, reject) => {
