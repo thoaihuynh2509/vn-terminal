@@ -28,45 +28,49 @@ export function dirClass(dir: Dir): string {
 }
 
 /**
- * Formatter cache.
+ * Deterministic decimal formatting — grouping and decimal separators are chosen
+ * by us, NOT by `Intl.NumberFormat`'s ICU locale data.
  *
- * `new Intl.NumberFormat(...)` is expensive — it resolves locale data on every
- * construction. A chart calls these formatters hundreds of times per frame (one
- * per axis tick, per read-out, per Fibonacci level), and a CPU profile of a pan
- * put `num` and `dateOnly` among the hottest functions in the page purely from
- * rebuilding formatters that never change. Keyed by the arguments that vary.
+ * Why not Intl: a trimmed server runtime (e.g. serverless) can resolve the
+ * `vi-VN` grouping separator differently from the visitor's browser — "99.000"
+ * vs "99,000". When such a string is produced inside a client component, the
+ * server-rendered markup and the browser's first render disagree, React aborts
+ * hydration, and the whole route shows a generic client-side exception. Forming
+ * the digit string ourselves makes the output byte-identical on every runtime,
+ * which is the only way to keep hydration safe. (Currency and dates below still
+ * use Intl — they are not rendered thousand-grouped inside a client component.)
  */
-const numCache = new Map<string, Intl.NumberFormat>();
-function nf(t: string, digits?: number, extra?: "signed" | "usd"): Intl.NumberFormat {
-  const key = `${t}:${digits ?? ""}:${extra ?? ""}`;
-  let f = numCache.get(key);
-  if (!f) {
-    const opts: Intl.NumberFormatOptions = digits === undefined
-      ? {}
-      : { minimumFractionDigits: digits, maximumFractionDigits: digits };
-    if (extra === "signed") opts.signDisplay = "exceptZero";
-    if (extra === "usd") { opts.style = "currency"; opts.currency = "USD"; }
-    f = new Intl.NumberFormat(t, opts);
-    numCache.set(key, f);
-  }
-  return f;
+function seps(locale: Locale): { grp: string; dec: string } {
+  return locale === "vi" ? { grp: ".", dec: "," } : { grp: ",", dec: "." };
 }
 
-const dateCache = new Map<string, Intl.DateTimeFormat>();
-function df(t: string, key: string, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const k = `${t}:${key}`;
-  let f = dateCache.get(k);
-  if (!f) { f = new Intl.DateTimeFormat(t, opts); dateCache.set(k, f); }
-  return f;
+function groupInt(intPart: string, grp: string): string {
+  return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, grp);
+}
+
+function fmt(v: number, locale: Locale, opts: { digits?: number; signed?: boolean } = {}): string {
+  const { grp, dec } = seps(locale);
+  const abs = Math.abs(v);
+  // `digits` undefined mirrors Intl's decimal default: up to 3 fraction digits,
+  // trailing zeros trimmed. Fixed `digits` keeps the zeros (e.g. "1,50").
+  const raw = opts.digits === undefined ? abs.toFixed(3) : abs.toFixed(opts.digits);
+  const dot = raw.indexOf(".");
+  let intPart = dot === -1 ? raw : raw.slice(0, dot);
+  let frac = dot === -1 ? "" : raw.slice(dot + 1);
+  if (opts.digits === undefined) frac = frac.replace(/0+$/, "");
+  intPart = groupInt(intPart, grp);
+  const body = frac ? `${intPart}${dec}${frac}` : intPart;
+  const sign = v < 0 ? "-" : opts.signed && v > 0 ? "+" : "";
+  return sign + body;
 }
 
 export function num(v: number, locale: Locale, digits = 2): string {
-  return nf(tag(locale), digits).format(v);
+  return fmt(v, locale, { digits });
 }
 
 /** Always signed — the sign is part of the non-color encoding of direction. */
 export function signed(v: number, locale: Locale, digits = 2): string {
-  return nf(tag(locale), digits, "signed").format(v);
+  return fmt(v, locale, { digits, signed: true });
 }
 
 export function pct(v: number, locale: Locale, digits = 2): string {
@@ -79,7 +83,7 @@ export function volume(v: number, locale: Locale): string {
   if (v >= 1e9) return `${num(v / 1e9, locale, 2)}${vi ? " tỷ" : "B"}`;
   if (v >= 1e6) return `${num(v / 1e6, locale, 2)}${vi ? " tr" : "M"}`;
   if (v >= 1e3) return `${num(v / 1e3, locale, 1)}${vi ? " ng" : "K"}`;
-  return nf(tag(locale)).format(v);
+  return fmt(v, locale);
 }
 
 /**
@@ -89,12 +93,33 @@ export function volume(v: number, locale: Locale): string {
 export function vnd(v: number, locale: Locale): string {
   const vi = locale === "vi";
   if (v >= 1e6) return `${num(v / 1e6, locale, 2)} ${vi ? "triệu" : "M ₫"}`;
-  return `${nf(tag(locale)).format(v)} ${vi ? "đ" : "₫"}`;
+  return `${fmt(v, locale)} ${vi ? "đ" : "₫"}`;
+}
+
+/**
+ * USD keeps Intl currency formatting (symbol placement is locale-specific and
+ * this value is never rendered thousand-grouped inside a client component).
+ */
+const usdCache = new Map<string, Intl.NumberFormat>();
+function usdFmt(locale: Locale, digits: number): Intl.NumberFormat {
+  const t = tag(locale);
+  const key = `${t}:${digits}`;
+  let f = usdCache.get(key);
+  if (!f) {
+    f = new Intl.NumberFormat(t, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    usdCache.set(key, f);
+  }
+  return f;
 }
 
 export function usd(v: number, locale: Locale): string {
   const digits = v >= 1000 ? 0 : v >= 1 ? 2 : 6;
-  return nf(tag(locale), digits, "usd").format(v);
+  return usdFmt(locale, digits).format(v);
 }
 
 /** Market cap / turnover, compact. */
@@ -109,6 +134,20 @@ export function compactUsd(v: number, locale: Locale): string {
 /** VN equities are quoted in thousands of dong: 62.7 on the wire = 62,700 ₫. */
 export function equityPrice(v: number, locale: Locale): string {
   return num(v, locale, 2);
+}
+
+/**
+ * Date/time formatting stays on Intl — it pins an explicit `timeZone`, so the
+ * output does not vary with the host's clock, and calendar strings are not
+ * rendered in a hydration-sensitive client path the way prices are. The cache
+ * avoids rebuilding a formatter per axis tick on a chart pan (a hot path).
+ */
+const dateCache = new Map<string, Intl.DateTimeFormat>();
+function df(t: string, key: string, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const k = `${t}:${key}`;
+  let f = dateCache.get(k);
+  if (!f) { f = new Intl.DateTimeFormat(t, opts); dateCache.set(k, f); }
+  return f;
 }
 
 export function dateTime(iso: string | number, locale: Locale): string {
