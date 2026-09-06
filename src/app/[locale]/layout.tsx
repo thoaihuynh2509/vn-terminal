@@ -7,6 +7,7 @@ import { Header } from "@/components/Header";
 import { ThemeScript } from "@/components/ThemeScript";
 import { TickerStrip } from "@/components/TickerStrip";
 import { WatchlistSync } from "@/components/WatchlistSync";
+import { Analytics } from "@/components/Analytics";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { getSession } from "@/lib/auth/session";
 import { VN30 } from "@/lib/providers/vnstock";
@@ -75,6 +76,7 @@ export default async function LocaleLayout({
         <Header locale={locale} dict={dict} email={session?.email ?? null} tier={session?.tier ?? "anon"} symbols={[...VN30]} />
         <TickerStrip locale={locale} />
         <WatchlistSync email={session?.email ?? null} />
+        <Analytics />
         <main id="main" className="mx-auto max-w-[1400px] px-4 py-6">
           {children}
         </main>

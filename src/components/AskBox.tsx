@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { getDict } from "@/lib/i18n";
 import type { Locale } from "@/lib/types";
+import { track } from "@/lib/analytics/posthog";
 
 interface Turn {
   question: string;
@@ -60,6 +61,7 @@ export function AskBox({ locale, isMock, symbol, compact = false }: {
       setQuestion("");
       // The server returns this only while the free teaser is being spent.
       if (typeof json.data.freeRemaining === "number") setFreeLeft(json.data.freeRemaining);
+      track("ai_asked", { teaser: typeof json.data.freeRemaining === "number" });
     } catch {
       setError(dict.ask.error);
     } finally {

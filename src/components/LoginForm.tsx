@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { AuthProvider } from "@/lib/auth/provider";
 import type { Dict } from "@/lib/i18n";
 import type { Locale, Tier } from "@/lib/types";
+import { track } from "@/lib/analytics/posthog";
 
 /**
  * Passwordless sign-in form.
@@ -40,6 +41,7 @@ export function LoginForm({
     if (busy) return;
     setBusy(true);
     setError(null);
+    track("signin_started", { provider });
     const magic = provider === "magic";
     try {
       const res = await fetch(magic ? "/api/auth/magic/request" : "/api/auth/login", {

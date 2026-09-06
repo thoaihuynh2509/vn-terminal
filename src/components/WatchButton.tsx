@@ -1,6 +1,7 @@
 "use client";
 
 import { useStored, writeStored } from "@/lib/browser-store";
+import { track } from "@/lib/analytics/posthog";
 import {
   hasWrites,
   markLocalWrite,
@@ -102,6 +103,7 @@ export function toggleWatch(symbol: string) {
   const on = list.includes(symbol);
   setWatchlist(on ? list.filter((s) => s !== symbol) : [...list, symbol]);
   markLocalWrite();
+  if (!on) track("watchlist_added", { symbol }); // adding is the activation signal
 
   // Signed out, or not yet claimed: localStorage is the whole story.
   if (!readWatchlistOwner()) return;

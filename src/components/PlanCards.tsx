@@ -8,6 +8,7 @@ import { Card } from "@/components/ui";
 import { atLeast, type Tier } from "@/lib/auth/entitlement";
 import { annualSavingPct, priceFor, type Plan } from "@/lib/billing/plans";
 import type { Provider } from "@/lib/billing/providers";
+import { track } from "@/lib/analytics/posthog";
 import { vnd } from "@/lib/format";
 import { href } from "@/lib/i18n";
 import type { Dict } from "@/lib/i18n";
@@ -63,6 +64,7 @@ export function PlanCards({
           const body = await res.json();
           const status = body?.data?.status;
           if (status === "paid") {
+            track("purchase_completed", { tier: body.data.tier, plan: body.data.plan });
             await fetch("/api/auth/refresh", { method: "POST" });
             if (stop) return;
             setPaidTier(body.data.tier === "pro" ? dict.pricing.pro : dict.pricing.plus);
@@ -96,6 +98,7 @@ export function PlanCards({
     if (busy) return;
     setBusy(target);
     setError(null);
+    track("checkout_started", { tier: target, plan, provider: method });
     try {
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
