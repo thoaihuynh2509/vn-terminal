@@ -8,7 +8,7 @@
  * `schema_migrations` itself is created by the runner, not by a migration —
  * the ledger has to exist before anything can be recorded in it.
  */
-export const MIGRATIONS: readonly { id: string; sql: string }[] = [
+export const MIGRATIONS = [
   {
     id: "001_init",
     sql: `

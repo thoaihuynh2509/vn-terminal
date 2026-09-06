@@ -17,7 +17,7 @@ if (!url) {
 
 const [{ default: postgres }, { runMigrations }] = await Promise.all([
   import("postgres"),
-  import("../packages/core/src/db/migrate.ts"),
+  import("../packages/core/src/db/migrate.mjs"),
 ]);
 
 // The ledger bootstrap re-emits "already exists, skipping" on every run.

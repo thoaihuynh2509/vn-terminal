@@ -2,14 +2,13 @@
  * Migration runner. Invoked by `npm run db:migrate`, NEVER from a request:
  * DDL on cold start races between serverless instances.
  */
-import type postgres from "postgres";
-import { MIGRATIONS } from "./migrations.ts";
+import { MIGRATIONS } from "./migrations.mjs";
 
 /** Arbitrary but fixed: every deploy must contend for the same advisory lock. */
 const LOCK_ID = 4198320145;
 
 /** Applies every migration not yet recorded. Returns the ids it ran. */
-export async function runMigrations(sql: postgres.Sql): Promise<string[]> {
+export async function runMigrations(sql) {
   // The one permitted IF NOT EXISTS: the ledger bootstraps itself.
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations (
     id text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
@@ -21,7 +20,7 @@ export async function runMigrations(sql: postgres.Sql): Promise<string[]> {
   try {
     await conn`SELECT pg_advisory_lock(${LOCK_ID}::bigint)`;
     try {
-      const rows = await conn<{ id: string }[]>`SELECT id FROM schema_migrations`;
+      const rows = await conn`SELECT id FROM schema_migrations`;
       const applied = new Set(rows.map((r) => r.id));
       const known = new Set(MIGRATIONS.map((m) => m.id));
       for (const id of applied) {
@@ -32,7 +31,7 @@ export async function runMigrations(sql: postgres.Sql): Promise<string[]> {
         }
       }
 
-      const ran: string[] = [];
+      const ran = [];
       for (const m of MIGRATIONS) {
         if (applied.has(m.id)) continue;
         // Explicit transaction control rather than sql.begin: a reserved
