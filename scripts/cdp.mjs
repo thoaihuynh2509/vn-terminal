@@ -642,6 +642,68 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── saved layouts (P1-6) ──────────────────────────────────────
+    // LAYOUT_LIMIT existed with no consumer: the cap guarded writes that could
+    // not happen. These checks are what makes it a real gate.
+    await s.evaluate("localStorage.removeItem('layouts')");
+    // A pro cookie is already set by this point in the run, so being anonymous
+    // has to be arranged rather than assumed.
+    await s.send("Network.deleteCookies", { name: "vnt_session", url: BASE });
+    await s.goto(BASE + "/vi/bieu-do/VNM?tf=1W&ind=rsi&type=line", { scheme: "light" });
+    await s.evaluate(`[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === 'Bố cục')?.click()`);
+    await sleep(300);
+    const anonLayouts = await s.evaluate(`document.querySelector('#layout-name') ? 'form' : (document.querySelector('[role=tabpanel]')?.innerText ?? '')`);
+    check("anon is asked to sign in rather than shown a dead form",
+      anonLayouts !== "form" && /Đăng nhập/.test(String(anonLayouts)), String(anonLayouts).slice(0, 40));
+
+    if (secret) {
+      await asTier("free");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1W&ind=rsi&type=line", { scheme: "light" });
+      await s.evaluate(`[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === 'Bố cục')?.click()`);
+      await sleep(300);
+      check("a signed-in reader gets the save form",
+        (await s.evaluate(`!!document.querySelector('#layout-name')`)) === true);
+
+      const type = async (v) => s.evaluate(`(() => {
+        const i = document.querySelector('#layout-name');
+        const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        set.call(i, ${JSON.stringify(v)});
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      await type("Tuan VNM");
+      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Lưu bố cục hiện tại')?.click()`);
+      await sleep(400);
+      const stored = await s.evaluate(`localStorage.getItem('layouts')`);
+      check("saving writes the layout to this device", /Tuan VNM/.test(String(stored)), String(stored).slice(0, 70));
+      // The capture must be of the chart actually on screen, not a default one.
+      check("the saved layout captured the current setup",
+        /"tf":"1W"/.test(String(stored)) && /"type":"line"/.test(String(stored)) && /"rsi"/.test(String(stored)),
+        String(stored).slice(0, 120));
+
+      // Free gets exactly one slot, and the second save must say so.
+      await type("Second");
+      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Lưu bố cục hiện tại')?.click()`);
+      await sleep(400);
+      const capped = await s.evaluate(`document.querySelector('[aria-live=polite]')?.innerText ?? ''`);
+      check("free hits the one-layout ceiling and is told why",
+        /giới hạn/.test(capped), capped.slice(0, 60));
+      check("the refused layout was not stored",
+        !/Second/.test(String(await s.evaluate(`localStorage.getItem('layouts')`))));
+
+      // Recall: from a bare chart, opening the layout must restore the setup.
+      await s.goto(BASE + "/vi/bieu-do/FPT", { scheme: "light" });
+      await s.evaluate(`[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === 'Bố cục')?.click()`);
+      await sleep(300);
+      check("a saved layout survives a reload",
+        (await s.evaluate(`/Tuan VNM/.test(document.querySelector('[role=tabpanel]')?.innerText ?? '')`)) === true);
+      await s.evaluate(`[...document.querySelectorAll('[role=tabpanel] button')].find(b => /Tuan VNM/.test(b.textContent))?.click()`);
+      const recalled = await s.waitFor(`location.pathname.includes('/VNM') && location.search.includes('tf=1W') ? location.pathname + location.search : null`, 6000);
+      check("opening a layout restores its chart", !!recalled, String(recalled));
+
+      await s.evaluate("localStorage.removeItem('layouts')");
+      await asTier("pro");
+    }
+
     // ── indicator periods are tunable (P2-10) ─────────────────────
     // Tuning is free, so this runs without a session. The knob hangs off the
     // legend chip; the chart, the pane label and the URL must all agree

@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/editorial";
 import { PlanCards } from "@/components/PlanCards";
-import { ALERT_LIMIT, DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
+import { ALERT_LIMIT, DRAWING_LIMIT, INDICATOR_LIMIT, LAYOUT_LIMIT, can } from "@/lib/auth/entitlement";
 import { COMPARE_LIMIT } from "@/lib/chart/compare";
 import { anyProviderEnabled, enabledProviders } from "@/lib/billing/providers";
 import { getSession } from "@/lib/auth/session";
@@ -52,6 +52,9 @@ export async function PricingView({ locale }: { locale: Locale }) {
     { label: dict.pricing.fAlertEmail, values: TIERS.map((t) => can(t, "alerts:email")) },
     { label: dict.pricing.fMulti, values: TIERS.map((t) => can(t, "chart:multi")) },
     { label: dict.pricing.fDrawings, values: TIERS.map((t) => String(DRAWING_LIMIT[t])) },
+    // A count for the same reason: layouts and indicator templates share one
+    // budget, so the matrix states the single number the server enforces.
+    { label: dict.pricing.fLayouts, values: TIERS.map((t) => String(LAYOUT_LIMIT[t])) },
     { label: dict.pricing.fSync, values: TIERS.map((t) => can(t, "sync:docs")) },
   ];
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertPanel } from "@/components/chart/AlertPanel";
+import { LayoutsTab } from "@/components/chart/LayoutsTab";
 import { AskBox } from "@/components/AskBox";
 import { Sparkline } from "@/components/Sparkline";
 import { WATCH_KEY, parseWatchlist, useWatchlistRaw } from "@/components/WatchButton";
@@ -17,8 +18,8 @@ import { PATHS, type Dict } from "@/lib/i18n";
 import { useDismiss } from "@/lib/ui/use-dismiss";
 import type { Locale, Quote, Tier } from "@/lib/types";
 
-type Tab = "watch" | "alerts" | "ask";
-const TABS: Tab[] = ["watch", "alerts", "ask"];
+type Tab = "watch" | "alerts" | "layouts" | "ask";
+const TABS: Tab[] = ["watch", "alerts", "layouts", "ask"];
 const TAB_KEY = "rail:tab";
 
 const asTab = (v: string | null | undefined): Tab | null => (TABS.includes(v as Tab) ? (v as Tab) : null);
@@ -46,7 +47,7 @@ export function ChartRail({
   // should open on its tab without overwriting what this reader last chose.
   const [forced, setForced] = useState<Tab | null>(() => asTab(initialTab));
   const tab: Tab = forced ?? asTab(stored) ?? "watch";
-  const label: Record<Tab, string> = { watch: dict.chart.tabWatch, alerts: dict.chart.tabAlerts, ask: dict.chart.tabAsk };
+  const label: Record<Tab, string> = { watch: dict.chart.tabWatch, alerts: dict.chart.tabAlerts, layouts: dict.chart.tabLayouts, ask: dict.chart.tabAsk };
 
   // Sheet state only matters below `lg`; the desktop panel is always shown.
   // A URL that names a tab opens the sheet — that is what the link promised.
@@ -141,6 +142,9 @@ export function ChartRail({
         {tab === "watch" && <WatchTab locale={locale} dict={dict} symbol={symbol} board={board} />}
         {tab === "alerts" && (
           <AlertPanel indicators={indicators} symbol={symbol} current={current} previous={previous} locale={locale} dict={dict} tier={tier} />
+        )}
+        {tab === "layouts" && (
+          <LayoutsTab locale={locale} dict={dict} tier={tier} symbol={symbol} />
         )}
         {tab === "ask" && (
           can(tier, "use:ai-assistant") ? (

@@ -190,5 +190,17 @@ Each entry: what · where · symptom · evidence · date · status.
   rejected. P0-1 existed precisely to delete claims the product does not honour, and adding one
   back for an unbuilt feature would be the same defect. The honest differentiator for a tuned
   setup today is the existing "Đồng bộ đa thiết bị" (`sync:docs`) row, which is accurate.
-- **Status:** OPEN — P1-6's UI half is outstanding. Until it lands, describe P2-10 as "tuning is
-  free; keeping your setup across devices is Plus", which is what the code actually does.
+- **Status:** RESOLVED 2026-09-07. `src/components/chart/LayoutsTab.tsx` is the missing consumer:
+  a "Bố cục" rail tab that saves, opens, renames and deletes named setups. `LAYOUT_LIMIT` is now
+  reachable — free hits its single slot and is told why — so the pricing matrix gained an honest
+  "Bố cục đã lưu 1/5/25" row alongside the existing drawings and alerts counts.
+  Two notes on the shape it took. What is captured is the ADDRESS BAR, not chart internals: P1-12
+  already made the URL the source of truth for symbol, interval, indicators, grid and range, so
+  the rail cannot fall out of step with what is on screen. And `useSyncedDoc` is deliberately not
+  used — it reconciles ONE document on a debounce, which suits drawings; saving a layout is a
+  deliberate click, and there is one document per name, so the tab pushes on save and merges the
+  account's list once on mount.
+  **Still unverified end to end:** the synced (plus+) path writes through `/api/docs`, which needs
+  migration 006. `MIGRATE_DATABASE_URL` is still malformed in production, so cross-device layouts
+  cannot be exercised against a real database yet. The merge rule itself is unit-tested, and the
+  path fails soft — a reader whose sync is unavailable keeps working locally and sees no error.
