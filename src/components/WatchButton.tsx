@@ -10,7 +10,9 @@ import {
   type PendingWrites,
 } from "@/lib/watchlist-sync";
 
-const KEY = "watchlist";
+/** Exported so other surfaces read the same list rather than a second copy. */
+export const WATCH_KEY = "watchlist";
+const KEY = WATCH_KEY;
 /** Set once a signed-in reader has claimed this browser's list; see WatchlistSync. */
 const OWNER_KEY = "watchlist:owner";
 

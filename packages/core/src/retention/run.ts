@@ -16,6 +16,7 @@ import { num } from "../format.ts";
 import { siteUrl } from "../site.ts";
 import type { Locale } from "../types.ts";
 import type { Brief } from "../brief.ts";
+import type { NearLevel } from "./levels.ts";
 
 export interface QuoteLite {
   symbol: string;
@@ -182,4 +183,57 @@ export function teaserEmail(
     : `You're on the free plan of VN Terminal. A paid plan adds the full indicator library, price alerts delivered by email, two-symbol compare and the AI assistant.\n\nSee plans: ${links.pricingUrl}`;
   const foot = vi ? `\n\nHuỷ nhận email: ${links.unsubUrl}\n` : `\n\nUnsubscribe: ${links.unsubUrl}\n`;
   return { subject, text: `${body}${foot}` };
+}
+
+/**
+ * The personal half of the daily brief.
+ *
+ * The market summary is the same for everyone; this is the part that is only
+ * true for one reader — their watchlist moved, their alert fired, price walked
+ * up to a line they drew. It is what turns a newsletter into a reason to open
+ * the chart, and every line carries the link that gets them there.
+ *
+ * Returns null when there is nothing personal to say. An empty "since yesterday"
+ * heading is worse than none: it teaches the reader the section is noise.
+ */
+export function personalNote(
+  locale: Locale,
+  data: {
+    movers: { symbol: string; changePct: number }[];
+    fired: PriceAlert[];
+    levels: NearLevel[];
+  },
+  limit = 4,
+): string | null {
+  const vi = locale === "vi";
+  const seg = vi ? "bieu-do" : "chart";
+  const link = (symbol: string) =>
+    `${siteUrl()}/${locale}/${seg}/${symbol.toUpperCase()}?src=brief`;
+
+  const lines: string[] = [];
+
+  for (const a of data.fired.slice(0, limit)) {
+    lines.push(vi
+      ? `• ${a.symbol}: cảnh báo đã kích hoạt tại ${num(a.price, locale)}\n  ${link(a.symbol)}`
+      : `• ${a.symbol}: alert triggered at ${num(a.price, locale)}\n  ${link(a.symbol)}`);
+  }
+
+  for (const l of data.levels.slice(0, limit)) {
+    const away = num(Math.abs(l.distancePct), locale, 2);
+    lines.push(vi
+      ? `• ${l.symbol}: giá đang cách mức bạn vẽ (${num(l.price, locale)}) ${away}%\n  ${link(l.symbol)}`
+      : `• ${l.symbol}: price is ${away}% from your level at ${num(l.price, locale)}\n  ${link(l.symbol)}`);
+  }
+
+  // Movers last: the least personal of the three, and the first to cut.
+  for (const m of data.movers.slice(0, limit)) {
+    const sign = m.changePct >= 0 ? "+" : "";
+    lines.push(vi
+      ? `• ${m.symbol}: ${sign}${num(m.changePct, locale, 2)}%\n  ${link(m.symbol)}`
+      : `• ${m.symbol}: ${sign}${num(m.changePct, locale, 2)}%\n  ${link(m.symbol)}`);
+  }
+
+  if (lines.length === 0) return null;
+  const head = vi ? "TỪ HÔM QUA — theo dõi của bạn" : "SINCE YESTERDAY — your watchlist";
+  return `${head}\n${lines.join("\n")}`;
 }

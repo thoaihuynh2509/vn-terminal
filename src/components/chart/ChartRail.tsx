@@ -5,8 +5,12 @@ import Link from "next/link";
 import { AlertPanel } from "@/components/chart/AlertPanel";
 import { AskBox } from "@/components/AskBox";
 import { Sparkline } from "@/components/Sparkline";
-import { parseWatchlist, useWatchlistRaw } from "@/components/WatchButton";
+import { WATCH_KEY, parseWatchlist, useWatchlistRaw } from "@/components/WatchButton";
 import { useStored, writeStored } from "@/lib/browser-store";
+import { STREAK_KEY, bumpStreak, parseStreak } from "@/lib/retention/streak";
+import { isEditable } from "@/lib/chart/tf-keys";
+import { track } from "@/lib/analytics/posthog";
+import { useRouter } from "next/navigation";
 import { can } from "@/lib/auth/entitlement";
 import { dirOf, equityPrice, pct } from "@/lib/format";
 import { PATHS, type Dict } from "@/lib/i18n";
@@ -57,6 +61,48 @@ export function ChartRail({
     return () => document.body.classList.remove("pb-11", "lg:pb-0");
   }, []);
 
+  // ── the quiet habit loop ──────────────────────────────────────────────────
+  // Counted on the client because it is the reader's own habit, kept in their
+  // own browser; nothing about it is worth a row in our database.
+  const router = useRouter();
+  const storedStreak = useStored(STREAK_KEY);
+  const streak = parseStreak(storedStreak);
+  useEffect(() => {
+    const next = bumpStreak(parseStreak(storedStreak));
+    // bumpStreak returns the SAME object for a second visit the same day, so a
+    // reader who leaves the chart open does not write once per render.
+    if (next === parseStreak(storedStreak)) return;
+    const current = parseStreak(storedStreak);
+    if (current && current.lastDay === next.lastDay && current.count === next.count) return;
+    writeStored(STREAK_KEY, JSON.stringify(next));
+    track("streak_day", { streak: next.count });
+    // Effect deps intentionally exclude `streak`: this runs off the stored
+    // value, and depending on the parsed object would re-run every render.
+  }, [storedStreak]);
+
+  // j/k walks the watchlist without leaving the chart — the two-minute morning
+  // review is "next, next, next", and reaching for the mouse each time is what
+  // makes people stop doing it.
+  const storedWatch = useStored(WATCH_KEY);
+  useEffect(() => {
+    const list = parseWatchlist(storedWatch);
+    if (list.length < 2) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "j" && e.key !== "k") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isEditable(e.target as { tagName?: string; isContentEditable?: boolean } | null)) return;
+      const here = list.indexOf(symbol.toUpperCase());
+      const step = e.key === "j" ? 1 : -1;
+      // Wraps, so the list is a loop rather than a dead end at either end.
+      const next = list[(((here === -1 ? 0 : here) + step) % list.length + list.length) % list.length];
+      if (!next || next === symbol.toUpperCase()) return;
+      e.preventDefault();
+      router.push(`/${locale}/${PATHS.terminal[locale]}/${next}`);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [storedWatch, symbol, locale, router]);
+
   const pick = (t: Tab) => {
     setForced(null);
     writeStored(TAB_KEY, t);
@@ -76,6 +122,12 @@ export function ChartRail({
             {label[t]}
           </button>
         ))}
+        {streak && streak.count > 1 && (
+          <span className="hidden shrink-0 items-center px-2 text-[11px] text-muted lg:flex"
+            title={dict.chart.streak.replace("{n}", String(streak.count))}>
+            {dict.chart.streak.replace("{n}", String(streak.count))}
+          </span>
+        )}
       </div>
       <div role="tabpanel" id={`rail-panel-${tab}`} aria-labelledby={`rail-tab-${tab}`}
         className={`${sheet ? "fixed" : "hidden"} inset-x-0 bottom-11 z-40 max-h-[70dvh] overflow-y-auto rounded-t-[10px] border-t border-line bg-surface p-3.5 shadow-lg lg:static lg:block lg:max-h-none lg:overflow-visible lg:rounded-none lg:border-0 lg:shadow-none`}>

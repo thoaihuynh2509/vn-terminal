@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PriceAlert } from "../alerts/alerts.ts";
-import { alertEmail, alertSymbols, briefEmail, renewalDue, renewalEmail, runUserAlerts, teaserEmail, type QuoteLite } from "./run.ts";
+import { alertEmail, alertSymbols, briefEmail, personalNote, renewalDue, renewalEmail, runUserAlerts, teaserEmail, type QuoteLite } from "./run.ts";
 import type { Brief } from "../brief.ts";
 
 const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
@@ -157,4 +157,48 @@ test("a price alert is unaffected by the indicator plumbing", () => {
     quotes, 100, new Map([["VNM:rsi14", { current: 5 }]]),
   );
   assert.equal(run.fired.length, 1, "a low RSI reading must not suppress a price alert");
+});
+
+// ── the personal half of the brief ──────────────────────────────────────────
+
+test("nothing personal to say produces no section at all", () => {
+  // An empty "since yesterday" heading teaches the reader the section is noise.
+  assert.equal(personalNote("vi", { movers: [], fired: [], levels: [] }), null);
+});
+
+test("a fired alert, a near level and a mover each get a line and a link", () => {
+  const note = personalNote("vi", {
+    movers: [{ symbol: "FPT", changePct: 3.2 }],
+    fired: [{ id: "a", symbol: "VNM", condition: "above", price: 65, createdAt: 0, triggeredAt: 1 }],
+    levels: [{ symbol: "HPG", price: 27.5, distancePct: -0.4, kind: "hline" }],
+  })!;
+  assert.match(note, /VNM/);
+  assert.match(note, /HPG/);
+  assert.match(note, /FPT/);
+  // Every line must be able to get the reader back to the chart, attributed.
+  assert.equal((note.match(/src=brief/g) ?? []).length, 3);
+});
+
+test("the section is capped so a long watchlist cannot become the whole email", () => {
+  const movers = Array.from({ length: 40 }, (_, i) => ({ symbol: `S${i}`, changePct: 1 }));
+  const note = personalNote("vi", { movers, fired: [], levels: [] }, 4)!;
+  assert.equal((note.match(/src=brief/g) ?? []).length, 4);
+});
+
+test("the reader's own signals outrank the market's", () => {
+  // Alerts and drawn levels are things they asked for; a mover is just news.
+  const note = personalNote("en", {
+    movers: [{ symbol: "MOVER", changePct: 5 }],
+    fired: [{ id: "a", symbol: "ALERT", condition: "above", price: 1, createdAt: 0, triggeredAt: 1 }],
+    levels: [{ symbol: "LEVEL", price: 2, distancePct: 0.1, kind: "hline" }],
+  })!;
+  assert.ok(note.indexOf("ALERT") < note.indexOf("LEVEL"));
+  assert.ok(note.indexOf("LEVEL") < note.indexOf("MOVER"));
+});
+
+test("the English section links to the English route", () => {
+  const note = personalNote("en", {
+    movers: [{ symbol: "FPT", changePct: 1 }], fired: [], levels: [],
+  })!;
+  assert.match(note, /\/en\/chart\/FPT\?src=brief/);
 });

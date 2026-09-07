@@ -8,7 +8,9 @@ import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBoard, getIndices } from "@/lib/providers/vnstock";
 import { getCoins } from "@/lib/providers/crypto";
 import { cronAuthorized } from "@/lib/retention/cron-auth";
-import { briefEmail } from "@/lib/retention/run";
+import { levelsNearPrice } from "@/lib/retention/levels";
+import { parseDrawings } from "@/lib/chart/drawings";
+import { briefEmail, personalNote } from "@/lib/retention/run";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
@@ -58,15 +60,58 @@ export async function GET(req: Request) {
     const brief = buildBrief("vi", { indices, board, gold, goldHeadline: top, coins, premiumPct });
     const { subject, text } = briefEmail(brief, "vi");
 
+    // The market summary above is identical for everyone. What follows is not:
+    // each subscriber's own watchlist, alerts and drawn levels are what make
+    // this worth opening, and what makes it a reason to go back to the chart.
+    const quotes = new Map(board.map((q) => [q.symbol.toUpperCase(), q]));
+    const nowSec = Math.floor(now.getTime() / 1000);
+
     let emailed = 0;
+    let personalised = 0;
     for (const u of recipients) {
+      let body = text;
       try {
-        if (await sendEmail({ to: u.email, subject, text })) emailed += 1;
+        const [watch, alerts, drawingDocs] = await Promise.all([
+          db.watchlist.list(u.id),
+          db.alerts.list(u.id),
+          db.docs.list(u.id, "drawings"),
+        ]);
+
+        const movers = watch
+          .map((sym) => quotes.get(sym.toUpperCase()))
+          .filter((q): q is NonNullable<typeof q> => !!q)
+          .map((q) => ({ symbol: q.symbol, changePct: q.changePct }))
+          .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));
+
+        const levels = drawingDocs.flatMap((doc) => {
+          const q = quotes.get(doc.key.toUpperCase());
+          if (!q) return [];
+          // Stored as opaque JSON, so it is parsed through the same tolerant
+          // reader the browser uses rather than trusted as a shape.
+          return levelsNearPrice(doc.key, parseDrawings(JSON.stringify(doc.data)), q.price, nowSec);
+        });
+
+        const note = personalNote("vi", {
+          movers,
+          fired: alerts.filter((a) => a.triggeredAt),
+          levels,
+        });
+        if (note) {
+          body = `${text}\n${note}\n`;
+          personalised += 1;
+        }
+      } catch {
+        // A reader whose personal data cannot be read still gets the market
+        // brief — the section is an addition, never a precondition.
+      }
+
+      try {
+        if (await sendEmail({ to: u.email, subject, text: body })) emailed += 1;
       } catch {
         /* one failure must not abort the batch */
       }
     }
-    return NextResponse.json({ ok: true, data: { recipients: recipients.length, emailed } });
+    return NextResponse.json({ ok: true, data: { recipients: recipients.length, emailed, personalised } });
   } catch (err) {
     if (err instanceof DbUnavailableError) {
       return NextResponse.json({ ok: false, error: "cron_not_configured" }, { status: 501 });
