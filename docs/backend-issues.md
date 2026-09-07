@@ -171,3 +171,24 @@ Each entry: what · where · symptom · evidence · date · status.
 - **Status:** FIXED 2026-09-07. The audit now loads one page first and aborts with
   `AUDIT ABORTED: <BASE> did not serve the app` unless the app's own chrome is present. Both paths
   were exercised: green with the server up, clean abort with `BASE=http://localhost:3999`.
+
+## 2026-09-07 — P1-6's saved-layout UI was never built, so its gate is unreachable
+
+- **Where:** `src/components/chart/ChartRail.tsx:20` — `type Tab = "watch" | "alerts" | "ask"`.
+  There is no `LayoutsTab`, and no file under `src/components/chart/` creates a `layout` doc.
+- **Symptom:** the SERVER half of P1-6 shipped and is correct — `DOC_KINDS` includes `layout` and
+  `template`, `docs.ts:99` enforces `LAYOUT_LIMIT` (anon 0 / free 1 / plus 5 / pro 25) across the
+  shared setup pool, and `/api/docs` re-checks it. But nothing in the UI ever writes one, so no
+  reader can reach that gate and `LAYOUT_LIMIT` still has no product consumer — the same condition
+  P1-6 was written to fix, now moved one layer up.
+- **Why it matters to P2-10:** the roadmap draws P2-10's paid line as "tuning is free, SAVING the
+  tuned set is the gate (P1-6 templates)". Half of that is real today. Tuning is free for every
+  tier and the tuned setup does persist, via `settings/chart` (P1-5) — per device for everyone,
+  and synced across devices for plus+ through `sync:docs`. What does not exist is a NAMED saved
+  setup, so the sentence in the roadmap overstates today's product.
+- **Deliberately not papered over:** a pricing row advertising saved setups was considered and
+  rejected. P0-1 existed precisely to delete claims the product does not honour, and adding one
+  back for an unbuilt feature would be the same defect. The honest differentiator for a tuned
+  setup today is the existing "Đồng bộ đa thiết bị" (`sync:docs`) row, which is accurate.
+- **Status:** OPEN — P1-6's UI half is outstanding. Until it lands, describe P2-10 as "tuning is
+  free; keeping your setup across devices is Plus", which is what the code actually does.

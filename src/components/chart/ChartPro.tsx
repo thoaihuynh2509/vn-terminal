@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { barTime, dateOnly, num, volume as fmtVol } from "@/lib/format";
 import { PATHS, type Dict } from "@/lib/i18n";
 import { COLOR_VAR, INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
+import { clampPeriod, effectivePeriod, formatRef, labelFor, parseRef, sameIndicator, shortFor } from "@/lib/ta/params";
 import { IndicatorMenu } from "./IndicatorMenu";
 import { ShareMenu } from "./ShareMenu";
 import { useDismiss } from "@/lib/ui/use-dismiss";
@@ -347,17 +348,22 @@ export function ChartPro({
    * zoom level.
    */
   const allPlots = useMemo(() => {
-    const out: { def: IndicatorDef; plots: Plot[] }[] = [];
-    for (const id of active) {
-      const def = INDICATORS.find((i) => i.id === id);
-      if (def) out.push({ def, plots: def.compute(bars) });
+    const out: { def: IndicatorDef; plots: Plot[]; period: number | null }[] = [];
+    for (const token of active) {
+      const ref = parseRef(token);
+      if (!ref) continue;
+      const def = INDICATORS.find((i) => i.id === ref.id);
+      // A period outside the registry's range is clamped, not refused: a
+      // hand-typed URL should give the longest average the chart supports
+      // rather than a broken pane.
+      if (def) out.push({ def, plots: def.compute(bars, effectivePeriod(def, ref.period)), period: ref.period });
     }
     return out;
   }, [active, bars]);
 
   const computed = useMemo(() => {
     const cut = (p: Plot): Plot => ({ ...p, series: p.series.slice(wStart, wEnd) });
-    const groups = allPlots.map((g) => ({ def: g.def, plots: g.plots.map(cut) }));
+    const groups = allPlots.map((g) => ({ def: g.def, period: g.period, plots: g.plots.map(cut) }));
     return {
       groups,
       price: groups.filter((g) => g.def.pane === "price").flatMap((g) => g.plots),
@@ -383,17 +389,38 @@ export function ChartPro({
       return;
     }
     const prev = activeRef.current;
-    const on = prev.includes(def.id);
+    // By INDICATOR, not by token: clicking RSI while a 21-day RSI is on turns
+    // that one off rather than adding a second RSI beside it.
+    const on = prev.some((t) => sameIndicator(t, def.id));
     if (!on && prev.length >= limit) {
       track("chart_limit_hit", { gate: "indicator", reason: "limit", id: def.id, tier, limit });
       return; // at the tier's ceiling
     }
-    const next = on ? prev.filter((x) => x !== def.id) : [...prev, def.id];
+    const next = on ? prev.filter((t) => !sameIndicator(t, def.id)) : [...prev, def.id];
     activeRef.current = next;
     setActiveChoice(next);
     persistSettings({ indicators: next });
     track("chart_indicator_toggled", { id: def.id, on: !on, active_count: next.length, limit, tier });
   }, [limit, unlocked, tier, persistSettings]);
+
+  /**
+   * Retune an active indicator.
+   *
+   * Free for every tier: a chart whose periods are welded on is a chart you
+   * look at rather than one you work in, and putting the knob behind a paywall
+   * would teach readers it is not theirs. The gate is SAVING the tuned set,
+   * which is a layout slot.
+   */
+  const setPeriod = useCallback((def: IndicatorDef, period: number) => {
+    if (!def.param) return;
+    const p = clampPeriod(def, period);
+    const prev = activeRef.current;
+    const next = prev.map((t) => (sameIndicator(t, def.id) ? formatRef({ id: def.id, period: p }, def) : t));
+    activeRef.current = next;
+    setActiveChoice(next);
+    persistSettings({ indicators: next });
+    track("chart_indicator_tuned", { id: def.id, period: p, tier });
+  }, [persistSettings, tier]);
 
   const PAD = { left: 6, right: 58 };
   const plotW = width - PAD.left - PAD.right;
@@ -635,18 +662,24 @@ export function ChartPro({
         )}
         {/* One chip per indicator, with its value under the cursor and the
             way to remove it — the legend and the off switch are one thing. */}
-        {computed.groups.map(({ def, plots }) => {
+        {computed.groups.map(({ def, period, plots }) => {
           const mine = def.pane === "price" ? plots : [];
           const color = COLOR_VAR[plots[0]?.color ?? "muted"];
           return (
             <div key={def.id} className="flex items-center gap-1.5 rounded border border-line bg-surface pl-1.5">
-              <dt style={{ color }}>{def.short}</dt>
+              {/* The chip names the indicator AND is where its period is set —
+                  the legend is already where a reader looks to see what is on. */}
+              <dt style={{ color }}>
+                {def.param
+                  ? <PeriodChip def={def} period={period} dict={dict} onChange={setPeriod} color={color} />
+                  : shortFor(def, period)}
+              </dt>
               <dd>
                 {mine.length
                   ? mine.map((p) => (p.series[idx] === null ? "—" : num(p.series[idx]!, locale, digits))).join(" / ")
                   : null}
               </dd>
-              <button type="button" onClick={() => toggle(def)} aria-label={`${dict.chart.remove} ${def.label}`}
+              <button type="button" onClick={() => toggle(def)} aria-label={`${dict.chart.remove} ${labelFor(def, period)}`}
                 className="px-1.5 py-0.5 text-[11px] leading-none text-muted hover:text-down">
                 <span aria-hidden="true">×</span>
               </button>
@@ -734,10 +767,10 @@ export function ChartPro({
               net={foreignView} label={foreign?.label ?? "Khối ngoại"} locale={locale}
             />
           )}
-          {computed.panes.map(({ def, plots }) => (
+          {computed.panes.map(({ def, period, plots }) => (
             <OscillatorPane
               intraday={intraday}
-              key={def.id} def={def} plots={plots} width={width}
+              key={def.id} def={def} period={period} plots={plots} width={width}
               band={band} x={x} PAD={PAD} hover={hover} idx={idx} locale={locale}
             />
           ))}
@@ -880,6 +913,84 @@ export interface CompareSeries {
   label: string;
   /** Aligned 1:1 with the full `bars` array; null where the index has no bar. */
   series: (number | null)[];
+}
+
+/**
+ * The period control, hung off the legend chip.
+ *
+ * A popover rather than a dialog: retuning an indicator is an adjustment made
+ * while looking at the chart, and a modal would hide the thing being tuned.
+ * The chip itself stays the label, so nothing is added to the toolbar.
+ *
+ * Committed on blur/Enter rather than per keystroke — typing "1" on the way to
+ * "150" must not recompute the chart at period 1 and jump the scale.
+ */
+function PeriodChip({
+  def, period, dict, onChange, color,
+}: {
+  def: IndicatorDef; period: number | null; dict: Dict;
+  onChange: (def: IndicatorDef, period: number) => void; color: string;
+}) {
+  const current = effectivePeriod(def, period);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(String(current));
+  const wrap = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(wrap, open, close);
+
+  const commit = (raw: string) => {
+    const n = Number(raw);
+    // A blank or nonsense entry restores what was there — never silently 0.
+    onChange(def, Number.isFinite(n) && n > 0 ? n : current);
+    setDraft(String(Number.isFinite(n) && n > 0 ? clampPeriod(def, n) : current));
+  };
+  const nudge = (by: number) => {
+    const next = clampPeriod(def, current + by);
+    setDraft(String(next));
+    onChange(def, next);
+  };
+
+  return (
+    <div ref={wrap} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => { setDraft(String(current)); setOpen((o) => !o); }}
+        aria-expanded={open}
+        aria-label={`${dict.chart.indPeriod} ${labelFor(def, period)}`}
+        style={{ color }}
+        className="rounded px-0.5 hover:underline"
+      >
+        {shortFor(def, period)}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded border border-line bg-surface p-2 shadow-lg">
+          <label htmlFor={`per-${def.id}`} className="block text-[11px] text-muted">
+            {dict.chart.indPeriod}
+          </label>
+          <div className="mt-1 flex items-center gap-1">
+            <button type="button" onClick={() => nudge(-1)} aria-label={dict.chart.indPeriodDown}
+              className="rounded border border-line px-1.5 py-0.5 text-[12px] text-ink-2 hover:text-ink">−</button>
+            <input
+              id={`per-${def.id}`} type="number" inputMode="numeric"
+              min={def.param!.min} max={def.param!.max} value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={(e) => commit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); commit((e.target as HTMLInputElement).value); close(); }
+                if (e.key === "Escape") { e.preventDefault(); close(); }
+              }}
+              className="tnum w-full rounded border border-line bg-page px-2 py-0.5 text-center text-[12px]"
+            />
+            <button type="button" onClick={() => nudge(1)} aria-label={dict.chart.indPeriodUp}
+              className="rounded border border-line px-1.5 py-0.5 text-[12px] text-ink-2 hover:text-ink">+</button>
+          </div>
+          <p className="mt-1 text-[10px] text-muted">
+            {def.param!.min}–{def.param!.max}
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function niceTicks(min: number, max: number, count = 4): number[] {
@@ -1359,8 +1470,8 @@ function BreadthPane({
 }
 
 function OscillatorPane({
-  def, plots, width, band, x, PAD, hover, idx, locale,
-}: Omit<PaneGeom, "view"> & { def: IndicatorDef; plots: Plot[]; idx: number; locale: Locale }) {
+  def, period, plots, width, band, x, PAD, hover, idx, locale,
+}: Omit<PaneGeom, "view"> & { def: IndicatorDef; period: number | null; plots: Plot[]; idx: number; locale: Locale }) {
   const H = 96;
   const vals = plots.flatMap((p) => p.series.filter((v): v is number => v !== null));
   if (!vals.length) return null;
@@ -1371,14 +1482,14 @@ function OscillatorPane({
   const maxCols = maxColumnsFor(width - PAD.left - PAD.right);
 
   return (
-    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={def.label} className="block border-t border-line">
+    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={labelFor(def, period)} className="block border-t border-line">
       {/* The plot labels already name the indicator; printing `def.short` too
           produced "RSI RSI 14". */}
       <text x={PAD.left} y={11} fontSize={10} fill="var(--muted)">
         {plots
           .map((p) => (p.series[idx] === null ? null : `${p.label} ${num(p.series[idx]!, locale, 2)}`))
           .filter(Boolean)
-          .join("   ") || def.short}
+          .join("   ") || shortFor(def, period)}
       </text>
 
       {(def.guides ?? []).map((g) => (

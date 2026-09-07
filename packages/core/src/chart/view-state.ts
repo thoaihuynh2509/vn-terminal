@@ -13,6 +13,7 @@
  * timeframe already follows.
  */
 import { INDICATOR_LIMIT, can, type Tier } from "../auth/entitlement.ts";
+import { parseRef } from "../ta/params.ts";
 import { RANGE_PRESETS, type RangePreset } from "./ranges.ts";
 
 export type ChartTypeId = "candle" | "line" | "area";
@@ -20,16 +21,19 @@ const TYPES: ChartTypeId[] = ["candle", "line", "area"];
 
 export interface ChartView {
   type: ChartTypeId;
-  /** Indicator ids, already trimmed to what this tier may actually show. */
+  /** Indicator tokens (`id` or `id:period`), trimmed to what this tier may show. */
   ind: string[];
   range: RangePreset | null;
 }
 
 export const DEFAULT_VIEW: ChartView = { type: "candle", ind: [], range: null };
 
-/** Registry ids are lowercase alphanumerics; anything else is not one. */
-const ID_RE = /^[a-z][a-z0-9]{0,23}$/;
-/** A hostile `?ind=` should cost a parse, not a loop over thousands of ids. */
+/**
+ * Indicator tokens are `id` or `id:period` — `parseRef` owns the grammar, so
+ * the URL and the toolbar cannot disagree about what a token means.
+ *
+ * A hostile `?ind=` should cost a parse, not a loop over thousands of ids.
+ */
 const MAX_IDS = 40;
 
 export interface DecodeOptions {
@@ -62,15 +66,20 @@ export function decodeView(
   const seen = new Set<string>();
   const ind: string[] = [];
   for (const raw of (params.ind ?? "").split(",").slice(0, MAX_IDS)) {
-    const id = raw.trim().toLowerCase();
-    if (!ID_RE.test(id) || seen.has(id) || !known(id)) continue;
+    const ref = parseRef(raw);
+    // Deduped by INDICATOR, not by token: `rsi,rsi:21` is one reader changing
+    // their mind, not two RSI panes.
+    if (!ref || seen.has(ref.id) || !known(ref.id)) continue;
     // A link cannot grant an entitlement: a paid indicator in the query string
     // is dropped for a tier that does not hold one, not rendered and then
     // retracted.
-    if (!unlocked && !isFree(id)) continue;
+    if (!unlocked && !isFree(ref.id)) continue;
     if (ind.length >= limit) break;
-    seen.add(id);
-    ind.push(id);
+    seen.add(ref.id);
+    // The period is NOT clamped here — the registry owns the range, and
+    // `effectivePeriod` clamps at compute time so one rule covers URL, storage
+    // and the settings popover alike.
+    ind.push(ref.period === null ? ref.id : `${ref.id}:${ref.period}`);
   }
 
   return { type, ind, range };

@@ -89,3 +89,37 @@ test("merging a default view clears the keys rather than writing them", () => {
   assert.equal(p.get("ind"), null);
   assert.equal(p.get("r"), null);
 });
+
+// ── P2-10: tuned indicator periods ──────────────────────────────────
+const anyKnown = { tier: "pro" as const, known: () => true, isFree: () => true };
+
+test("a tuned period survives the URL", () => {
+  assert.deepEqual(decodeView({ ind: "rsi:21,sma20:50" }, anyKnown).ind, ["rsi:21", "sma20:50"]);
+});
+
+test("a link written before periods existed still opens", () => {
+  assert.deepEqual(decodeView({ ind: "rsi,sma20" }, anyKnown).ind, ["rsi", "sma20"]);
+});
+
+test("the same indicator twice is one entry, whatever the tunings", () => {
+  // `rsi,rsi:21` is one reader changing their mind, not two RSI panes.
+  assert.deepEqual(decodeView({ ind: "rsi,rsi:21" }, anyKnown).ind, ["rsi"]);
+});
+
+test("a malformed period drops that indicator rather than guessing one", () => {
+  assert.deepEqual(decodeView({ ind: "rsi:0,sma20:abc,atr:14" }, anyKnown).ind, ["atr:14"]);
+});
+
+test("a tuned paid indicator is still refused to a tier that cannot see it", () => {
+  // The period must not become a way around the gate.
+  const out = decodeView(
+    { ind: "sma50:200" },
+    { tier: "anon", known: () => true, isFree: (id) => id === "rsi" },
+  );
+  assert.deepEqual(out.ind, []);
+});
+
+test("tuned views round-trip through encode", () => {
+  const view = { type: "candle" as const, ind: ["rsi:21"], range: null };
+  assert.deepEqual(decodeView({ ind: new URLSearchParams(encodeView(view)).get("ind") }, anyKnown).ind, ["rsi:21"]);
+});

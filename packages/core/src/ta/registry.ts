@@ -1,8 +1,8 @@
 import type { Bar } from "@/lib/types";
-import { atr, bollinger, ema, macd, rsi, sma, vwap, type Series } from "./indicators";
+import { atr, bollinger, ema, macd, rsi, sma, vwap, type Series } from "./indicators.ts";
 import {
   adx, cci, donchian, keltner, mfi, obv, roc, stochastic, supertrend, williamsR, type OHLCV,
-} from "./indicators2";
+} from "./indicators2.ts";
 
 /**
  * The indicator catalogue.
@@ -38,7 +38,15 @@ export interface IndicatorDef {
   range?: [number, number];
   /** Reference lines drawn behind the plot (RSI 30/70, MACD zero). */
   guides?: number[];
-  compute: (bars: Bar[]) => Plot[];
+  /**
+   * The one period a reader may tune, when the indicator has a single obvious
+   * one. Absent for MACD (three periods, no primary), VWAP and OBV (none).
+   * `label`/`short` on such a def carry the BASE name: the number a reader sees
+   * comes from the period in use, never from a string welded into the catalogue.
+   */
+  param?: { default: number; min: number; max: number };
+  /** `period` is the resolved value; defs without a `param` receive 0 and ignore it. */
+  compute: (bars: Bar[], period: number) => Plot[];
 }
 
 const closes = (bars: Bar[]) => bars.map((b) => b.c);
@@ -47,21 +55,25 @@ const ohlcv = (bars: Bar[]): OHLCV[] => bars.map((b) => ({ o: b.o, h: b.h, l: b.
 
 export const INDICATORS: IndicatorDef[] = [
   {
-    id: "sma20", label: "SMA 20", short: "SMA20", pane: "price", group: "trend", free: true,
-    compute: (b) => [{ key: "sma20", label: "SMA 20", series: sma(closes(b), 20), style: "line", color: "accent" }],
+    id: "sma20", label: "SMA", short: "SMA", pane: "price", group: "trend", free: true,
+    param: { default: 20, min: 2, max: 400 },
+    compute: (b, p) => [{ key: "sma20", label: `SMA ${p}`, series: sma(closes(b), p), style: "line", color: "accent" }],
   },
   {
-    id: "sma50", label: "SMA 50", short: "SMA50", pane: "price", group: "trend", free: false,
-    compute: (b) => [{ key: "sma50", label: "SMA 50", series: sma(closes(b), 50), style: "line", color: "muted" }],
+    id: "sma50", label: "SMA", short: "SMA", pane: "price", group: "trend", free: false,
+    param: { default: 50, min: 2, max: 400 },
+    compute: (b, p) => [{ key: "sma50", label: `SMA ${p}`, series: sma(closes(b), p), style: "line", color: "muted" }],
   },
   {
-    id: "ema20", label: "EMA 20", short: "EMA20", pane: "price", group: "trend", free: false,
-    compute: (b) => [{ key: "ema20", label: "EMA 20", series: ema(closes(b), 20), style: "line", color: "up" }],
+    id: "ema20", label: "EMA", short: "EMA", pane: "price", group: "trend", free: false,
+    param: { default: 20, min: 2, max: 400 },
+    compute: (b, p) => [{ key: "ema20", label: `EMA ${p}`, series: ema(closes(b), p), style: "line", color: "up" }],
   },
   {
-    id: "bb", label: "Bollinger Bands (20, 2)", short: "BB", pane: "price", group: "volatility", free: false,
-    compute: (b) => {
-      const x = bollinger(closes(b), 20, 2);
+    id: "bb", label: "Bollinger Bands", short: "BB", pane: "price", group: "volatility", free: false,
+    param: { default: 20, min: 5, max: 200 },
+    compute: (b, p) => {
+      const x = bollinger(closes(b), p, 2);
       return [
         { key: "bbu", label: "BB upper", series: x.upper, style: "band", color: "ink-2" },
         { key: "bbm", label: "BB mid", series: x.middle, style: "line", color: "muted" },
@@ -74,9 +86,10 @@ export const INDICATORS: IndicatorDef[] = [
     compute: (b) => [{ key: "vwap", label: "VWAP", series: vwap(b), style: "line", color: "accent" }],
   },
   {
-    id: "keltner", label: "Keltner Channels (20, 2)", short: "KC", pane: "price", group: "volatility", free: false,
-    compute: (b) => {
-      const k = keltner(ohlcv(b), 20, 2);
+    id: "keltner", label: "Keltner Channels", short: "KC", pane: "price", group: "volatility", free: false,
+    param: { default: 20, min: 5, max: 200 },
+    compute: (b, p) => {
+      const k = keltner(ohlcv(b), p, 2);
       return [
         { key: "kcu", label: "KC upper", series: k.upper, style: "band", color: "ink-2" },
         { key: "kcm", label: "KC mid", series: k.middle, style: "line", color: "muted" },
@@ -85,9 +98,10 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   {
-    id: "donchian", label: "Donchian Channels (20)", short: "DC", pane: "price", group: "volatility", free: false,
-    compute: (b) => {
-      const d = donchian(ohlcv(b), 20);
+    id: "donchian", label: "Donchian Channels", short: "DC", pane: "price", group: "volatility", free: false,
+    param: { default: 20, min: 2, max: 200 },
+    compute: (b, p) => {
+      const d = donchian(ohlcv(b), p);
       return [
         { key: "dcu", label: "DC upper", series: d.upper, style: "band", color: "up" },
         { key: "dcl", label: "DC lower", series: d.lower, style: "band", color: "down" },
@@ -95,14 +109,15 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   {
-    id: "supertrend", label: "Supertrend (10, 3)", short: "ST", pane: "price", group: "trend", free: false,
-    compute: (b) => [{ key: "st", label: "Supertrend", series: supertrend(ohlcv(b), 10, 3).line, style: "line", color: "accent" }],
+    id: "supertrend", label: "Supertrend", short: "ST", pane: "price", group: "trend", free: false,
+    param: { default: 10, min: 2, max: 100 },
+    compute: (b, p) => [{ key: "st", label: `Supertrend ${p}`, series: supertrend(ohlcv(b), p, 3).line, style: "line", color: "accent" }],
   },
   {
-    id: "stoch", label: "Stochastic (14, 3)", short: "STOCH", pane: "oscillator", group: "momentum", free: false,
-    range: [0, 100], guides: [20, 80],
-    compute: (b) => {
-      const st = stochastic(ohlcv(b), 14, 3);
+    id: "stoch", label: "Stochastic", short: "STOCH", pane: "oscillator", group: "momentum", free: false,
+    range: [0, 100], guides: [20, 80], param: { default: 14, min: 2, max: 100 },
+    compute: (b, p) => {
+      const st = stochastic(ohlcv(b), p, 3);
       return [
         { key: "k", label: "%K", series: st.k, style: "line", color: "accent" },
         { key: "d", label: "%D", series: st.d, style: "line", color: "down" },
@@ -110,18 +125,20 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   {
-    id: "cci", label: "CCI (20)", short: "CCI", pane: "oscillator", group: "momentum", free: false, guides: [-100, 0, 100],
-    compute: (b) => [{ key: "cci", label: "CCI 20", series: cci(ohlcv(b), 20), style: "line", color: "accent" }],
+    id: "cci", label: "CCI", short: "CCI", pane: "oscillator", group: "momentum", free: false, guides: [-100, 0, 100],
+    param: { default: 20, min: 2, max: 200 },
+    compute: (b, p) => [{ key: "cci", label: `CCI ${p}`, series: cci(ohlcv(b), p), style: "line", color: "accent" }],
   },
   {
-    id: "willr", label: "Williams %R (14)", short: "%R", pane: "oscillator", group: "momentum", free: false,
-    range: [-100, 0], guides: [-80, -20],
-    compute: (b) => [{ key: "wr", label: "%R", series: williamsR(ohlcv(b), 14), style: "line", color: "accent" }],
+    id: "willr", label: "Williams %R", short: "%R", pane: "oscillator", group: "momentum", free: false,
+    range: [-100, 0], guides: [-80, -20], param: { default: 14, min: 2, max: 200 },
+    compute: (b, p) => [{ key: "wr", label: `%R ${p}`, series: williamsR(ohlcv(b), p), style: "line", color: "accent" }],
   },
   {
-    id: "adx", label: "ADX / DMI (14)", short: "ADX", pane: "oscillator", group: "trend", free: false, guides: [25],
-    compute: (b) => {
-      const a = adx(ohlcv(b), 14);
+    id: "adx", label: "ADX / DMI", short: "ADX", pane: "oscillator", group: "trend", free: false, guides: [25],
+    param: { default: 14, min: 2, max: 100 },
+    compute: (b, p) => {
+      const a = adx(ohlcv(b), p);
       return [
         { key: "adx", label: "ADX", series: a.adx, style: "line", color: "accent" },
         { key: "pdi", label: "+DI", series: a.plusDI, style: "line", color: "up" },
@@ -130,22 +147,23 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   {
-    id: "mfi", label: "Money Flow Index (14)", short: "MFI", pane: "oscillator", group: "volume", free: false,
-    range: [0, 100], guides: [20, 80],
-    compute: (b) => [{ key: "mfi", label: "MFI 14", series: mfi(ohlcv(b), 14), style: "line", color: "accent" }],
+    id: "mfi", label: "Money Flow Index", short: "MFI", pane: "oscillator", group: "volume", free: false,
+    range: [0, 100], guides: [20, 80], param: { default: 14, min: 2, max: 200 },
+    compute: (b, p) => [{ key: "mfi", label: `MFI ${p}`, series: mfi(ohlcv(b), p), style: "line", color: "accent" }],
   },
   {
     id: "obv", label: "On-Balance Volume", short: "OBV", pane: "oscillator", group: "volume", free: false,
     compute: (b) => [{ key: "obv", label: "OBV", series: obv(ohlcv(b)), style: "line", color: "muted" }],
   },
   {
-    id: "roc", label: "Rate of Change (12)", short: "ROC", pane: "oscillator", group: "momentum", free: false, guides: [0],
-    compute: (b) => [{ key: "roc", label: "ROC 12", series: roc(closes(b), 12), style: "line", color: "accent" }],
+    id: "roc", label: "Rate of Change", short: "ROC", pane: "oscillator", group: "momentum", free: false, guides: [0],
+    param: { default: 12, min: 1, max: 200 },
+    compute: (b, p) => [{ key: "roc", label: `ROC ${p}`, series: roc(closes(b), p), style: "line", color: "accent" }],
   },
   {
-    id: "rsi", label: "RSI (14)", short: "RSI", pane: "oscillator", group: "momentum", free: true,
-    range: [0, 100], guides: [30, 70],
-    compute: (b) => [{ key: "rsi", label: "RSI 14", series: rsi(closes(b), 14), style: "line", color: "accent" }],
+    id: "rsi", label: "RSI", short: "RSI", pane: "oscillator", group: "momentum", free: true,
+    range: [0, 100], guides: [30, 70], param: { default: 14, min: 2, max: 200 },
+    compute: (b, p) => [{ key: "rsi", label: `RSI ${p}`, series: rsi(closes(b), p), style: "line", color: "accent" }],
   },
   {
     id: "macd", label: "MACD (12, 26, 9)", short: "MACD", pane: "oscillator", group: "momentum", free: false,
@@ -160,8 +178,9 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   {
-    id: "atr", label: "ATR (14)", short: "ATR", pane: "oscillator", group: "volatility", free: false,
-    compute: (b) => [{ key: "atr", label: "ATR 14", series: atr(b, 14), style: "line", color: "muted" }],
+    id: "atr", label: "ATR", short: "ATR", pane: "oscillator", group: "volatility", free: false,
+    param: { default: 14, min: 1, max: 200 },
+    compute: (b, p) => [{ key: "atr", label: `ATR ${p}`, series: atr(b, p), style: "line", color: "muted" }],
   },
 ];
 

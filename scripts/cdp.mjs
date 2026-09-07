@@ -642,6 +642,43 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── indicator periods are tunable (P2-10) ─────────────────────
+    // Tuning is free, so this runs without a session. The knob hangs off the
+    // legend chip; the chart, the pane label and the URL must all agree
+    // afterwards, or a reader cannot share the chart they tuned.
+    await s.goto(BASE + "/vi/bieu-do/VNM?ind=rsi", { scheme: "light" });
+    await sleep(400);
+    check("an untuned indicator labels itself with the registry default",
+      (await s.evaluate(`document.querySelector('svg[aria-label^="RSI"]')?.getAttribute('aria-label')`)) === "RSI (14)");
+    await s.evaluate(`[...document.querySelectorAll('button[aria-label^="Chu kỳ"]')][0]?.click()`);
+    await sleep(200);
+    const hasPeriodInput = await s.evaluate(`!!document.querySelector('#per-rsi')`);
+    check("the legend chip opens a period control", hasPeriodInput === true);
+    await s.evaluate(`(() => {
+      const i = document.querySelector('#per-rsi');
+      const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      set.call(i, '21');
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    const tuned = await s.waitFor(`(() => {
+      const l = document.querySelector('svg[aria-label^="RSI"]')?.getAttribute('aria-label');
+      return l === 'RSI (21)' ? l : null;
+    })()`, 4000);
+    check("tuning the period retitles the pane", tuned === "RSI (21)", String(tuned));
+    const tunedUrl = await s.waitFor(`location.search.includes('rsi%3A21') || location.search.includes('rsi:21') ? location.search : null`, 4000);
+    check("a tuned period is carried in the URL", !!tunedUrl, String(tunedUrl));
+    // The reload is the whole promise of P1-5 extended to periods: a chart a
+    // reader tuned must come back tuned.
+    await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
+    await sleep(500);
+    const survived = await s.evaluate(`document.querySelector('svg[aria-label^="RSI"]')?.getAttribute('aria-label')`);
+    check("a tuned period survives a reload", survived === "RSI (21)", String(survived));
+    // Surviving a reload is the point, so this check leaves a tuned RSI stored.
+    // Clear it: later checks assume the chart's default setup, and inheriting
+    // one section's state is how this suite has broken before.
+    await s.evaluate("localStorage.removeItem('settings:chart')");
+
     await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Đường')?.click()`);
     await sleep(350);
     const termPaths = await s.evaluate("document.querySelectorAll('svg[role=img] path').length");

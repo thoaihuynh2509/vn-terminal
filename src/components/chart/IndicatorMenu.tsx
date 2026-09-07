@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { INDICATOR_GROUPS, INDICATORS, type IndicatorDef } from "@/lib/ta/registry";
+import { labelFor, parseRef, sameIndicator, shortFor } from "@/lib/ta/params";
 import { isEditable } from "@/lib/chart/tf-keys";
 import { useDismiss } from "@/lib/ui/use-dismiss";
 import type { Dict } from "@/lib/i18n";
@@ -40,8 +41,18 @@ export function IndicatorMenu({
 
   const atLimit = active.length >= limit;
   const needle = q.trim().toLowerCase();
+  /** The period a token carries for this indicator, or null when it is off. */
+  const periodOf = (d: IndicatorDef) => {
+    const token = active.find((t) => sameIndicator(t, d.id));
+    return token ? (parseRef(token)?.period ?? null) : null;
+  };
+  const isOn = (d: IndicatorDef) => active.some((t) => sameIndicator(t, d.id));
+  // Typing "21" should find the RSI a reader tuned to 21, so the tuned label is
+  // searched too, not just the catalogue name.
   const matches = (d: IndicatorDef) =>
-    !needle || d.label.toLowerCase().includes(needle) || d.short.toLowerCase().includes(needle);
+    !needle
+    || labelFor(d, periodOf(d)).toLowerCase().includes(needle)
+    || shortFor(d, periodOf(d)).toLowerCase().includes(needle);
   const visible = INDICATORS.filter(matches);
 
   return (
@@ -64,7 +75,7 @@ export function IndicatorMenu({
               onKeyDown={(e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
-                const first = visible.find((d) => (d.free || unlocked) && (active.includes(d.id) || !atLimit));
+                const first = visible.find((d) => (d.free || unlocked) && (isOn(d) || !atLimit));
                 if (first) toggle(first);
               }}
               className="w-full rounded border border-line bg-page px-2 py-1 text-[12px]"
@@ -81,7 +92,7 @@ export function IndicatorMenu({
                 </p>
                 <ul>
                   {defs.map((def) => {
-                    const on = active.includes(def.id);
+                    const on = isOn(def);
                     const locked = !def.free && !unlocked;
                     const blocked = !on && atLimit;
                     return (
@@ -94,9 +105,11 @@ export function IndicatorMenu({
                               : locked || blocked ? "cursor-not-allowed text-muted opacity-60"
                               : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                           }`}>
-                          <span>{def.label}</span>
+                          {/* An active indicator shows the period it is ACTUALLY
+                              running at, not the catalogue default. */}
+                          <span>{labelFor(def, periodOf(def))}</span>
                           <span aria-hidden="true" className="tnum text-[11px] text-muted">
-                            {locked ? "🔒" : on ? "✓" : def.short}
+                            {locked ? "🔒" : on ? "✓" : shortFor(def, null)}
                           </span>
                         </button>
                       </li>

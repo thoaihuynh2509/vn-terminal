@@ -11,11 +11,13 @@
  * extension, an older build, or a half-finished write can corrupt, and the right
  * answer to a bad settings blob is the default chart, never a crash.
  */
+import { parseRef } from "../ta/params.ts";
+
 export type ChartTypeId = "candle" | "line" | "area";
 
 export interface ChartSettings {
   type: ChartTypeId;
-  /** Indicator ids, in the order the reader added them. */
+  /** Indicator tokens (`id` or `id:period`), in the order the reader added them. */
   indicators: string[];
 }
 
@@ -25,8 +27,11 @@ export const DEFAULT_SETTINGS: ChartSettings = { type: "candle", indicators: ["s
 
 const TYPES: ChartTypeId[] = ["candle", "line", "area"];
 
-/** Ids are registry keys; anything else is not something we can draw. */
-const ID_RE = /^[a-z][a-z0-9]{0,23}$/;
+/**
+ * Entries are indicator TOKENS — `rsi` or `rsi:21`. `parseRef` owns the grammar
+ * so a tuned indicator survives a reload; validating against a bare-id pattern
+ * would silently drop every period a reader had set.
+ */
 
 export function parseSettings(raw: string | null): ChartSettings | null {
   if (!raw) return null;
@@ -34,9 +39,18 @@ export function parseSettings(raw: string | null): ChartSettings | null {
     const v = JSON.parse(raw) as Partial<ChartSettings>;
     if (typeof v !== "object" || v === null) return null;
     const type = TYPES.includes(v.type as ChartTypeId) ? (v.type as ChartTypeId) : DEFAULT_SETTINGS.type;
-    const indicators = Array.isArray(v.indicators)
-      ? [...new Set(v.indicators.filter((x): x is string => typeof x === "string" && ID_RE.test(x)))]
-      : [];
+    const indicators: string[] = [];
+    if (Array.isArray(v.indicators)) {
+      const seen = new Set<string>();
+      for (const x of v.indicators) {
+        if (typeof x !== "string") continue;
+        const ref = parseRef(x);
+        // Deduped by indicator: two tunings of the same one are one entry.
+        if (!ref || seen.has(ref.id)) continue;
+        seen.add(ref.id);
+        indicators.push(x.trim().toLowerCase());
+      }
+    }
     return { type, indicators };
   } catch {
     return null;
@@ -56,6 +70,10 @@ export function serializeSettings(s: ChartSettings): string {
 export function restorable(s: ChartSettings, indicatorLimit: number, known: (id: string) => boolean): ChartSettings {
   return {
     type: s.type,
-    indicators: s.indicators.filter(known).slice(0, Math.max(0, indicatorLimit)),
+    // `known` answers about an indicator, so it is asked about the id — passing
+    // the whole `rsi:21` token would make every tuned indicator look unknown.
+    indicators: s.indicators
+      .filter((t) => { const r = parseRef(t); return !!r && known(r.id); })
+      .slice(0, Math.max(0, indicatorLimit)),
   };
 }

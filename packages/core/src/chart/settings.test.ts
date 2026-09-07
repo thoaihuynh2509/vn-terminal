@@ -30,8 +30,16 @@ test("an unknown chart type falls back instead of rendering nothing", () => {
 });
 
 test("indicator ids that are not ids are dropped", () => {
-  const s = parseSettings('{"type":"candle","indicators":["sma20","../x","",123,"RSI","ok2"]}');
+  const s = parseSettings('{"type":"candle","indicators":["sma20","../x","",123,"x y","ok2"]}');
   assert.deepEqual(s?.indicators, ["sma20", "ok2"]);
+});
+
+test("a stored id is normalised rather than discarded for its case", () => {
+  // Deliberate change with P2-10: `parseRef` now owns the token grammar for the
+  // URL and for storage alike. The URL path always lowercased, while storage
+  // rejected uppercase outright, so the same id behaved differently depending
+  // on where it came from. One grammar, and "RSI" is the reader's own id.
+  assert.deepEqual(parseSettings('{"type":"candle","indicators":["RSI"]}')?.indicators, ["rsi"]);
 });
 
 test("duplicate indicators collapse", () => {
@@ -59,4 +67,25 @@ test("restoring drops indicators the build no longer ships", () => {
 
 test("restoring never invents a type", () => {
   assert.equal(restorable({ type: "area", indicators: [] }, 5, known).type, "area");
+});
+
+// ── P2-10: tuned periods must survive a reload ──────────────────────
+test("a tuned indicator survives being stored and read back", () => {
+  const round = parseSettings(serializeSettings({ type: "line", indicators: ["rsi:21", "sma20"] }));
+  assert.deepEqual(round?.indicators, ["rsi:21", "sma20"]);
+});
+
+test("restorable asks about the indicator, not the whole token", () => {
+  // Passing `rsi:21` to a registry lookup would make every tuned indicator
+  // look unknown and silently vanish on reload.
+  const known = (id: string) => id === "rsi";
+  assert.deepEqual(
+    restorable({ type: "candle", indicators: ["rsi:21", "bogus:5"] }, 8, known).indicators,
+    ["rsi:21"],
+  );
+});
+
+test("stored settings drop a malformed token instead of trusting it", () => {
+  const s = parseSettings(JSON.stringify({ type: "candle", indicators: ["rsi:21", "rsi:0", 7, "x y"] }));
+  assert.deepEqual(s?.indicators, ["rsi:21"]);
 });
