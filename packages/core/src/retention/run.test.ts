@@ -94,3 +94,67 @@ test("the teaser email always carries the pricing and unsubscribe links", () => 
   assert.match(text, /goi-dich-vu/);
   assert.match(text, /unsubscribe/, "an unsubscribe link is mandatory");
 });
+
+// ── the trip back is the point of the mail ──────────────────────────────────
+
+test("every fired alert line links back to its own chart, tagged as email", () => {
+  const quotes = new Map([["VNM", { symbol: "VNM", price: 65, prevClose: 60 }]]);
+  const { text } = alertEmail(
+    [{ id: "a", symbol: "VNM", condition: "above", price: 62, createdAt: 0, triggeredAt: 1 }],
+    quotes,
+    "vi",
+  );
+  assert.match(text, /\/vi\/bieu-do\/VNM\?rail=alerts&src=alert_email/);
+});
+
+test("the English mail links to the English route segment", () => {
+  const quotes = new Map([["VNM", { symbol: "VNM", price: 65 }]]);
+  const { text } = alertEmail(
+    [{ id: "a", symbol: "VNM", condition: "above", price: 62, createdAt: 0, triggeredAt: 1 }],
+    quotes,
+    "en",
+  );
+  assert.match(text, /\/en\/chart\/VNM\?/);
+});
+
+test("an indicator alert says what it watched, not a bare number", () => {
+  // "giá vượt lên 70" for an RSI alert would read as a price the reader never set.
+  const quotes = new Map([["VNM", { symbol: "VNM", price: 65 }]]);
+  const { text } = alertEmail(
+    [{
+      id: "r", symbol: "VNM", condition: "above", price: 70, createdAt: 0, triggeredAt: 1,
+      kind: "indicator", indicator: "rsi", period: 14,
+    }],
+    quotes,
+    "vi",
+  );
+  assert.match(text, /RSI 70/);
+  assert.doesNotMatch(text, /giá vượt lên 70/);
+});
+
+// ── indicator alerts in the nightly run ─────────────────────────────────────
+
+test("the nightly run tests an indicator alert against its indicator", () => {
+  const quotes = new Map([["VNM", { symbol: "VNM", price: 65, prevClose: 60 }]]);
+  const alert: PriceAlert = {
+    id: "r", symbol: "VNM", condition: "above", price: 70, createdAt: 0,
+    kind: "indicator", indicator: "rsi", period: 14,
+  };
+
+  // The price is 65 and the threshold 70, but RSI is 75 — it must fire on RSI.
+  const withReading = runUserAlerts([alert], quotes, 100, new Map([["VNM:rsi14", { current: 75 }]]));
+  assert.equal(withReading.fired.length, 1);
+
+  // And with no reading it must NOT fire off the price.
+  const without = runUserAlerts([alert], quotes, 100);
+  assert.equal(without.fired.length, 0, "no reading means no evaluation, never a price fallback");
+});
+
+test("a price alert is unaffected by the indicator plumbing", () => {
+  const quotes = new Map([["VNM", { symbol: "VNM", price: 65, prevClose: 60 }]]);
+  const run = runUserAlerts(
+    [{ id: "p", symbol: "VNM", condition: "above", price: 62, createdAt: 0 }],
+    quotes, 100, new Map([["VNM:rsi14", { current: 5 }]]),
+  );
+  assert.equal(run.fired.length, 1, "a low RSI reading must not suppress a price alert");
+});

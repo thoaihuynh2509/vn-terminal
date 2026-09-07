@@ -14,6 +14,7 @@ import { getSession } from "@/lib/auth/session";
 import { can } from "@/lib/auth/entitlement";
 import { activeProvider } from "@/lib/ask/provider";
 import { equityPrice } from "@/lib/format";
+import { rsi } from "@/lib/ta/indicators";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
 import { BAND, getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
@@ -125,13 +126,24 @@ export async function TerminalView({
     }
   }
 
+  // RSI for the alert panel, computed from the bars this page already loaded.
+  // Without it an indicator alert simply is not evaluated in the browser — the
+  // nightly job still catches it — which is far better than testing "RSI above
+  // 70" against a share price of 70.
+  const rsiSeries = rsi(bars.map((b) => b.c), 14);
+  const rsiNow = rsiSeries[rsiSeries.length - 1];
+  const rsiPrev = rsiSeries[rsiSeries.length - 2];
+  const rsi14 = typeof rsiNow === "number"
+    ? { rsi14: { current: rsiNow, ...(typeof rsiPrev === "number" ? { previous: rsiPrev } : {}) } }
+    : undefined;
+
   return (
     <PageShell
       rail={
         <ChartRail
           locale={locale} dict={dict} symbol={sym} board={board}
           current={last.c} previous={prev.c} tier={tier} isMock={activeProvider() === "mock"}
-          initialTab={rail}
+          initialTab={rail} indicators={rsi14}
         />
       }
     >

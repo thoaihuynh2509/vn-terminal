@@ -114,4 +114,21 @@ CREATE TABLE user_docs (
 CREATE INDEX user_docs_user_kind_idx ON user_docs (user_id, kind);
 `,
   },
+  {
+    // Alert kinds. `price` stays the threshold for all of them — a percent alert
+    // resolves to a fixed level when it is created, and an indicator alert's
+    // level (RSI 70) is just as much a threshold — so the existing column and
+    // its `> 0` check still hold and no row needs rewriting. The extra columns
+    // are provenance: what the reader actually asked for, so the UI can say
+    // "+5% (65.10)" rather than a bare number they never typed.
+    id: "007_alert_kinds",
+    sql: `
+ALTER TABLE alerts ADD COLUMN kind text NOT NULL DEFAULT 'price'
+  CHECK (kind IN ('price','pct','indicator'));
+ALTER TABLE alerts ADD COLUMN pct double precision;
+ALTER TABLE alerts ADD COLUMN base_price double precision;
+ALTER TABLE alerts ADD COLUMN indicator text;
+ALTER TABLE alerts ADD COLUMN period integer CHECK (period IS NULL OR (period >= 2 AND period <= 200));
+`,
+  },
 ];

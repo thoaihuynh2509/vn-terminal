@@ -3,7 +3,10 @@ import { dbAvailable, getDb, DbUnavailableError } from "@/lib/db";
 import { can } from "@/lib/auth/entitlement";
 import { effectiveTier } from "@/lib/auth/provider";
 import { sendEmail } from "@/lib/auth/mailer";
-import { getBoard } from "@/lib/providers/vnstock";
+import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
+import { timeframe } from "@/lib/chart/timeframes";
+import { rsi } from "@/lib/ta/indicators";
+import { alertKind, type AlertObservation } from "@/lib/alerts/alerts";
 import { cronAuthorized } from "@/lib/retention/cron-auth";
 import { alertEmail, alertSymbols, runUserAlerts, type QuoteLite } from "@/lib/retention/run";
 
@@ -55,8 +58,36 @@ export async function GET(req: Request) {
       const quotes = new Map<string, QuoteLite>(
         board.map((q) => [q.symbol.toUpperCase(), { symbol: q.symbol, price: q.price, prevClose: q.prevClose }]),
       );
+      // Indicator alerts need the indicator, not the price. Bars are fetched
+      // only for the symbols that actually have one, so a batch of ordinary
+      // price alerts costs no extra upstream calls.
+      const needsBars = new Set<string>();
       for (const p of pending) {
-        const run = runUserAlerts(p.alerts, quotes, now.getTime());
+        for (const a of p.alerts) {
+          if (!a.triggeredAt && alertKind(a) === "indicator") needsBars.add(a.symbol.toUpperCase());
+        }
+      }
+      const readings = new Map<string, AlertObservation>();
+      for (const sym of needsBars) {
+        try {
+          const bars = await getTimeframeBars(sym, timeframe("1D"));
+          const series = rsi(bars.map((b) => b.c), 14);
+          const cur = series[series.length - 1];
+          const prv = series[series.length - 2];
+          if (typeof cur === "number") {
+            readings.set(`${sym}:rsi14`, {
+              current: cur,
+              ...(typeof prv === "number" ? { previous: prv } : {}),
+            });
+          }
+        } catch {
+          // No bars for this symbol this run: its indicator alerts are simply
+          // not evaluated, rather than evaluated against the wrong number.
+        }
+      }
+
+      for (const p of pending) {
+        const run = runUserAlerts(p.alerts, quotes, now.getTime(), readings);
         if (run.fired.length === 0) continue;
         await db.alerts.replace(p.id, run.next); // persist the one-shot flag first
         fired += run.fired.length;

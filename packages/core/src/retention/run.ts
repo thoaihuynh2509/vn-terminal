@@ -8,8 +8,12 @@
  * board so an alert reaches a subscriber who has the page closed — the single
  * biggest reason to come back, and the clearest thing a paid tier sells.
  */
-import { shouldFire, type PriceAlert } from "../alerts/alerts.ts";
+import {
+  alertKind, indicatorKey, observationFor, shouldFire,
+  type AlertObservation, type PriceAlert,
+} from "../alerts/alerts.ts";
 import { num } from "../format.ts";
+import { siteUrl } from "../site.ts";
 import type { Locale } from "../types.ts";
 import type { Brief } from "../brief.ts";
 
@@ -39,13 +43,26 @@ export function runUserAlerts(
   alerts: PriceAlert[],
   quotes: Map<string, QuoteLite>,
   now: number,
+  /** Indicator readings by `${SYMBOL}:${indicatorKey}`, when the caller has bars. */
+  indicators?: Map<string, AlertObservation>,
 ): UserAlertRun {
   const fired: PriceAlert[] = [];
   const next = alerts.map((a) => {
     if (a.triggeredAt) return a;
-    const q = quotes.get(a.symbol.toUpperCase());
+    const sym = a.symbol.toUpperCase();
+    const q = quotes.get(sym);
     if (!q) return a;
-    if (!shouldFire(a, q.price, q.prevClose)) return a;
+    // An indicator alert is tested against its indicator, never against the
+    // price — otherwise "RSI above 70" fires as soon as the share costs 70.
+    const key = indicatorKey(a);
+    const reading = indicators?.get(`${sym}:${key}`);
+    const obs = observationFor(
+      a,
+      { current: q.price, previous: q.prevClose },
+      reading ? { [key]: reading } : undefined,
+    );
+    if (!obs || !Number.isFinite(obs.current)) return a;
+    if (!shouldFire(a, obs.current, obs.previous)) return a;
     const t = { ...a, triggeredAt: now };
     fired.push(t);
     return t;
@@ -67,13 +84,25 @@ export function alertEmail(
   locale: Locale = "vi",
 ): { subject: string; text: string } {
   const vi = locale === "vi";
+  const seg = vi ? "bieu-do" : "chart";
+  // Every line links straight back to the chart it is about, tagged so the
+  // funnel can tell an alert-driven return from organic navigation — the whole
+  // point of sending the mail is the trip back.
+  const link = (symbol: string) =>
+    `${siteUrl()}/${locale}/${seg}/${symbol.toUpperCase()}?rail=alerts&src=alert_email`;
   const lines = fired.map((a) => {
     const q = quotes.get(a.symbol.toUpperCase());
     const now = q ? num(q.price, locale) : "—";
     const cond = COND[a.condition][locale];
-    return vi
-      ? `• ${a.symbol}: giá ${cond} ${num(a.price, locale)} (hiện ${now})`
-      : `• ${a.symbol}: price ${cond} ${num(a.price, locale)} (now ${now})`;
+    // An indicator alert says what it watched; a bare number would read as a
+    // price the reader never set.
+    const what = alertKind(a) === "indicator"
+      ? `${(a.indicator ?? "rsi").toUpperCase()} ${num(a.price, locale, 0)}`
+      : num(a.price, locale);
+    const head = vi
+      ? `• ${a.symbol}: ${alertKind(a) === "indicator" ? "" : "giá "}${cond} ${what} (hiện ${now})`
+      : `• ${a.symbol}: ${alertKind(a) === "indicator" ? "" : "price "}${cond} ${what} (now ${now})`;
+    return `${head}\n  ${link(a.symbol)}`;
   });
   const one = fired.length === 1 ? fired[0] : null;
   const subject = one

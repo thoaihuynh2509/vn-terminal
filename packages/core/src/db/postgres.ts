@@ -47,6 +47,11 @@ interface AlertRow {
   price: number;
   created_at: Date;
   triggered_at: Date | null;
+  kind: string;
+  pct: number | null;
+  base_price: number | null;
+  indicator: string | null;
+  period: number | null;
 }
 
 interface DocRow {
@@ -104,6 +109,13 @@ const toAlert = (r: AlertRow): PriceAlert => ({
   price: r.price,
   createdAt: r.created_at.getTime(),
   ...(r.triggered_at ? { triggeredAt: r.triggered_at.getTime() } : {}),
+  // `price` is the default kind, so it is left off the object entirely — the
+  // shape then matches what the browser stores for a plain price alert.
+  ...(r.kind && r.kind !== "price" ? { kind: r.kind as PriceAlert["kind"] } : {}),
+  ...(r.pct !== null ? { pct: r.pct } : {}),
+  ...(r.base_price !== null ? { basePrice: r.base_price } : {}),
+  ...(r.indicator ? { indicator: r.indicator as PriceAlert["indicator"] } : {}),
+  ...(r.period !== null ? { period: r.period } : {}),
 });
 
 const toDoc = (r: DocRow): DocRecord => ({
@@ -323,8 +335,9 @@ export async function createPostgresDb(url: string): Promise<Db> {
     alerts: {
       async list(userId) {
         const rows = await sql<AlertRow[]>`
-          SELECT id, symbol, condition, price, created_at, triggered_at FROM alerts
-          WHERE user_id = ${userId} ORDER BY created_at`;
+          SELECT id, symbol, condition, price, created_at, triggered_at,
+                 kind, pct, base_price, indicator, period
+          FROM alerts WHERE user_id = ${userId} ORDER BY created_at`;
         return rows.map(toAlert);
       },
 
@@ -333,9 +346,12 @@ export async function createPostgresDb(url: string): Promise<Db> {
           await tx`DELETE FROM alerts WHERE user_id = ${userId}`;
           for (const a of alerts) {
             await tx`
-              INSERT INTO alerts (user_id, id, symbol, condition, price, created_at, triggered_at)
+              INSERT INTO alerts (user_id, id, symbol, condition, price, created_at, triggered_at,
+                                  kind, pct, base_price, indicator, period)
               VALUES (${userId}, ${a.id}, ${a.symbol}, ${a.condition}, ${a.price},
-                      ${new Date(a.createdAt)}, ${a.triggeredAt ? new Date(a.triggeredAt) : null})`;
+                      ${new Date(a.createdAt)}, ${a.triggeredAt ? new Date(a.triggeredAt) : null},
+                      ${a.kind ?? "price"}, ${a.pct ?? null}, ${a.basePrice ?? null},
+                      ${a.indicator ?? null}, ${a.period ?? null})`;
           }
         });
       },

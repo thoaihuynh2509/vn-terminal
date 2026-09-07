@@ -420,6 +420,29 @@ function contract(driver: string, makeDb: () => Promise<Db>) {
     assert.deepEqual(await db.alerts.list(id), []);
   });
 
+  test(`[${driver}] every alert kind survives storage`, async () => {
+    // The extra columns are provenance: without them a percent alert comes back
+    // as a bare number the reader never typed, and an indicator alert loses the
+    // fact that it watches RSI rather than the price.
+    const db = await makeDb();
+    const { id } = await db.users.upsertByEmail(anEmail());
+    await db.alerts.replace(id, [
+      { id: "plain", symbol: "VNM", condition: "above", price: 70, createdAt: 1 },
+      { id: "percent", symbol: "VNM", condition: "above", price: 105, createdAt: 2, kind: "pct", pct: 5, basePrice: 100 },
+      { id: "ind", symbol: "VNM", condition: "cross_up", price: 70, createdAt: 3, kind: "indicator", indicator: "rsi", period: 14 },
+    ]);
+
+    const back = (await db.alerts.list(id)).sort((a, b) => a.createdAt - b.createdAt);
+
+    assert.equal(back[0].kind, undefined, "a plain price alert stores no kind");
+    assert.equal(back[1].kind, "pct");
+    assert.equal(back[1].pct, 5);
+    assert.equal(back[1].basePrice, 100);
+    assert.equal(back[2].kind, "indicator");
+    assert.equal(back[2].indicator, "rsi");
+    assert.equal(back[2].period, 14);
+  });
+
   test(`[${driver}] a reader with no alerts has an empty list, not an error`, async () => {
     const db = await makeDb();
     const { id } = await db.users.upsertByEmail(anEmail());

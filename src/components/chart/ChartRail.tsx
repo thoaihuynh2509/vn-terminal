@@ -28,12 +28,14 @@ const asTab = (v: string | null | undefined): Tab | null => (TABS.includes(v as 
  * rail is one tap away instead of a scroll below the fold.
  */
 export function ChartRail({
-  locale, dict, symbol, board, current, previous, tier, isMock, initialTab,
+  locale, dict, symbol, board, current, previous, tier, isMock, initialTab, indicators,
 }: {
   locale: Locale; dict: Dict; symbol: string; board: Quote[];
   current: number; previous: number; tier: Tier; isMock: boolean;
   /** Tab asked for in the URL. Wins until the reader picks one themselves. */
   initialTab?: string;
+  /** Indicator readings for alerts that watch one, keyed by `indicatorKey`. */
+  indicators?: Record<string, { current: number; previous?: number }>;
 }) {
   const stored = useStored(TAB_KEY);
   // The URL's choice is held in state, not written to storage: a shared link
@@ -86,7 +88,7 @@ export function ChartRail({
         </div>
         {tab === "watch" && <WatchTab locale={locale} dict={dict} symbol={symbol} board={board} />}
         {tab === "alerts" && (
-          <AlertPanel symbol={symbol} current={current} previous={previous} locale={locale} dict={dict} tier={tier} />
+          <AlertPanel indicators={indicators} symbol={symbol} current={current} previous={previous} locale={locale} dict={dict} tier={tier} />
         )}
         {tab === "ask" && (
           can(tier, "use:ai-assistant") ? (
