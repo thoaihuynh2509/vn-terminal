@@ -21,6 +21,7 @@ import {
   DEFAULT_SETTINGS, SETTINGS_KEY, parseSettings, restorable, serializeSettings,
 } from "@/lib/chart/settings";
 import { track } from "@/lib/analytics/posthog";
+import { parseAlerts, STORAGE_KEY as ALERTS_KEY, type PriceAlert } from "@/lib/alerts/alerts";
 import type { Bar, Locale, Tier } from "@/lib/types";
 
 type ChartType = "candle" | "line" | "area";
@@ -192,6 +193,14 @@ export function ChartPro({
 
   const limit = INDICATOR_LIMIT[tier];
   const unlocked = can(tier, "chart:indicators");
+
+  // Alert levels come from the same external store AlertPanel writes, so the
+  // line on the chart and the row in the rail can never disagree.
+  const storedAlerts = useStored(ALERTS_KEY);
+  const alertLines = useMemo(
+    () => parseAlerts(storedAlerts).filter((a) => a.symbol === symbol.toUpperCase()),
+    [storedAlerts, symbol],
+  );
 
   const storedSettings = useStored(SETTINGS_KEY);
   const saved = useMemo(() => {
@@ -611,7 +620,7 @@ export function ChartPro({
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
             type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
-            refLines={refLines} compareView={compareView} compareLabel={compare?.label ?? null}
+            refLines={refLines} alerts={alertLines} compareView={compareView} compareLabel={compare?.label ?? null}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => setHover(null)} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -756,11 +765,11 @@ function niceTicks(min: number, max: number, count = 4): number[] {
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, compareView, compareLabel,
+  refLines, alerts, compareView, compareLabel,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
-  refLines: RefLine[]; compareView: (number | null)[] | null; compareLabel: string | null;
+  refLines: RefLine[]; alerts: PriceAlert[]; compareView: (number | null)[] | null; compareLabel: string | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
   onClick: (e: React.PointerEvent<SVGSVGElement>) => void;
   onMove: (e: React.PointerEvent<SVGSVGElement>) => void; onLeave: () => void;
@@ -862,6 +871,31 @@ function PricePane({
             </text>
           </g>
         ))}
+
+        {/* Armed price alerts, so the chart shows what it is watching for.
+            Deliberately NOT folded into the price domain the way ceiling/floor
+            are: an alert set far from the current price would squash every
+            candle into a band to keep a line visible that the reader already
+            knows about. One outside the visible range is simply not drawn. */}
+        {alerts.map((a) => {
+          if (a.price < yMin || a.price > yMax) return null;
+          const rising = a.condition === "above" || a.condition === "cross_up";
+          return (
+            <g key={a.id} opacity={a.triggeredAt ? 0.45 : 0.9}>
+              <line
+                x1={PAD.left} x2={PAD.left + plotW} y1={y(a.price)} y2={y(a.price)}
+                stroke="var(--accent)" strokeWidth={1} strokeDasharray="1 5"
+              />
+              {/* The glyph carries the direction, so the level is not colour-alone. */}
+              <text
+                x={PAD.left + plotW - 4} y={y(a.price) - 3} fontSize={10} textAnchor="end"
+                className="tnum" fill="var(--accent)"
+              >
+                {rising ? "▲" : "▼"} {num(a.price, locale, digits)}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Compare line (e.g. VNINDEX): normalised shape only, not the price scale. */}
         {comparePath && (

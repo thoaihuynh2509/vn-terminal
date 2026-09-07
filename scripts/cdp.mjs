@@ -52,10 +52,31 @@ class Session {
     s.targetId = t.id;
     return s;
   }
-  send(method, params = {}) {
+  /**
+   * Every command is bounded. Without a timeout one CDP call that never gets a
+   * reply — `Input.dispatchMouseEvent` into a page with a non-passive wheel
+   * handler is the one that bit us — hangs the entire suite forever, with no
+   * output and no way to tell which step stalled. A rejection at least names it.
+   */
+  send(method, params = {}, timeoutMs = 15000) {
     const id = ++this.#id;
     this.#ws.send(JSON.stringify({ id, method, params }));
-    return new Promise((res, rej) => this.#pending.set(id, { res, rej }));
+    // A wheel dispatch into the chart's non-passive handler frequently never
+    // gets acknowledged, even though the page does receive the event. Rejecting
+    // there would fail a transport detail rather than the behaviour under test,
+    // so that one case resolves and lets the assertion be the judge.
+    const tolerate = method === "Input.dispatchMouseEvent" && params.type === "mouseWheel";
+    return new Promise((res, rej) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        if (tolerate) return res({});
+        rej(new Error(`CDP timeout after ${timeoutMs}ms: ${method}`));
+      }, timeoutMs);
+      this.#pending.set(id, {
+        res: (v) => { clearTimeout(timer); res(v); },
+        rej: (e) => { clearTimeout(timer); rej(e); },
+      });
+    });
   }
   /** Resolve when `expr` returns truthy, or throw after `timeoutMs`. */
   async waitFor(expr, { timeoutMs = 20000, every = 200 } = {}) {
@@ -561,6 +582,11 @@ try {
     check("assistant declines investment advice", /khuyến nghị/.test(refusal), refusal.slice(0, 60));
 
     // ── chart terminal ────────────────────────────────────────────
+    // The chart now REMEMBERS the reader's setup, so the line-mode click a few
+    // checks above survives into this one. That is the feature working; this
+    // section asserts the DEFAULT rendering, so it has to start from a cleared
+    // setup rather than inheriting an earlier check's choice.
+    await s.evaluate("localStorage.removeItem('settings:chart')");
     await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
     const panesBefore = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("terminal renders price and volume panes", panesBefore >= 2, `${panesBefore} panes`);
@@ -824,26 +850,35 @@ try {
         (await s.evaluate(`typeof document.querySelector('svg[role=img]').onkeydown !== 'undefined'`)) === true);
 
       // ── wheel zoom ──────────────────────────────────────────────
+      // Wrapped: the chart binds wheel non-passively so it can preventDefault,
+      // and `Input.dispatchMouseEvent` into it does not always get acknowledged.
+      // A timeout here must record failures and let the remaining ~40 checks run,
+      // not abort the suite the way the stale nav selector used to.
+      // Declared outside the try: the ctrl+wheel check below reuses both, and
+      // scoping them to the guarded block left it referencing dead bindings.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
       const rangePill = async () => s.evaluate(
         `document.querySelector('[aria-label="Khoảng"] [aria-pressed=true]')?.textContent.trim()`);
-
-      const zStart = await rangePill();
       const plot = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 }); })()`));
 
-      await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: plot.x, y: plot.y, deltaX: 0, deltaY: -120 });
-      await sleep(400);
-      const zIn = await rangePill();
-      check("wheel up zooms in", zStart !== null && zIn !== null && Number(zIn) < Number(zStart), `${zStart} → ${zIn}`);
+      try {
+        const zStart = await rangePill();
+        await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: plot.x, y: plot.y, deltaX: 0, deltaY: -120 });
+        await sleep(400);
+        const zIn = await rangePill();
+        check("wheel up zooms in", zStart !== null && zIn !== null && Number(zIn) < Number(zStart), `${zStart} → ${zIn}`);
 
-      await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: plot.x, y: plot.y, deltaX: 0, deltaY: 240 });
-      await sleep(400);
-      const zOut = await rangePill();
-      check("wheel down zooms back out", Number(zOut) > Number(zIn), `${zIn} → ${zOut}`);
+        await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: plot.x, y: plot.y, deltaX: 0, deltaY: 240 });
+        await sleep(400);
+        const zOut = await rangePill();
+        check("wheel down zooms back out", Number(zOut) > Number(zIn), `${zIn} → ${zOut}`);
 
-      // The zoomed level must be readable, not just implied by the drawing.
-      check("the zoom level is shown in the toolbar", zOut !== null && /^[0-9]+$/.test(zOut), String(zOut));
+        // The zoomed level must be readable, not just implied by the drawing.
+        check("the zoom level is shown in the toolbar", zOut !== null && /^[0-9]+$/.test(zOut), String(zOut));
+      } catch (e) {
+        check("wheel zoom is exercisable", false, String(e).slice(0, 80));
+      }
 
       // Zooming must not scroll the page out from under the chart.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
@@ -1080,6 +1115,46 @@ try {
 
       const listed = await s.evaluate(`document.body.innerText.includes('999')`);
       check("the alert appears in the list", listed === true);
+
+      // An alert level is drawn on the price pane, so the chart shows what it is
+      // watching for. Seeded AT the last close: a level outside the visible price
+      // range is deliberately not drawn (it would otherwise squash every candle
+      // to keep a far-away line on screen), so 999 above would prove nothing.
+      // Taken from the bars API, not scraped from the read-out: parsing "C 62,70"
+      // out of innerText matched a stray "C" and yielded 1, which put the alert
+      // far below the visible range — where the chart correctly declines to draw
+      // it, so the check failed for a reason that had nothing to do with alerts.
+      const lastClose = await s.evaluate(`(async () => {
+        const r = await fetch('/api/bars?symbol=VNM&tf=1D');
+        const j = await r.json();
+        const bars = j.data ?? [];
+        return bars.length ? bars[bars.length - 1].c : null;
+      })()`);
+      await s.evaluate(`localStorage.setItem('alerts', JSON.stringify([{
+        id: 'onchart', symbol: 'VNM', condition: 'above',
+        price: ${Number(lastClose) || 60}, createdAt: Date.now(),
+      }]))`);
+      await s.goto(BASE + "/vi/bieu-do/VNM?rail=alerts", { scheme: "light" });
+      // The level is read from localStorage through useSyncExternalStore, whose
+      // server snapshot is null — so it appears one frame AFTER hydration, not
+      // in the markup `goto` waits for.
+      await sleep(600);
+      const alertLine = await s.evaluate(
+        `document.querySelectorAll('svg[role=img] line[stroke-dasharray="1 5"]').length`);
+      check("an armed alert is drawn on the chart", alertLine >= 1, `${alertLine} lines @ ${lastClose}`);
+      await s.evaluate("localStorage.removeItem('alerts')");
+
+      await s.goto(BASE + "/vi/bieu-do/VNM?rail=alerts", { scheme: "light" });
+      await s.evaluate(`(() => {
+        const i = document.querySelector('#alert-price');
+        if (!i) return;
+        const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        set.call(i, '999');
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      await sleep(250);
+      await s.evaluate(`document.querySelector('#alert-price')?.closest('form')?.requestSubmit()`);
+      await sleep(450);
 
       await s.evaluate(`[...document.querySelectorAll('button[aria-label]')]
         .find(b => /^Xo\u00e1 [0-9]/.test(b.getAttribute('aria-label')))?.click()`);
