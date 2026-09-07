@@ -921,6 +921,32 @@ try {
       await sleep(400);
       check("ctrl+wheel is left to the browser", (await rangePill()) === ctrlBefore, `${ctrlBefore} → ${await rangePill()}`);
 
+      // ── T+2.5 entry marker ──────────────────────────────────────
+      // A VN holder cannot sell what they just bought; no global charting tool
+      // models that. The marker seeds a purchase at a real bar so the settlement
+      // line has somewhere to land.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      const seeded = await s.evaluate(`(async () => {
+        const r = await fetch('/api/bars?symbol=VNM&tf=1D');
+        const j = await r.json();
+        const bars = j.data ?? [];
+        if (bars.length < 10) return 'no-bars';
+        const b = bars[bars.length - 6];
+        localStorage.setItem('drawings:VNM', JSON.stringify([
+          { id: 'tr1', kind: 'trade', t: b.t, price: b.c },
+        ]));
+        return String(b.c);
+      })()`);
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await sleep(700);
+      const entryLine = await s.evaluate(
+        `document.querySelectorAll('svg[role=img] line[stroke-dasharray="6 2"]').length`);
+      check("an entry marker draws its level", entryLine >= 1, `${entryLine} @ ${seeded}`);
+      const unrealised = await s.evaluate(
+        `/[▲▼]\\s*[+-]?[0-9.,]+%/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
+      check("the marker shows the unrealised move, signed and glyphed", unrealised === true);
+      await s.evaluate("localStorage.removeItem('drawings:VNM')");
+
       // ── market breadth (Pro) ────────────────────────────────────
       // An index is cap-weighted, so it can rise while most of the board falls.
       // This is the pane that says which — and it is the Pro tier's flagship, so

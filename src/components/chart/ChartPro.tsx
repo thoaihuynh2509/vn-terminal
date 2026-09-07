@@ -14,6 +14,7 @@ import {
   type Drawing, type DrawingKind,
 } from "@/lib/chart/drawings";
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
+import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
@@ -39,12 +40,12 @@ function dashGlyph(i: number): string {
 const TOOL_GLYPH: Record<"cursor" | DrawingKind, string> = {
   // The channel has no single character that reads as two parallel lines and
   // still fits the button, so it draws its own icon below.
-  cursor: "⌖", hline: "─", trend: "╱", fib: "≣", fibext: "⇗", channel: "",
+  cursor: "⌖", hline: "─", trend: "╱", fib: "≣", fibext: "⇗", channel: "", trade: "▮",
 };
 
 /** How many clicks each tool needs before it becomes a drawing. */
 const TOOL_POINTS: Record<DrawingKind, number> = {
-  hline: 1, trend: 2, fib: 2, fibext: 2, channel: 3,
+  hline: 1, trend: 2, fib: 2, fibext: 2, channel: 3, trade: 1,
 };
 const DEFAULT_RANGE = 120; // bars; 0 = everything loaded
 /** Shown once, then dismissed for good. */
@@ -470,6 +471,12 @@ export function ChartPro({
       addDrawing({ id: newId(), kind: "hline", price });
       return;
     }
+    // One click, like an hline, but it records WHEN as well as at what price —
+    // settlement is counted from the trade date.
+    if (mode === "trade") {
+      addDrawing({ id: newId(), kind: "trade", t, price });
+      return;
+    }
     if (mode !== "cursor") {
       // Each click adds an anchor until the tool has all it needs. Order is
       // meaningful: Fibonacci reads the pair as the swing being measured, and a
@@ -492,6 +499,8 @@ export function ChartPro({
       if (d.kind === "hline") return distanceToHLine(d, price) / pSpan < 0.012;
       if (d.kind === "trend") return distanceToTrend(d, t, price, nrm) < 0.012;
       if (d.kind === "channel") return distanceToChannel(d, t, price, nrm) < 0.012;
+      // A trade marker is grabbed by its entry level, like an hline.
+      if (d.kind === "trade") return Math.abs(d.price - price) / pSpan < 0.012;
       return distanceToFib(d, t, price) / pSpan < 0.012;
     });
     if (hit) {
@@ -658,7 +667,7 @@ export function ChartPro({
               beside the canvas, not competing for the top bar. */}
           <div role="group" aria-label={dict.chart.draw}
             className="flex shrink-0 flex-col gap-1 rounded border border-line p-1">
-            {(["cursor", "hline", "trend", "fib", "fibext", "channel"] as const).map((m) => {
+            {(["cursor", "hline", "trend", "fib", "fibext", "channel", "trade"] as const).map((m) => {
               const locked = !canDraw && m !== "cursor";
               const label = dict.chart[m];
               return (
@@ -1028,6 +1037,43 @@ function PricePane({
           </text>
         )}
 
+        {/* Trade markers: an entry level, a marker at the session the shares
+            become sellable (VN settles T+2, credited after lunch — "T+2.5"),
+            and the unrealised move. No global tool models this, and it is the
+            first thing a VN holder wants from a chart of something they own. */}
+        {drawings.map((d) => {
+          if (d.kind !== "trade") return null;
+          const yEntry = y(d.price);
+          if (!Number.isFinite(yEntry)) return null;
+          const last = view[view.length - 1]?.c ?? d.price;
+          const move = unrealisedPct(d.price, last);
+          const settleAt = settlementDate(d.t);
+          const settled = isSettled(d.t, view[view.length - 1]?.t ?? d.t);
+          const iEntry = nearestIndex(view, d.t);
+          const iSettle = nearestIndex(view, settleAt);
+          return (
+            <g key={d.id}>
+              <line x1={PAD.left} x2={PAD.left + plotW} y1={yEntry} y2={yEntry}
+                stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="6 2" opacity={0.8} />
+              {/* Where the position was opened. */}
+              <path d={`M${x(iEntry)},${yEntry - 5} L${x(iEntry) + 5},${yEntry} L${x(iEntry)},${yEntry + 5} L${x(iEntry) - 5},${yEntry} Z`}
+                fill="var(--ink-2)" />
+              {/* Until this line the shares cannot be sold at all. Solid once
+                  they have settled, dashed while they are still locked. */}
+              {iSettle > iEntry && (
+                <line x1={x(iSettle)} x2={x(iSettle)} y1={8} y2={H - 8}
+                  stroke="var(--ink-2)" strokeWidth={1}
+                  strokeDasharray={settled ? undefined : "2 4"} opacity={0.55} />
+              )}
+              {/* Signed and glyphed, so the move never rides on colour alone. */}
+              <text x={PAD.left + 4} y={yEntry - 4} fontSize={10} className="tnum"
+                fill="var(--ink-2)">
+                {move >= 0 ? "▲" : "▼"} {move >= 0 ? "+" : ""}{num(move, locale, 2)}% · {num(d.price, locale, digits)}
+              </text>
+            </g>
+          );
+        })}
+
         {/* Drawings map from data space through the same scales as the bars,
             so they stay pinned when the range changes. */}
         {drawings.map((d) => {
@@ -1045,6 +1091,7 @@ function PricePane({
           // Binary search, not a scan: this runs for every endpoint of every
           // drawing on every frame of a pan.
           const iOf = (t: number) => nearestIndex(view, t);
+          if (d.kind === "trade") return null; // drawn separately, below
           const i1 = iOf(d.t1), i2 = iOf(d.t2);
 
           if (d.kind === "channel") {

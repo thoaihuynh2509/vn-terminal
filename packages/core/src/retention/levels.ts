@@ -50,6 +50,8 @@ export function levelsNearPrice(
     let level: number | null = null;
     let kind: NearLevel["kind"] | null = null;
     if (d.kind === "hline") { level = d.price; kind = "hline"; }
+    // A trade marker is an entry, not a level the reader is watching for.
+    else if (d.kind === "trade") continue;
     else if (d.kind === "trend") { level = trendPriceAt(d, nowSec); kind = "trend"; }
     if (level === null || kind === null || !Number.isFinite(level) || level <= 0) continue;
 

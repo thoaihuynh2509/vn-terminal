@@ -9,7 +9,7 @@
  * Pure and dependency-free so the geometry and hit-testing are unit tested; the
  * component only maps these values through its scales.
  */
-export type DrawingKind = "hline" | "trend" | "fib" | "fibext" | "channel";
+export type DrawingKind = "hline" | "trend" | "fib" | "fibext" | "channel" | "trade";
 
 /** Any two anchored points. Several tools are built from one. */
 export interface Segment {
@@ -54,7 +54,25 @@ export interface ChannelDrawing extends Segment {
   t3: number; p3: number;
 }
 
-export type Drawing = HLine | TrendLine | FibDrawing | ChannelDrawing;
+/**
+ * "I bought here."
+ *
+ * Not a line but a POSITION: an entry price at a moment, which the chart can
+ * then answer two questions about — how far price has moved from it, and whether
+ * the shares have settled and can actually be sold. Both are specific to holding
+ * something, which is why this is the artifact a reader comes back to check.
+ */
+export interface TradeMarker {
+  id: string;
+  kind: "trade";
+  /** When the shares were bought, in seconds. */
+  t: number;
+  price: number;
+  /** Optional size, purely so the reader can tell two entries apart. */
+  qty?: number;
+}
+
+export type Drawing = HLine | TrendLine | FibDrawing | ChannelDrawing | TradeMarker;
 
 /** Price gap between the baseline and the parallel line. */
 export function channelOffset(d: ChannelDrawing): number {
@@ -182,6 +200,9 @@ export function parseDrawings(raw: string | null): Drawing[] {
       if (d.kind === "channel") {
         return [d.t1, d.p1, d.t2, d.p2, d.t3, d.p3].every(Number.isFinite);
       }
+      // A trade with a non-positive entry would make every unrealised figure
+      // meaningless, so it is not storable rather than stored and ignored.
+      if (d.kind === "trade") return Number.isFinite(d.t) && Number.isFinite(d.price) && d.price > 0;
       return false;
     });
   } catch {
