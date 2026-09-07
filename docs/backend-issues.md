@@ -127,3 +127,47 @@ Each entry: what · where · symptom · evidence · date · status.
   path a keyboard user actually uses. The wheel's own contract — that it must not scroll the
   page — is still asserted separately and passes.
   `npm run test:actions` is now **98/98 green**.
+
+## 2026-09-07 — P2-8 spike: corporate-action data DOES exist on a free feed
+
+- **Question the spike had to answer:** does any free feed publish dividends / ex-dates as data?
+  The roadmap allows markers only if one does, and forbids a scraper if none does.
+- **Method:** `scripts/probe-events.mjs` (read-only, kept in the repo so the answer can be
+  re-checked when a feed drifts). Seven candidate endpoints across DNSE, VNDirect, CafeF, SSI
+  iBoard and Vietstock, two symbols each.
+- **Answer: YES**, on exactly one of them — VNDirect finfo v4 `/events`:
+  `https://api-finfo.vndirect.com.vn/v4/events?q=code:VNM&size=50&sort=effectiveDate:desc`.
+  Returns `type` (`DIVIDEND`/`STOCKDIV`/`KINDDIV`/`ISSUE`/`MEETING`/`LISTED`/`schedDiv`),
+  `effectiveDate` (= ngày GDKHQ, the ex-right date), `dividend` (VND/share), `ratio`, `note`.
+  Verified current, not an archive: VNM's latest row is 2026-06-26, 1,850 đ/cp.
+- **Rejected, with the reason:** DNSE and CafeF have no corporate-action route (404); SSI iBoard
+  answers `Request not found`; Vietstock answers **HTML**, which is the scraper the roadmap rules
+  out. A first pass wrongly recorded VNDirect as a NO too — the query was malformed and the
+  endpoint answered 500, not 404. *A 500 means the route exists;* only a 404 is evidence of absence.
+- **Two feed quirks the parser must handle, both load-bearing:**
+  1. Every event is published **twice, once per locale** (`.VN` and `.EN_GB`). Drawn naively each
+     dividend appears on the chart twice. `parseEvents` dedupes on (date, kind, cash) and keeps the
+     row matching the reader's language.
+  2. `size` is capped at **50** server-side regardless of what is asked for.
+- **The finding that constrains what a marker may CLAIM:** the daily series we chart is
+  **back-adjusted for cash dividends**. Checking VNM's 2025-10-16 (2,500 đ) and 2026-06-26
+  (1,850 đ) ex-dates against DNSE, previous close → ex-day open moved +0.05 and +0.35, where an
+  unadjusted series would have gapped by the full dividend. So a marker explains **no** drop on the
+  chart — there is none to explain. Labels therefore state the event and the amount and never imply
+  causation. (An earlier read appeared to show a gap; it was a UTC/ICT off-by-one — bar timestamps
+  must be bucketed in `Asia/Ho_Chi_Minh`, which `ictDay()` now does.)
+- **Status:** SHIPPED 2026-09-07 as P2-8. `packages/core/src/chart/events.ts` (pure, 16 tests),
+  `packages/core/src/providers/events.ts` (cached 24h, fails soft to `[]`), markers rendered on the
+  price pane axis. Re-run the probe if markers ever stop appearing.
+
+## 2026-09-07 — `npm run test:a11y` reported 15 fake findings when the dev server was down
+
+- **Symptom:** with nothing listening on `BASE` (3210), the audit reported identical issues on all
+  15 pages — `imgNoAlt: 2`, `lang: 'en'` even on `/vi`. Chrome's own "can't be reached" page is
+  valid HTML with one `h1`, a `lang` and two images, so every column looked like a real finding and
+  the failure pointed at the app instead of at the missing server.
+- **Assessment:** the suite failed in the safe direction (exit 1, never a false green), but it
+  misattributed the cause, which costs a full stash-and-baseline cycle to disprove.
+- **Status:** FIXED 2026-09-07. The audit now loads one page first and aborts with
+  `AUDIT ABORTED: <BASE> did not serve the app` unless the app's own chrome is present. Both paths
+  were exercised: green with the server up, clean abort with `BASE=http://localhost:3999`.

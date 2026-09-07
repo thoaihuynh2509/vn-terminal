@@ -367,11 +367,24 @@ try {
     }));
   }
 
-  if (mode === "audit") {
+  audit: if (mode === "audit") {
     const rows = [];
     const PAGES = ["/vi", "/vi/bieu-do/VNM", "/vi/chung-khoan", "/vi/chung-khoan/VNM", "/vi/vang",
       "/vi/crypto", "/vi/ban-do-nhiet", "/vi/ban-tin", "/vi/goi-dich-vu", "/vi/hoi-ai",
       "/vi/theo-doi", "/vi/dang-nhap", "/en", "/en/chart/VNM", "/en/pricing"];
+    // A dev server that is not running does not fail the audit — Chrome serves
+    // its own error page, which is valid HTML with one h1 and a `lang`, so the
+    // run reports plausible-looking findings for a page it never loaded. Prove
+    // the app answered before auditing anything.
+    await s.goto(BASE + PAGES[0], { scheme: "light" });
+    const reachable = await s.evaluate(
+      `!!document.querySelector('header') || !!document.querySelector('main#main')`);
+    if (!reachable) {
+      console.error(`AUDIT ABORTED: ${BASE} did not serve the app — start the dev server on its port.`);
+      process.exitCode = 1;
+      break audit;
+    }
+
     for (const path of PAGES) {
       await s.goto(BASE + path, { scheme: "light" });
       const r = await s.evaluate(`(() => {

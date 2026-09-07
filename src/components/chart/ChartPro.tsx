@@ -15,6 +15,7 @@ import {
 } from "@/lib/chart/drawings";
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
+import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
@@ -86,6 +87,7 @@ export function ChartPro({
   compare = [],
   foreign = null,
   breadth = null,
+  events = [],
   initialView = DEFAULT_VIEW,
   tf = "1D",
 }: {
@@ -107,6 +109,9 @@ export function ChartPro({
   foreign?: CompareSeries | null;
   /** Percent of VN30 members above their own 20-day average, per bar. */
   breadth?: CompareSeries | null;
+  /** Corporate actions to mark on the axis. Placed against the VISIBLE bars, so
+   *  a marker only ever appears on the session it actually happened. */
+  events?: CorpEvent[];
   /** The view a shared link carried, already decoded and clamped server-side. */
   initialView?: ChartView;
   /** Interval id, for the exported image's name and stamp. */
@@ -710,7 +715,7 @@ export function ChartPro({
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
             type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
-            refLines={refLines} alerts={alertLines} compareView={compareView}
+            refLines={refLines} alerts={alertLines} compareView={compareView} events={events}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -885,11 +890,11 @@ function niceTicks(min: number, max: number, count = 4): number[] {
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, cursorY,
+  refLines, alerts, compareView, cursorY, events,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
-  refLines: RefLine[]; alerts: PriceAlert[];
+  refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[];
   compareView: { label: string; series: (number | null)[] }[];
   cursorY: number | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
@@ -1036,6 +1041,34 @@ function PricePane({
             {comparePaths.map((c, i) => `${i === 0 ? "" : "   "}${dashGlyph(i)} ${c.label}`).join("")}
           </text>
         )}
+
+        {/* Corporate events on the session they went ex.
+
+            Deliberately understated: a dotted riser and a lettered badge on the
+            axis, never a band across the plot. The series is back-adjusted, so
+            there is no gap here for a dividend to explain — the marker answers
+            "was I holding when this paid, and how much", and the label says the
+            amount without implying it caused anything. */}
+        {placeEvents(view, events).map((ev) => {
+          const cx = x(ev.i);
+          const label = ev.kind === "cash" ? dict.chart.eventCash
+            : ev.kind === "stock" ? dict.chart.eventStock : dict.chart.eventRights;
+          const amount = ev.cash !== null
+            ? ` · ${num(ev.cash, locale, 0)} ₫/cp`
+            : ev.ratio !== null ? ` · ${num(ev.ratio, locale, 1)}%` : "";
+          return (
+            <g key={`${ev.exDate}-${ev.kind}-${ev.cash ?? ""}`}>
+              <title>{`${label}${amount} · ${dict.chart.eventExDate} ${ev.exDate}${ev.note ? ` · ${ev.note}` : ""}`}</title>
+              <line x1={cx} x2={cx} y1={H - 22} y2={H - 12}
+                stroke="var(--muted)" strokeWidth={1} strokeDasharray="1 2" opacity={0.8} />
+              <circle cx={cx} cy={H - 7} r={6} fill="var(--surface-2)" stroke="var(--muted)" strokeWidth={0.75} />
+              {/* A letter, not a colour: D/S/R survive greyscale and colour blindness. */}
+              <text x={cx} y={H - 4} fontSize={8} textAnchor="middle" fill="var(--ink-2)" fontWeight={600}>
+                {EVENT_GLYPH[ev.kind]}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Trade markers: an entry level, a marker at the session the shares
             become sellable (VN settles T+2, credited after lunch — "T+2.5"),

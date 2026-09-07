@@ -19,6 +19,7 @@ import { getDict, PATHS, type Dict } from "@/lib/i18n";
 import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
 import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
+import { getCorpEvents } from "@/lib/providers/events";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { decodeView } from "@/lib/chart/view-state";
@@ -155,6 +156,12 @@ export async function TerminalView({
     }
   }
 
+  // Corporate events (cổ tức, phát hành) as x-axis markers. Free, and daily
+  // only: an intraday window almost never contains an ex-date, so the fetch
+  // would be noise. Failure is already swallowed by the provider — a chart
+  // without markers beats no chart.
+  const events = view.intraday ? [] : await getCorpEvents(sym, locale);
+
   // The shared view. Decoded HERE rather than in the browser: a hand-typed
   // ?ind= full of paid indicators is trimmed before anything renders, the same
   // fail-closed rule the intraday timeframe follows — never drawn and retracted.
@@ -258,7 +265,7 @@ export async function TerminalView({
 
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} initialView={chartView} tf={view.id} />
+          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} events={events} initialView={chartView} tf={view.id} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
