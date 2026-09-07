@@ -652,11 +652,6 @@ try {
         const t = svgs[0]?.querySelector('text');
         return t ? t.textContent.trim() : null;
       })()`;
-      const loadedCount = `(() => {
-        const t = document.querySelector('main')?.innerText ?? '';
-        const m = t.match(/([0-9.,]+)[  ]nến/);
-        return m ? Number(m[1].replace(/[.,]/g, "")) : null;
-      })()`;
       const startOldest = await s.evaluate(oldestLabel);
       // Count the history requests directly. The VISIBLE bar count is not the
       // signal — the window keeps its size, it is the reachable history that

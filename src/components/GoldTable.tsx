@@ -1,3 +1,6 @@
+import Link from "next/link";
+import { PATHS } from "@/lib/i18n";
+import { GOLD_SERIES, seriesSymbol } from "@/lib/chart/series";
 import type { GoldSnapshot, Locale } from "@/lib/types";
 import { vnd } from "@/lib/format";
 import type { Dict } from "@/lib/i18n";
@@ -34,7 +37,16 @@ export function GoldTable({
         <tbody className="tnum">
           {rows.map((r) => (
             <tr key={r.code} className="border-b border-line last:border-0 hover:bg-surface-2">
-              <th scope="row" className="px-2 py-1.5 text-left font-medium">{r.name}</th>
+              {/* Only the series we actually record are linked: a link to a
+                  chart with nothing behind it is worse than no link. */}
+              <th scope="row" className="px-2 py-1.5 text-left font-medium">
+                {(GOLD_SERIES as readonly string[]).includes(r.code) ? (
+                  <Link href={`/${locale}/${PATHS.terminal[locale]}/${seriesSymbol(r.code)}`}
+                    className="hover:text-accent hover:underline" title={dict.chart.seriesGoldChart}>
+                    {r.name}
+                  </Link>
+                ) : r.name}
+              </th>
               <td className="px-2 py-1.5 text-right">{vnd(r.buy, locale)}</td>
               <td className="px-2 py-1.5 text-right font-medium">{vnd(r.sell, locale)}</td>
               <td className="px-2 py-1.5 text-right">

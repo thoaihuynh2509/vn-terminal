@@ -723,6 +723,71 @@ function contract(driver: string, makeDb: () => Promise<Db>) {
     assert.equal(downgraded?.tier, "free");
     assert.equal(downgraded?.tierExpiresAt, null);
   });
+
+  // ── recorded series (P2-17) ───────────────────────────────────────────────
+  test(`[${driver}] recorded points come back in ascending time`, async () => {
+    const db = await makeDb();
+    const k = `gold:${uniq()}`;
+    await db.series.append(k, [
+      { t: 300, o: 3, h: 3, l: 3, c: 3 },
+      { t: 100, o: 1, h: 1, l: 1, c: 1 },
+      { t: 200, o: 2, h: 2, l: 2, c: 2 },
+    ]);
+    assert.deepEqual((await db.series.range(k, 100)).map((p) => p.t), [100, 200, 300]);
+  });
+
+  test(`[${driver}] re-recording a day updates it rather than duplicating it`, async () => {
+    // The cron must be safe to re-run: a retry after a failure cannot be allowed
+    // to put two bars on one day.
+    const db = await makeDb();
+    const k = `gold:${uniq()}`;
+    await db.series.append(k, [{ t: 100, o: 1, h: 1, l: 1, c: 1 }]);
+    await db.series.append(k, [{ t: 100, o: 9, h: 9, l: 9, c: 9 }]);
+    const points = await db.series.range(k, 100);
+    assert.equal(points.length, 1);
+    assert.equal(points[0].c, 9);
+  });
+
+  test(`[${driver}] series are isolated from one another`, async () => {
+    const db = await makeDb();
+    const a = `gold:${uniq()}`, b = `gold:${uniq()}`;
+    await db.series.append(a, [{ t: 100, o: 1, h: 1, l: 1, c: 1 }]);
+    await db.series.append(b, [{ t: 100, o: 2, h: 2, l: 2, c: 2 }]);
+    assert.equal((await db.series.range(a, 10))[0].c, 1);
+    assert.equal((await db.series.range(b, 10))[0].c, 2);
+  });
+
+  test(`[${driver}] a limit keeps the NEWEST points, not the oldest`, async () => {
+    // A chart wants the recent past; trimming from the wrong end would show a
+    // reader the beginning of history and nothing since.
+    const db = await makeDb();
+    const k = `gold:${uniq()}`;
+    await db.series.append(k, Array.from({ length: 10 }, (_, i) => (
+      { t: 100 + i, o: i, h: i, l: i, c: i }
+    )));
+    const points = await db.series.range(k, 3);
+    assert.deepEqual(points.map((p) => p.t), [107, 108, 109]);
+  });
+
+  test(`[${driver}] the first recorded instant is what the UI dates history from`, async () => {
+    const db = await makeDb();
+    const k = `gold:${uniq()}`;
+    assert.equal(await db.series.firstAt(k), null, "nothing recorded yet");
+    await db.series.append(k, [{ t: 500, o: 1, h: 1, l: 1, c: 1 }, { t: 200, o: 1, h: 1, l: 1, c: 1 }]);
+    assert.equal(await db.series.firstAt(k), 200);
+  });
+
+  test(`[${driver}] an empty append is a no-op, not an error`, async () => {
+    const db = await makeDb();
+    const k = `gold:${uniq()}`;
+    await db.series.append(k, []);
+    assert.deepEqual(await db.series.range(k, 10), []);
+  });
+
+  test(`[${driver}] a series nobody has recorded is empty, not missing`, async () => {
+    const db = await makeDb();
+    assert.deepEqual(await db.series.range(`gold:${uniq()}`, 10), []);
+  });
 }
 
 const fileDir = () => mkdtemp(join(tmpdir(), "vnt-db-test-"));

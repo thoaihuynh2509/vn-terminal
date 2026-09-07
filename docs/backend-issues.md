@@ -226,3 +226,28 @@ Each entry: what · where · symptom · evidence · date · status.
   `INTRADAY_FLOOR_DAYS`, with a unit test asserting the constants match what was probed, so a future
   re-probe has something to compare against.
 - **Status:** SHIPPED 2026-09-07 as P2-16.
+
+## 2026-09-07 — ROOT CAUSE of the migration blocker: the connection string is an unfilled template
+
+- **Where:** `DATABASE_URL` and `MIGRATE_DATABASE_URL` in `.env.local`, and almost certainly the
+  same values in Vercel — this has blocked migrations 006, 007 and now 008 since 2026-09-06.
+- **Symptom:** `new URL(value)` throws `ERR_INVALID_URL`, so `scripts/db-migrate.mjs` skips (by
+  design, exiting 0 rather than failing the build) and every database-backed feature is dark:
+  cross-device sync, saved layouts, alert provenance, and now recorded gold history.
+- **Cause, found by inspecting the string's SHAPE rather than its contents:**
+
+      postgres://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres
+
+  The angle brackets are LITERAL. It is Supabase's copy-paste template with `<ref>`, `<pw>` and
+  `<region>` never substituted. `<` and `>` are not legal in a URL's userinfo or host, which is
+  exactly why it fails to parse while looking plausible at a glance — it has the right scheme, one
+  `@`, no spaces, and the right length.
+- **Fix (a human must do this, the values are secrets):** in the Supabase dashboard take
+  Settings → Database → Connection string → **Session mode** (port 5432, NOT 6543 transaction
+  mode, which cannot run DDL), and paste the real value — replacing every `<…>` placeholder,
+  including the password — into both `.env.local` and the Vercel project's environment. Then
+  redeploy so `db:migrate` runs 006, 007 and 008.
+- **Verify afterwards:** `node -e 'new URL(process.env.DATABASE_URL)'` exits silently, and
+  `/api/bars?symbol=GOLD:SJC` returns 200 instead of 501.
+- **Status:** OPEN — needs the real credentials. Everything on the code side is shipped and tested
+  against the file driver.

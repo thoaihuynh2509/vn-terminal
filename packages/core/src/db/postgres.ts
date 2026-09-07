@@ -412,5 +412,41 @@ export async function createPostgresDb(url: string): Promise<Db> {
         return Number(row?.n ?? 0);
       },
     },
+
+    series: {
+      async append(series, points) {
+        if (!points.length) return;
+        // One statement, not one per point: a cron writing every gold series
+        // would otherwise be a round trip per row. ON CONFLICT makes a re-run
+        // on a day already recorded an update rather than a duplicate.
+        const rows = points.map((p) => ({
+          series, t: p.t, o: p.o, h: p.h, l: p.l, c: p.c, v: p.v ?? 0,
+        }));
+        await sql`
+          INSERT INTO series_points ${sql(rows, "series", "t", "o", "h", "l", "c", "v")}
+          ON CONFLICT (series, t) DO UPDATE
+            SET o = EXCLUDED.o, h = EXCLUDED.h, l = EXCLUDED.l,
+                c = EXCLUDED.c, v = EXCLUDED.v`;
+      },
+
+      async range(series, limit) {
+        // Newest `limit` taken first, then flipped: a chart reads ascending, but
+        // "the most recent N" is what the index can answer cheaply.
+        const rows = await sql<{ t: string; o: number; h: number; l: number; c: number; v: number }[]>`
+          SELECT t, o, h, l, c, v FROM series_points
+          WHERE series = ${series}
+          ORDER BY t DESC
+          LIMIT ${Math.max(1, Math.min(5000, Math.floor(limit)))}`;
+        return rows
+          .map((r) => ({ t: Number(r.t), o: r.o, h: r.h, l: r.l, c: r.c, v: r.v }))
+          .reverse();
+      },
+
+      async firstAt(series) {
+        const [row] = await sql<{ t: string }[]>`
+          SELECT min(t)::text AS t FROM series_points WHERE series = ${series}`;
+        return row?.t ? Number(row.t) : null;
+      },
+    },
   };
 }

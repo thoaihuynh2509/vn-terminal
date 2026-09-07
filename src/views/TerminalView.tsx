@@ -13,7 +13,7 @@ import { Delta } from "@/components/Delta";
 import { getSession } from "@/lib/auth/session";
 import { can } from "@/lib/auth/entitlement";
 import { activeProvider } from "@/lib/ask/provider";
-import { equityPrice } from "@/lib/format";
+import { dateOnly, equityPrice } from "@/lib/format";
 import { rsi } from "@/lib/ta/indicators";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
 import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
@@ -21,6 +21,9 @@ import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import { getCorpEvents } from "@/lib/providers/events";
 import { ChartSyncProvider } from "@/components/chart/ChartSync";
+import { seriesCode, seriesKey } from "@/lib/chart/series";
+import { dbAvailable, getDb } from "@/lib/db";
+import type { Bar } from "@/lib/types";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { decodeView } from "@/lib/chart/view-state";
@@ -38,6 +41,24 @@ import type { Locale } from "@/lib/types";
  * the client component receives `tier` and gates its own UI, but the tier itself
  * is never client-supplied.
  */
+/**
+ * Points we recorded ourselves, as chart bars.
+ *
+ * Returns an empty array rather than throwing when the database is unavailable:
+ * a gold chart with no history yet and a gold chart we cannot reach look the
+ * same to the reader, and both are "no history to show" rather than an error.
+ */
+async function recordedBars(code: string): Promise<Bar[]> {
+  if (!dbAvailable()) return [];
+  try {
+    const db = await getDb();
+    const points = await db.series.range(seriesKey(code), 2000);
+    return points.map((p) => ({ t: p.t, o: p.o, h: p.h, l: p.l, c: p.c, v: p.v ?? 0 }));
+  } catch {
+    return [];
+  }
+}
+
 export async function TerminalView({
   locale, symbol, extra = [], layout = 1, tf, rail, cmp, fr = false, br = false, view: viewParams,
 }: {
@@ -69,10 +90,29 @@ export async function TerminalView({
   const asked = timeframe(tf);
   const view = asked.intraday && !can(tier, "chart:intraday") ? timeframe(DEFAULT_TF) : asked;
 
+  /**
+   * Gold is charted from OUR OWN recorded points, because the upstream
+   * publishes a live snapshot and no history. That makes it a different fetch,
+   * and a different empty state: an equity with no bars is a broken feed, while
+   * gold with no bars simply means the recording has not started yet.
+   */
+  const recorded = seriesCode(sym);
   const [barsR, boardR] = await Promise.allSettled([
-    getTimeframeBars(sym, view),
+    recorded ? recordedBars(recorded) : getTimeframeBars(sym, view),
     getBoard(),
   ]);
+
+  // A recorded series with nothing in it yet is not an error — it is a feature
+  // that starts accruing on the day the cron first runs, and saying so is more
+  // honest than a feed banner blaming an upstream that was never asked.
+  if (recorded && (barsR.status === "rejected" || !barsR.value.length)) {
+    return (
+      <>
+        <PageHeader title={sym} subtitle={dict.chart.subtitle} />
+        <p className="card p-4 text-[13px] text-ink-2">{dict.chart.seriesEmpty}</p>
+      </>
+    );
+  }
 
   if (barsR.status === "rejected" || !barsR.value.length) {
     // A symbol we cannot chart at all is a 404; a broken board is not.
@@ -240,8 +280,13 @@ export async function TerminalView({
             <WatchButton symbol={sym} addLabel={dict.stocks.addWatch} removeLabel={dict.stocks.removeWatch} />
             <SymbolSearchButton label={dict.chart.changeSymbol} compact />
           </div>
+          {/* A recorded series says where its history STARTS, because it has no
+              upstream past and a chart that stops abruptly at the left edge
+              otherwise reads as missing data rather than as the beginning. */}
           <p className="mt-0.5 text-[12px] text-muted">
-            {exchangeOf(sym) ?? dict.common.noData} · {dict.common.unit}: {dict.common.thousandVnd}
+            {recorded
+              ? dict.chart.seriesFrom.replace("{d}", dateOnly(bars[0].t, locale))
+              : `${exchangeOf(sym) ?? dict.common.noData} · ${dict.common.unit}: ${dict.common.thousandVnd}`}
           </p>
           {/* Session-aware: the chart was the one live surface with no refresh at
               all, but it must not pulse "live" at a price frozen since 15:00. */}

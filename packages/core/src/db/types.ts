@@ -81,6 +81,12 @@ export interface NewMagicToken {
   expiresAt: Date;
 }
 
+/** One recorded point. `t` is a unix second, matching `Bar`. */
+export interface SeriesPoint {
+  t: number;
+  o: number; h: number; l: number; c: number; v?: number;
+}
+
 export interface Db {
   users: {
     findByEmail(email: string): Promise<UserRecord | null>;
@@ -161,6 +167,22 @@ export interface Db {
     remove(userId: string, kind: string, key: string): Promise<void>;
     /** How many docs of a kind this user has — the tier cap is counted on it. */
     count(userId: string, kind: string): Promise<number>;
+  };
+  /**
+   * Time series we record ourselves, for prices no feed publishes history for.
+   * Gold is the first: the upstream gives a live snapshot and nothing else.
+   */
+  series: {
+    /**
+     * Record points, replacing any already stored for the same instant.
+     * Idempotent by (series, t), so re-running the cron on a day it already
+     * covered updates that day rather than duplicating it.
+     */
+    append(series: string, points: SeriesPoint[]): Promise<void>;
+    /** Points in ascending time order, newest `limit` when there are more. */
+    range(series: string, limit: number): Promise<SeriesPoint[]>;
+    /** The oldest instant recorded, so the UI can say when history starts. */
+    firstAt(series: string): Promise<number | null>;
   };
 }
 

@@ -92,6 +92,14 @@ interface FileState {
   alerts: AlertRow[];
   orders: OrderRow[];
   docs: DocRow[];
+  /** Optional: a store written before 008 has no series, and must still load. */
+  series?: SeriesRow[];
+}
+
+interface SeriesRow {
+  series: string;
+  t: number;
+  o: number; h: number; l: number; c: number; v: number;
 }
 
 interface Store {
@@ -513,6 +521,34 @@ export async function createFileDb(dir: string): Promise<Db> {
         withLock(s, false, (state) =>
           state.docs.filter((d) => d.userId === userId && d.kind === kind).length,
         ),
+    },
+
+    series: {
+      append: (series, points) =>
+        withLock(s, true, (state) => {
+          state.series ??= [];
+          for (const p of points) {
+            const at = state.series.findIndex((x) => x.series === series && x.t === p.t);
+            const row = { series, t: p.t, o: p.o, h: p.h, l: p.l, c: p.c, v: p.v ?? 0 };
+            if (at === -1) state.series.push(row);
+            else state.series[at] = row;
+          }
+        }),
+
+      range: (series, limit) =>
+        withLock(s, false, (state) =>
+          (state.series ?? [])
+            .filter((x) => x.series === series)
+            .sort((a, b) => a.t - b.t)
+            .slice(-Math.max(1, Math.floor(limit)))
+            .map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })),
+        ),
+
+      firstAt: (series) =>
+        withLock(s, false, (state) => {
+          const ts = (state.series ?? []).filter((x) => x.series === series).map((x) => x.t);
+          return ts.length ? Math.min(...ts) : null;
+        }),
     },
   };
 }

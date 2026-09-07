@@ -4,6 +4,8 @@ import { can } from "@/lib/auth/entitlement";
 import { getSession } from "@/lib/auth/session";
 import { clientIp, createLimiter } from "@/lib/rate-limit";
 import { fail, ok, okPrivate } from "@/lib/api";
+import { DbUnavailableError, dbAvailable, getDb } from "@/lib/db";
+import { seriesCode, seriesKey } from "@/lib/chart/series";
 
 export const revalidate = 0;
 
@@ -19,6 +21,29 @@ export async function GET(req: Request) {
   const p = new URL(req.url).searchParams;
   const symbol = p.get("symbol");
   if (!symbol) return fail(new Error("symbol is required"), 400);
+
+  // A recorded series — gold — is served from our own table rather than a feed.
+  // Detected from the SYMBOL rather than a separate parameter, so the two can
+  // never disagree about what is being asked for.
+  const recorded = seriesCode(symbol);
+  if (recorded) {
+    if (!dbAvailable()) return fail(new Error("series not configured"), 501);
+    try {
+      const db = await getDb();
+      const points = await db.series.range(seriesKey(recorded), 2000);
+      // Public: recorded gold is not tier-gated, and it changes once a day.
+      return ok(points.map((p) => ({ ...p, v: p.v ?? 0 })), 300);
+    } catch (e) {
+      // A database that is configured but unreachable — a malformed connection
+      // string is the live example — is "this feature is not set up here", not
+      // a server fault. 501 says that, and lets the chart show its own empty
+      // state instead of an error page.
+      if (e instanceof DbUnavailableError || (e instanceof Error && /Invalid URL/i.test(e.message))) {
+        return fail(new Error("series not configured"), 501);
+      }
+      return fail(e);
+    }
+  }
 
   // Same gate as the page: an intraday interval is a paid interval, and the
   // check has to live here too or the API is the way around the paywall.

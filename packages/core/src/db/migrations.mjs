@@ -131,4 +131,31 @@ ALTER TABLE alerts ADD COLUMN indicator text;
 ALTER TABLE alerts ADD COLUMN period integer CHECK (period IS NULL OR (period >= 2 AND period <= 200));
 `,
   },
+  {
+    // Our OWN time series, for prices no feed publishes history for.
+    //
+    // Gold is the reason: vang.today gives a live snapshot and nothing else, so
+    // a gold chart can only ever show history we recorded ourselves. One row per
+    // series per day, written by the daily cron, which means the history starts
+    // accruing on the day this ships and the UI has to say so rather than imply
+    // years of data.
+    //
+    // `t` is a unix SECOND, matching Bar, so the same chart code reads it with
+    // no conversion. The primary key makes a re-run of the cron idempotent: a
+    // day already recorded is updated, never duplicated.
+    id: "008_series_points",
+    sql: `
+CREATE TABLE IF NOT EXISTS series_points (
+  series text NOT NULL CHECK (series = trim(series) AND length(series) BETWEEN 1 AND 64),
+  t bigint NOT NULL CHECK (t > 0),
+  o double precision NOT NULL,
+  h double precision NOT NULL,
+  l double precision NOT NULL,
+  c double precision NOT NULL,
+  v double precision NOT NULL DEFAULT 0,
+  PRIMARY KEY (series, t)
+);
+CREATE INDEX IF NOT EXISTS series_points_series_t_idx ON series_points (series, t DESC);
+`,
+  },
 ];

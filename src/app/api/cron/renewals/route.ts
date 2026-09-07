@@ -4,6 +4,8 @@ import { atLeast } from "@/lib/auth/entitlement";
 import { effectiveTier } from "@/lib/auth/provider";
 import { sendEmail } from "@/lib/auth/mailer";
 import { cronAuthorized } from "@/lib/retention/cron-auth";
+import { recordGoldSeries } from "@/lib/retention/record-series";
+import { getGold } from "@/lib/providers/gold";
 import { renewalDue, renewalEmail } from "@/lib/retention/run";
 
 export const runtime = "nodejs";
@@ -46,7 +48,17 @@ export async function GET(req: Request) {
         /* leave the mark unset so the next run retries this reader */
       }
     }
-    return NextResponse.json({ ok: true, data: { usersChecked: users.length, reminded } });
+    // Today's gold point rides along on the only job that runs every day.
+    // Gold has no upstream history, so a day this misses is a gap nothing can
+    // backfill — but a failure here must not cost the renewal reminders that
+    // are this job's actual purpose.
+    let series = null;
+    try {
+      series = await recordGoldSeries(db, await getGold(), now.getTime());
+    } catch {
+      /* a dead gold feed costs today's point, never the reminders */
+    }
+    return NextResponse.json({ ok: true, data: { usersChecked: users.length, reminded, series } });
   } catch (err) {
     if (err instanceof DbUnavailableError) {
       return NextResponse.json({ ok: false, error: "cron_not_configured" }, { status: 501 });
