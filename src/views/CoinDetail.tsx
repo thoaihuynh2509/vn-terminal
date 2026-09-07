@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Delta } from "@/components/Delta";
-import { PriceChart } from "@/components/PriceChart";
+import { ChartPro } from "@/components/chart/ChartPro";
 import { Card } from "@/components/ui";
 import { KeyValue, Panel, PageShell } from "@/components/layout";
 import { FeedBanner } from "@/components/FeedBanner";
@@ -11,11 +11,14 @@ import { getDict, PATHS } from "@/lib/i18n";
 import { getCoin, getCoinBars } from "@/lib/providers/crypto";
 import { DEFAULT_SYMBOL } from "@/lib/providers/vnstock";
 import type { Locale } from "@/lib/types";
+import { getSession } from "@/lib/auth/session";
+import { cryptoSymbol } from "@/lib/chart/series";
 
 export async function CoinDetail({ locale, id }: { locale: Locale; id: string }) {
   const dict = getDict(locale);
 
-  const [coinR, barsR] = await Promise.allSettled([getCoin(id), getCoinBars(id, 90)]);
+  const tier = (await getSession())?.tier ?? "anon";
+  const [coinR, barsR] = await Promise.allSettled([getCoin(id), getCoinBars(id, 365)]);
 
   // A rejected promise means the feed broke, not that the coin is unknown —
   // show the degraded state instead of claiming the asset does not exist.
@@ -71,9 +74,18 @@ export async function CoinDetail({ locale, id }: { locale: Locale; id: string })
 
       <PageShell rail={rail}>
         <Card className="p-4">
-          <h2 className="mb-3 text-[15px] font-semibold tracking-tight">{dict.stocks.chartTitle}</h2>
-          {/* market_chart is close-only, so volume bars would be a flat lie. */}
-          <PriceChart bars={bars} locale={locale} dict={dict} digits={digits} showVolume={false} />
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-[15px] font-semibold tracking-tight">{dict.stocks.chartTitle}</h2>
+            <Link href={`/${locale}/${PATHS.terminal[locale]}/${cryptoSymbol(id)}`}
+              className="text-[12px] font-medium text-accent hover:underline">
+              {dict.chart.openTerminal} →
+            </Link>
+          </div>
+          {/* The same chart the equities get: drawings, indicators, alerts and
+              the crosshair, rather than a second, poorer renderer to maintain.
+              market_chart is close-only, so there are no volume bars to draw. */}
+          <ChartPro bars={bars} symbol={coin.symbol.toUpperCase()} locale={locale} dict={dict}
+            tier={tier} digits={digits} tf="1D" />
         </Card>
       </PageShell>
     </>

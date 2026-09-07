@@ -61,3 +61,41 @@ export function dayBucket(atMs: number): number {
   const shifted = atMs + ICT;
   return Math.floor(Math.floor(shifted / 86_400_000) * 86_400_000 - ICT) / 1000;
 }
+
+/** Crypto is charted from the coin feed, addressed the same way gold is. */
+export const CRYPTO_PREFIX = "CRYPTO";
+
+/** CoinGecko ids are lowercase, hyphenated: `bitcoin`, `binance-coin`. */
+const COIN_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export function cryptoSymbol(id: string): string {
+  return `${CRYPTO_PREFIX}:${id.toLowerCase()}`;
+}
+
+export function cryptoId(symbol: string): string | null {
+  const s = symbol.trim();
+  if (!s.toUpperCase().startsWith(`${CRYPTO_PREFIX}:`)) return null;
+  const id = s.slice(CRYPTO_PREFIX.length + 1).toLowerCase();
+  return COIN_RE.test(id) ? id : null;
+}
+
+export type ChartSource =
+  | { kind: "recorded"; code: string }
+  | { kind: "crypto"; id: string }
+  | { kind: "equity"; symbol: string };
+
+/**
+ * Where a chart symbol's bars come from.
+ *
+ * One decision point, derived from the SYMBOL alone, so the page, the bars API
+ * and anything else that charts cannot disagree about what they are looking at.
+ * A separate `kind` parameter would be a second source of truth that a hand-typed
+ * URL could put out of step with the symbol.
+ */
+export function chartSource(symbol: string): ChartSource {
+  const code = seriesCode(symbol);
+  if (code) return { kind: "recorded", code };
+  const id = cryptoId(symbol);
+  if (id) return { kind: "crypto", id };
+  return { kind: "equity", symbol: symbol.trim().toUpperCase() };
+}

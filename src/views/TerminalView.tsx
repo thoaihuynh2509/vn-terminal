@@ -20,8 +20,10 @@ import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
 import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import { getCorpEvents } from "@/lib/providers/events";
+import { getCoinBars } from "@/lib/providers/crypto";
+import { cryptoEnabled } from "@/lib/flags";
 import { ChartSyncProvider } from "@/components/chart/ChartSync";
-import { seriesCode, seriesKey } from "@/lib/chart/series";
+import { chartSource, seriesKey } from "@/lib/chart/series";
 import { dbAvailable, getDb } from "@/lib/db";
 import type { Bar } from "@/lib/types";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
@@ -48,6 +50,22 @@ import type { Locale } from "@/lib/types";
  * a gold chart with no history yet and a gold chart we cannot reach look the
  * same to the reader, and both are "no history to show" rather than an error.
  */
+/**
+ * Coin bars, already `Bar`-shaped by the provider.
+ *
+ * Daily only: the upstream's `market_chart` is a daily close series, so the
+ * intraday intervals a reader can pick for an equity have nothing to serve here
+ * and the chart stays on the one interval that exists.
+ */
+async function cryptoBars(id: string): Promise<Bar[]> {
+  if (!cryptoEnabled()) return [];
+  try {
+    return await getCoinBars(id, 365);
+  } catch {
+    return [];
+  }
+}
+
 async function recordedBars(code: string): Promise<Bar[]> {
   if (!dbAvailable()) return [];
   try {
@@ -96,16 +114,19 @@ export async function TerminalView({
    * and a different empty state: an equity with no bars is a broken feed, while
    * gold with no bars simply means the recording has not started yet.
    */
-  const recorded = seriesCode(sym);
+  const source = chartSource(sym);
+  const recorded = source.kind === "recorded" ? source.code : null;
   const [barsR, boardR] = await Promise.allSettled([
-    recorded ? recordedBars(recorded) : getTimeframeBars(sym, view),
+    source.kind === "recorded" ? recordedBars(source.code)
+      : source.kind === "crypto" ? cryptoBars(source.id)
+      : getTimeframeBars(sym, view),
     getBoard(),
   ]);
 
   // A recorded series with nothing in it yet is not an error — it is a feature
   // that starts accruing on the day the cron first runs, and saying so is more
   // honest than a feed banner blaming an upstream that was never asked.
-  if (recorded && (barsR.status === "rejected" || !barsR.value.length)) {
+  if (source.kind !== "equity" && (barsR.status === "rejected" || !barsR.value.length)) {
     return (
       <>
         <PageHeader title={sym} subtitle={dict.chart.subtitle} />

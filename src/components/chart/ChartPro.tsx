@@ -25,6 +25,8 @@ import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { linkedIndex } from "@/lib/chart/sync";
 import { atLeftEdge, grew, mergeBars, olderWindow } from "@/lib/chart/history-window";
+import { POLL_INTERVAL_MS, applyUpdate } from "@/lib/chart/stream";
+import { isSessionOpen } from "@/lib/chart/session";
 import { useChartSync } from "./ChartSync";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
@@ -339,8 +341,26 @@ export function ChartPro({
   const exhausted = history.done;
   const loading = useRef(false);
 
-  /** What the chart actually draws: the server's window plus anything pulled in. */
-  const bars = useMemo(() => mergeBars(barsProp, history.bars), [barsProp, history.bars]);
+  /**
+   * The last bar, kept fresh while the market is open.
+   *
+   * Replaces `LiveStamp`'s full-page `router.refresh`, which re-rendered every
+   * pane, the rail and the board to move one candle. Only the forming bar
+   * changes, so only it is fetched.
+   *
+   * Off-hours this does nothing at all: nothing moves after 15:00, and a poll
+   * that returns the same bar forever is a request per reader per 30 seconds
+   * for no information.
+   */
+  const [live, setLive] = useState<Bar | null>(null);
+
+    /** What the chart actually draws: the server's window plus anything pulled in. */
+  const bars = useMemo(() => {
+    const merged = mergeBars(barsProp, history.bars);
+    if (!live) return merged;
+    const bucket = merged.length > 1 ? merged[merged.length - 1].t - merged[merged.length - 2].t : 86_400;
+    return applyUpdate(merged, { symbol, tf, bar: live, final: false }, bucket);
+  }, [barsProp, history.bars, live, symbol, tf]);
 
   const [width, setWidth] = useState(900);
   const [priceH, setPriceH] = useState(340);
@@ -572,6 +592,30 @@ export function ChartPro({
 
     return () => ctl.abort();
   }, [bars, barsProp, range, offset, symbol, tf, exhausted, seriesKey, history.bars]);
+
+  // Polling, only while the session is open, and only for the primary chart's
+  // own symbol. A companion cell in a grid polls too — each is its own chart —
+  // which is why the interval is 30s rather than something tighter.
+  useEffect(() => {
+    if (!barsProp.length) return;
+    let stopped = false;
+    const poll = async () => {
+      if (stopped || !isSessionOpen(new Date())) return;
+      try {
+        const res = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}`,
+          { headers: { accept: "application/json" } });
+        if (!res.ok || stopped) return;
+        const body = (await res.json()) as { data?: Bar[] } | Bar[];
+        const page = Array.isArray(body) ? body : (body.data ?? []);
+        if (page.length) setLive(page[page.length - 1]);
+      } catch {
+        /* a failed poll is a missed tick, never an error the reader sees */
+      }
+    };
+    const timer = setInterval(poll, POLL_INTERVAL_MS);
+    void poll();
+    return () => { stopped = true; clearInterval(timer); };
+  }, [symbol, tf, barsProp.length]);
 
   const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, range, offset), [bars.length, range, offset]);
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
