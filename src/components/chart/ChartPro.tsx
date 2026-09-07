@@ -84,6 +84,7 @@ export function ChartPro({
   refLines = [],
   compare = [],
   foreign = null,
+  breadth = null,
   initialView = DEFAULT_VIEW,
   tf = "1D",
 }: {
@@ -103,6 +104,8 @@ export function ChartPro({
   compare?: CompareSeries[];
   /** Foreign net buy/sell per bar (VND), drawn as signed bars in its own pane. */
   foreign?: CompareSeries | null;
+  /** Percent of VN30 members above their own 20-day average, per bar. */
+  breadth?: CompareSeries | null;
   /** The view a shared link carried, already decoded and clamped server-side. */
   initialView?: ChartView;
   /** Interval id, for the exported image's name and stamp. */
@@ -304,6 +307,11 @@ export function ChartPro({
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
   // The compare series is aligned to the full bars, so slice it by the same
   // window as the visible candles.
+  const breadthView = useMemo(
+    () => (breadth ? breadth.series.slice(wStart, wEnd) : null),
+    [breadth, wStart, wEnd],
+  );
+
   const compareView = useMemo(
     () => compare.map((c) => ({ label: c.label, series: c.series.slice(wStart, wEnd) })),
     [compare, wStart, wEnd],
@@ -700,6 +708,12 @@ export function ChartPro({
             cursorY={cursorY}
           />
           <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday} locale={locale} />
+          {breadthView && (
+            <BreadthPane
+              view={view} intraday={intraday} width={width} band={band} x={x} PAD={PAD} hover={hover}
+              pct={breadthView} label={breadth?.label ?? ""} locale={locale}
+            />
+          )}
           {foreignView && (
             <ForeignPane
               view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday}
@@ -1233,6 +1247,39 @@ function ForeignPane({
       })}
       {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
       <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
+    </svg>
+  );
+}
+
+/**
+ * Breadth, 0–100. Bounded, so the scale is fixed rather than fitted to the
+ * window — a breadth chart that rescales itself makes 60% look like an extreme
+ * on a quiet week. The 50 line is drawn because it is a genuine midpoint (half
+ * the market participating), not a threshold someone picked.
+ */
+function BreadthPane({
+  width, x, PAD, hover, pct, label,
+}: PaneGeom & { pct: (number | null)[]; label: string; locale: Locale }) {
+  const H = 54;
+  const plotW = width - PAD.left - PAD.right;
+  const y = (v: number) => 8 + (H - 16) - (v / 100) * (H - 16);
+  const d = pct
+    .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`))
+    .filter(Boolean)
+    .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
+    .join(" ");
+  const last = [...pct].reverse().find((v): v is number => v !== null);
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="block">
+      <line x1={PAD.left} x2={PAD.left + plotW} y1={y(50)} y2={y(50)} stroke="var(--grid)" strokeWidth={1} strokeDasharray="2 3" />
+      {d && <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />}
+      {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+      <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
+      {last !== undefined && (
+        <text x={PAD.left + plotW - 2} y={10} fontSize={9} textAnchor="end" fill="var(--muted)" className="tnum">
+          {Math.round(last)}%
+        </text>
+      )}
     </svg>
   );
 }

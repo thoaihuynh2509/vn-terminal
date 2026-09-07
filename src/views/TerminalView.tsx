@@ -23,6 +23,8 @@ import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { decodeView } from "@/lib/chart/view-state";
 import { parseCompare } from "@/lib/chart/compare";
+import { getBreadth } from "@/lib/providers/breadth";
+import { alignBreadth } from "@/lib/breadth";
 import { INDICATORS } from "@/lib/ta/registry";
 import { TimeframePicker } from "@/components/chart/TimeframePicker";
 import type { Locale } from "@/lib/types";
@@ -35,7 +37,7 @@ import type { Locale } from "@/lib/types";
  * is never client-supplied.
  */
 export async function TerminalView({
-  locale, symbol, extra = [], layout = 1, tf, rail, cmp, fr = false, view: viewParams,
+  locale, symbol, extra = [], layout = 1, tf, rail, cmp, fr = false, br = false, view: viewParams,
 }: {
   locale: Locale;
   symbol: string;
@@ -50,6 +52,8 @@ export async function TerminalView({
   cmp?: string;
   /** Foreign net buy/sell pane (`?fr=1`), from SSI FastConnect. Gated to Plus. */
   fr?: boolean;
+  /** VN30 breadth pane (`?br=1`). Gated to Pro. */
+  br?: boolean;
   /** Raw view params from the URL; decoded and tier-clamped on the server. */
   view?: { type?: string; ind?: string; r?: string };
 }) {
@@ -163,6 +167,19 @@ export async function TerminalView({
     },
   );
 
+  // Market breadth — the Pro pane. An index is capitalisation-weighted, so
+  // VNINDEX can rise on two large banks while most of the board falls; this is
+  // the question that answers, and an index chart structurally cannot. Daily
+  // only: breadth is a daily measure and recomputing it per intraday interval
+  // would multiply thirty upstream fetches for a number that does not change.
+  let breadth: CompareSeries | null = null;
+  if (br && can(tier, "chart:multi") && !view.intraday) {
+    const points = await getBreadth().catch(() => []);
+    if (points.length) {
+      breadth = { label: dict.chart.breadthPane, series: alignBreadth(points, bars) };
+    }
+  }
+
   // RSI for the alert panel, computed from the bars this page already loaded.
   // Without it an indicator alert simply is not evaluated in the browser — the
   // nightly job still catches it — which is far better than testing "RSI above
@@ -223,6 +240,13 @@ export async function TerminalView({
           on={compare.length > 0} canCompare={canCompare} frOn={!!foreign}
           extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
         />
+        {!view.intraday && (
+          <BreadthToggle
+            locale={locale} dict={dict} symbol={sym} tf={view.id}
+            on={!!breadth} canBreadth={can(tier, "chart:multi")}
+            extraQuery={`${cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}${compare.length ? `&cmp=${compare.map((c) => c.label).join(",")}` : ""}${foreign ? "&fr=1" : ""}`}
+          />
+        )}
         {foreignReady && !view.intraday && (
           <ForeignToggle
             locale={locale} dict={dict} symbol={sym} tf={view.id}
@@ -234,7 +258,7 @@ export async function TerminalView({
 
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} initialView={chartView} tf={view.id} />
+          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} initialView={chartView} tf={view.id} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
@@ -333,6 +357,31 @@ function CompareToggle({
       }`}
     >
       {on ? dict.chart.compareOff : dict.chart.compareOn}
+    </Link>
+  );
+}
+
+/** VN30 breadth pane toggle (?br=1). Pro — it is the flagship of that tier. */
+function BreadthToggle({
+  locale, dict, symbol, tf, on, canBreadth, extraQuery,
+}: {
+  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canBreadth: boolean; extraQuery: string;
+}) {
+  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}`;
+  if (!canBreadth) {
+    return (
+      <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=pro`} title={dict.chart.breadthLock}
+        className="text-[11px] font-medium text-accent hover:underline">
+        🔒 {dict.chart.breadthOn} →
+      </Link>
+    );
+  }
+  return (
+    <Link href={on ? base : `${base}&br=1`} aria-pressed={on}
+      className={`rounded border px-2.5 py-1 text-[12px] font-medium ${
+        on ? "border-accent bg-accent text-page" : "border-line text-ink-2 hover:text-ink"
+      }`}>
+      {on ? dict.chart.breadthOff : dict.chart.breadthOn}
     </Link>
   );
 }

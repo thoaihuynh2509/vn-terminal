@@ -921,6 +921,24 @@ try {
       await sleep(400);
       check("ctrl+wheel is left to the browser", (await rangePill()) === ctrlBefore, `${ctrlBefore} → ${await rangePill()}`);
 
+      // ── market breadth (Pro) ────────────────────────────────────
+      // An index is cap-weighted, so it can rise while most of the board falls.
+      // This is the pane that says which — and it is the Pro tier's flagship, so
+      // it has to actually render for a Pro reader, not just gate for everyone.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&br=1", { scheme: "light" });
+      await sleep(1200); // thirty member fetches on a cold cache
+      const breadthPane = await s.evaluate(
+        `document.querySelectorAll('svg[aria-label*="rộng"]').length`);
+      check("pro gets the breadth pane", breadthPane >= 1, `${breadthPane} panes`);
+      const breadthReading = await s.evaluate(`(() => {
+        const el = document.querySelector('svg[aria-label*="rộng"]');
+        const m = (el?.textContent ?? '').match(/([0-9]{1,3})%/);
+        return m ? Number(m[1]) : null;
+      })()`);
+      check("breadth reads as a percentage of the market",
+        breadthReading !== null && breadthReading >= 0 && breadthReading <= 100,
+        String(breadthReading));
+
       // ── compare overlays ────────────────────────────────────────
       // The pricing page claimed "compare symbols" while only VNINDEX worked.
       // Pro gets three, each with its own dash pattern so they are told apart
@@ -1066,9 +1084,14 @@ try {
         i.dispatchEvent(new Event('input', { bubbles: true }));
         i.form.requestSubmit();
       })()`);
-      await sleep(900);
-      check("submitting a custom interval switches the chart",
-        (await s.evaluate(`document.querySelector('[aria-label="Khung thời gian"] [aria-current=page]')?.textContent.trim()`)) === "9h");
+      // Waits for the navigation instead of sleeping a fixed time: the server
+      // render does more work than it used to (compare fetches, breadth), and a
+      // hard-coded delay is how a suite becomes flaky rather than informative.
+      const switched = await s.waitFor(
+        `document.querySelector('[aria-label="Khung thời gian"] [aria-current=page]')?.textContent.trim() === '9h' || null`,
+        { timeoutMs: 8000 },
+      );
+      check("submitting a custom interval switches the chart", switched === true);
 
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
       await s.evaluate(`document.querySelector('button[aria-haspopup="menu"]')?.click()`);
