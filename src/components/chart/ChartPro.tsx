@@ -17,6 +17,7 @@ import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
+import { dashFor } from "@/lib/chart/compare";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { useSyncedDoc } from "@/lib/use-synced-doc";
 import { mergeById } from "@/lib/docs-sync";
@@ -28,6 +29,11 @@ import { parseAlerts, STORAGE_KEY as ALERTS_KEY, type PriceAlert } from "@/lib/a
 import type { Bar, Locale, Tier } from "@/lib/types";
 
 type ChartType = "candle" | "line" | "area";
+
+/** Legend keys that mirror the dash patterns, so the mapping survives greyscale. */
+function dashGlyph(i: number): string {
+  return ["┄", "┈", "┅"][i % 3];
+}
 
 /** Rail icons. The accessible name comes from `aria-label`, not from these. */
 const TOOL_GLYPH: Record<"cursor" | DrawingKind, string> = {
@@ -76,7 +82,7 @@ export function ChartPro({
   digits = 2,
   intraday = false,
   refLines = [],
-  compare = null,
+  compare = [],
   foreign = null,
   initialView = DEFAULT_VIEW,
   tf = "1D",
@@ -92,9 +98,9 @@ export function ChartPro({
   /** Horizontal reference levels — VN ceiling/floor (trần/sàn). Folded into the
    *  price scale so they are always visible. */
   refLines?: RefLine[];
-  /** A second series (e.g. VNINDEX) drawn as a normalised shape for relative
-   *  strength. Isolated from the price scale — it never moves the candles. */
-  compare?: CompareSeries | null;
+  /** Series drawn as normalised shapes for relative strength. Isolated from the
+   *  price scale — they never move the candles. */
+  compare?: CompareSeries[];
   /** Foreign net buy/sell per bar (VND), drawn as signed bars in its own pane. */
   foreign?: CompareSeries | null;
   /** The view a shared link carried, already decoded and clamped server-side. */
@@ -299,7 +305,7 @@ export function ChartPro({
   // The compare series is aligned to the full bars, so slice it by the same
   // window as the visible candles.
   const compareView = useMemo(
-    () => (compare ? compare.series.slice(wStart, wEnd) : null),
+    () => compare.map((c) => ({ label: c.label, series: c.series.slice(wStart, wEnd) })),
     [compare, wStart, wEnd],
   );
   const foreignView = useMemo(
@@ -687,7 +693,7 @@ export function ChartPro({
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
             type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
-            refLines={refLines} alerts={alertLines} compareView={compareView} compareLabel={compare?.label ?? null}
+            refLines={refLines} alerts={alertLines} compareView={compareView}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -856,11 +862,12 @@ function niceTicks(min: number, max: number, count = 4): number[] {
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, compareLabel, cursorY,
+  refLines, alerts, compareView, cursorY,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
-  refLines: RefLine[]; alerts: PriceAlert[]; compareView: (number | null)[] | null; compareLabel: string | null;
+  refLines: RefLine[]; alerts: PriceAlert[];
+  compareView: { label: string; series: (number | null)[] }[];
   cursorY: number | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
   onClick: (e: React.PointerEvent<SVGSVGElement>) => void;
@@ -879,17 +886,22 @@ function PricePane({
 
   // Compare line: its OWN min/max mapped to the pane's pixel band, so it shows
   // relative SHAPE without touching the price scale, candles or crosshair.
-  const cVals = (compareView ?? []).filter((v): v is number => v !== null);
-  const cMin = cVals.length ? Math.min(...cVals) : 0;
-  const cMax = cVals.length ? Math.max(...cVals) : 1;
-  const cy = (v: number) => 10 + (H - 20) - ((v - cMin) / ((cMax - cMin) || 1)) * (H - 20);
-  const comparePath = compareView
-    ? compareView
-        .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${cy(v).toFixed(1)}`))
-        .filter(Boolean)
-        .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
-        .join(" ")
-    : "";
+  // Each overlay is normalised against ITS OWN range and mapped to the pane's
+  // pixel band, so relative SHAPE is comparable even when an index at 1,300 and
+  // a share at 27 sit on the chart together — and none of them touch the price
+  // scale, the candles or the crosshair.
+  const comparePaths = compareView.map((c) => {
+    const vals = c.series.filter((v): v is number => v !== null);
+    const lo = vals.length ? Math.min(...vals) : 0;
+    const hi = vals.length ? Math.max(...vals) : 1;
+    const cy = (v: number) => 10 + (H - 20) - ((v - lo) / ((hi - lo) || 1)) * (H - 20);
+    const d = c.series
+      .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${cy(v).toFixed(1)}`))
+      .filter(Boolean)
+      .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
+      .join(" ");
+    return { label: c.label, d };
+  }).filter((c) => c.d);
 
   const linePath = view.map((b, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(b.c).toFixed(1)}`).join(" ");
 
@@ -989,16 +1001,17 @@ function PricePane({
           );
         })}
 
-        {/* Compare line (e.g. VNINDEX): normalised shape only, not the price scale. */}
-        {comparePath && (
-          <>
-            <path d={comparePath} fill="none" stroke="var(--muted)" strokeWidth={1.5} strokeDasharray="5 3" opacity={0.85} />
-            {compareLabel && (
-              <text x={PAD.left + 4} y={H - 8} fontSize={10} fill="var(--muted)">
-                ┄ {compareLabel}
-              </text>
-            )}
-          </>
+        {/* Overlays: normalised shape only, never the price scale. Each gets its
+            own dash pattern so they are told apart without relying on colour,
+            and the legend repeats that pattern rather than a colour swatch. */}
+        {comparePaths.map((c, i) => (
+          <path key={c.label} d={c.d} fill="none" stroke="var(--muted)" strokeWidth={1.5}
+            strokeDasharray={dashFor(i)} opacity={0.85} />
+        ))}
+        {comparePaths.length > 0 && (
+          <text x={PAD.left + 4} y={H - 8} fontSize={10} fill="var(--muted)">
+            {comparePaths.map((c, i) => `${i === 0 ? "" : "   "}${dashGlyph(i)} ${c.label}`).join("")}
+          </text>
         )}
 
         {/* Drawings map from data space through the same scales as the bars,

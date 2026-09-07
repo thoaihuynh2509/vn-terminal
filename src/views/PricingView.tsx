@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/editorial";
 import { PlanCards } from "@/components/PlanCards";
 import { ALERT_LIMIT, DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
+import { COMPARE_LIMIT } from "@/lib/chart/compare";
 import { anyProviderEnabled, enabledProviders } from "@/lib/billing/providers";
 import { getSession } from "@/lib/auth/session";
 import { dbAvailable, getDb } from "@/lib/db";
@@ -39,7 +40,9 @@ export async function PricingView({ locale }: { locale: Locale }) {
     { label: dict.pricing.fIndicators, values: TIERS.map((t) => String(INDICATOR_LIMIT[t])) },
     { label: dict.pricing.fLibrary, values: TIERS.map((t) => can(t, "chart:indicators")) },
     { label: dict.pricing.fWatchlist, values: TIERS.map((t) => can(t, "save:watchlist")) },
-    { label: dict.pricing.fCompare, values: TIERS.map((t) => can(t, "chart:compare")) },
+    // A count, not a tick: comparing is no longer one hardcoded index, so the
+    // row has to say how many overlays a tier actually gets.
+    { label: dict.pricing.fCompare, values: TIERS.map((t) => (COMPARE_LIMIT[t] ? String(COMPARE_LIMIT[t]) : false)) },
     { label: dict.pricing.fAi, values: TIERS.map((t) => can(t, "use:ai-assistant")) },
     // Drawings and alerts are rendered as COUNTS, not ticks. Free now holds both
     // capabilities, so `can()` would print "✓ ✓ ✓" across the row and hide the

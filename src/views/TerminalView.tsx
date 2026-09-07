@@ -22,6 +22,7 @@ import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { decodeView } from "@/lib/chart/view-state";
+import { parseCompare } from "@/lib/chart/compare";
 import { INDICATORS } from "@/lib/ta/registry";
 import { TimeframePicker } from "@/components/chart/TimeframePicker";
 import type { Locale } from "@/lib/types";
@@ -34,7 +35,7 @@ import type { Locale } from "@/lib/types";
  * is never client-supplied.
  */
 export async function TerminalView({
-  locale, symbol, extra = [], layout = 1, tf, rail, cmp = false, fr = false, view: viewParams,
+  locale, symbol, extra = [], layout = 1, tf, rail, cmp, fr = false, view: viewParams,
 }: {
   locale: Locale;
   symbol: string;
@@ -45,8 +46,8 @@ export async function TerminalView({
   tf?: string;
   /** Rail tab to open (`?rail=ask`) — how the old assistant and watchlist URLs land. */
   rail?: string;
-  /** Overlay VNINDEX for relative strength (`?cmp=1`). Gated to Plus. */
-  cmp?: boolean;
+  /** Symbols to overlay (`?cmp=VNINDEX,HPG`; legacy `?cmp=1` means VNINDEX). */
+  cmp?: string;
   /** Foreign net buy/sell pane (`?fr=1`), from SSI FastConnect. Gated to Plus. */
   fr?: boolean;
   /** Raw view params from the URL; decoded and tier-clamped on the server. */
@@ -117,14 +118,23 @@ export async function TerminalView({
   // shareable. Aligned to the symbol's bars by timestamp; a normalised shape,
   // not the price scale.
   const canCompare = can(tier, "chart:compare");
-  let compare: CompareSeries | null = null;
-  if (cmp && canCompare) {
-    const idx = await getTimeframeBars("VNINDEX", view, { kind: "index" }).catch(() => []);
-    if (idx.length) {
-      const byTs = new Map(idx.map((b) => [b.t, b.c]));
-      compare = { label: "VNINDEX", series: bars.map((b) => byTs.get(b.t) ?? null) };
-    }
-  }
+  // Capped by tier inside parseCompare, so a hand-typed ?cmp= with five symbols
+  // cannot fan out into five upstream fetches.
+  const compareSymbols = canCompare ? parseCompare(cmp, tier, sym) : [];
+  const compareSeries = await Promise.all(
+    compareSymbols.map(async (other) => {
+      // An index and a stock come from different endpoints; the only reliable
+      // way to tell them apart here is that indices are not listed equities.
+      const kind = exchangeOf(other) ? ("stock" as const) : ("index" as const);
+      const other_bars = await getTimeframeBars(other, view, { kind }).catch(() => []);
+      if (!other_bars.length) return null;
+      const byTs = new Map(other_bars.map((b) => [b.t, b.c]));
+      return { label: other, series: bars.map((b) => byTs.get(b.t) ?? null) };
+    }),
+  );
+  // A symbol whose feed failed is dropped rather than drawn as a gap that looks
+  // like the stock stopped trading.
+  const compare: CompareSeries[] = compareSeries.filter((c): c is CompareSeries => c !== null);
 
   // Foreign net buy/sell (khối ngoại) from SSI FastConnect — daily only, gated
   // to Plus, and only offered when the owner has wired SSI credentials. Aligned
@@ -176,7 +186,7 @@ export async function TerminalView({
     >
       <ChartViewed
         symbol={sym} tf={view.id} intraday={!!view.intraday} layout={cells}
-        tier={tier} hasCmp={!!compare} hasFr={!!foreign}
+        tier={tier} hasCmp={compare.length > 0} hasFr={!!foreign}
       />
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -210,7 +220,7 @@ export async function TerminalView({
         <LayoutSwitcher locale={locale} dict={dict} symbol={sym} extra={extra} layout={cells} multi={multi} tf={view.id} />
         <CompareToggle
           locale={locale} dict={dict} symbol={sym} tf={view.id}
-          on={!!compare} canCompare={canCompare} frOn={!!foreign}
+          on={compare.length > 0} canCompare={canCompare} frOn={!!foreign}
           extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
         />
         {foreignReady && !view.intraday && (

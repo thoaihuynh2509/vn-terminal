@@ -921,6 +921,34 @@ try {
       await sleep(400);
       check("ctrl+wheel is left to the browser", (await rangePill()) === ctrlBefore, `${ctrlBefore} → ${await rangePill()}`);
 
+      // ── compare overlays ────────────────────────────────────────
+      // The pricing page claimed "compare symbols" while only VNINDEX worked.
+      // Pro gets three, each with its own dash pattern so they are told apart
+      // without relying on colour.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&cmp=VNINDEX,HPG,FPT", { scheme: "light" });
+      await sleep(400);
+      const overlays = await s.evaluate(`(() => {
+        const pane = document.querySelector('svg[role=img]');
+        if (!pane) return 0;
+        const dashes = new Set();
+        pane.querySelectorAll('path[stroke-dasharray]').forEach((p) => {
+          if (p.getAttribute('fill') === 'none') dashes.add(p.getAttribute('stroke-dasharray'));
+        });
+        return dashes.size;
+      })()`);
+      check("pro overlays several symbols at once", overlays >= 3, `${overlays} dash patterns`);
+      const legend = await s.evaluate(
+        `(document.querySelector('svg[role=img]')?.textContent ?? '')`);
+      check("each overlay is named in the legend",
+        /VNINDEX/.test(legend) && /HPG/.test(legend) && /FPT/.test(legend), "VNINDEX/HPG/FPT");
+
+      // The legacy link shape must keep working.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&cmp=1", { scheme: "light" });
+      await sleep(400);
+      const legacy = await s.evaluate(
+        `/VNINDEX/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
+      check("a cmp=1 link shared before this still means VNINDEX", legacy === true);
+
       // ── export the chart as a picture ───────────────────────────
       // The failure this catches is silent: the chart paints with CSS variables
       // and currentColor, and an SVG isolated inside an <img> resolves neither,
