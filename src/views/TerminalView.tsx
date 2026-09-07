@@ -211,13 +211,13 @@ export async function TerminalView({
 
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} initialView={chartView} />
+          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} initialView={chartView} tf={view.id} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
             <div key={sym2} className="card min-w-0 p-4">
               <h2 className="mb-2 text-[14px] font-semibold tracking-tight">{sym2}</h2>
-              <ChartPro bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} />
+              <ChartPro bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} tf={view.id} />
             </div>
           ) : (
             <div key={sym2} className="card p-4"><FeedBanner dict={dict} /></div>

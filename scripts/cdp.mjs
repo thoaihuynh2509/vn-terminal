@@ -921,6 +921,53 @@ try {
       await sleep(400);
       check("ctrl+wheel is left to the browser", (await rangePill()) === ctrlBefore, `${ctrlBefore} → ${await rangePill()}`);
 
+      // ── export the chart as a picture ───────────────────────────
+      // The failure this catches is silent: the chart paints with CSS variables
+      // and currentColor, and an SVG isolated inside an <img> resolves neither,
+      // so a naive export saves a black rectangle that still "works".
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      const png = await s.evaluate(`(async () => {
+        const svg = document.querySelector('svg[role=img]');
+        if (!svg) return 'no-pane';
+        const clone = svg.cloneNode(true);
+        const from = [svg, ...svg.querySelectorAll('*')];
+        const to = [clone, ...clone.querySelectorAll('*')];
+        from.forEach((el, i) => {
+          const cs = getComputedStyle(el);
+          const d = to[i];
+          if (cs.fill && cs.fill !== 'none') d.setAttribute('fill', cs.fill);
+          if (cs.stroke && cs.stroke !== 'none') d.setAttribute('stroke', cs.stroke);
+        });
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        const markup = new XMLSerializer().serializeToString(clone);
+        const img = await new Promise((res, rej) => {
+          const im = new Image();
+          im.onload = () => res(im); im.onerror = () => rej(new Error('x'));
+          im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+        });
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0);
+        // Count distinct colours: a blank or all-black export has almost none.
+        const data = ctx.getImageData(0, 0, c.width, c.height).data;
+        const seen = new Set();
+        for (let i = 0; i < data.length; i += 4 * 97) {
+          seen.add(data[i] + ',' + data[i+1] + ',' + data[i+2]);
+        }
+        return JSON.stringify({ w: c.width, h: c.height, colours: seen.size });
+      })()`);
+      const shot = png && png !== 'no-pane' ? JSON.parse(png) : null;
+      check("the chart renders to a canvas at full size", !!shot && shot.w > 300 && shot.h > 200,
+        shot ? `${shot.w}x${shot.h}` : String(png));
+      check("the exported image keeps its colours", !!shot && shot.colours >= 3,
+        shot ? `${shot.colours} distinct` : "none");
+
+      const shareBtns = await s.evaluate(
+        `[...document.querySelectorAll('button')].filter(b => /Chép liên kết|Lưu ảnh/.test(b.textContent)).length`);
+      check("the share controls are on the toolbar", shareBtns === 2, `${shareBtns} buttons`);
+
       // ── a link reproduces the view ──────────────────────────────
       // The story this protects: a reader bookmarks their chart, or sends it to
       // someone, and it comes back as the chart they were actually looking at

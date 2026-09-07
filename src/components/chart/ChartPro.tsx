@@ -5,6 +5,7 @@ import { barTime, dateOnly, num, volume as fmtVol } from "@/lib/format";
 import { PATHS, type Dict } from "@/lib/i18n";
 import { COLOR_VAR, INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { IndicatorMenu } from "./IndicatorMenu";
+import { ShareMenu } from "./ShareMenu";
 import { useDismiss } from "@/lib/ui/use-dismiss";
 import { DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
 import {
@@ -78,6 +79,7 @@ export function ChartPro({
   compare = null,
   foreign = null,
   initialView = DEFAULT_VIEW,
+  tf = "1D",
 }: {
   bars: Bar[];
   symbol: string;
@@ -97,6 +99,8 @@ export function ChartPro({
   foreign?: CompareSeries | null;
   /** The view a shared link carried, already decoded and clamped server-side. */
   initialView?: ChartView;
+  /** Interval id, for the exported image's name and stamp. */
+  tf?: string;
 }) {
   // null = the reader has not chosen this session, so the stored setup wins.
   // Derived rather than copied into state by an effect: an effect would cascade
@@ -175,6 +179,10 @@ export function ChartPro({
   );
 
   const wrapRef = useRef<HTMLDivElement>(null);
+  const getPanes = useCallback(
+    () => Array.from(wrapRef.current?.querySelectorAll<SVGSVGElement>('svg[role="img"]') ?? []),
+    [],
+  );
   const [width, setWidth] = useState(900);
   const [priceH, setPriceH] = useState(340);
   const hintSeen = useStored(HINT_KEY);
@@ -564,6 +572,8 @@ export function ChartPro({
         dict={dict} locale={locale} unlocked={unlocked} limit={limit}
         type={type} setType={chooseType} setRange={setRange}
         presets={presets} activePreset={activePreset} barCount={effectiveRange}
+        getPanes={getPanes} symbol={symbol} tf={tf}
+        exportSite={can(tier, "sync:docs") ? null : undefined}
         active={active} toggle={toggle} asTable={asTable} setAsTable={setAsTable}
         full={full} toggleFull={() => setFull((v) => !v)} canDraw={canDraw}
       />
@@ -709,7 +719,7 @@ export function ChartPro({
 
 function Toolbar({
   dict, locale, unlocked, limit, type, setType, setRange, active, toggle, asTable, setAsTable,
-  full, toggleFull, canDraw, presets, activePreset, barCount,
+  full, toggleFull, canDraw, presets, activePreset, barCount, getPanes, symbol, tf, exportSite,
 }: {
   dict: Dict; locale: Locale; unlocked: boolean; limit: number;
   type: ChartType; setType: (t: ChartType) => void;
@@ -717,6 +727,11 @@ function Toolbar({
   presets: { id: RangePreset; count: number }[];
   activePreset: RangePreset | null;
   barCount: number;
+  getPanes: () => SVGSVGElement[];
+  symbol: string;
+  tf: string;
+  /** `null` means a clean image; `undefined` means stamp with this origin. */
+  exportSite?: string | null;
   active: string[]; toggle: (d: IndicatorDef) => void;
   asTable: boolean; setAsTable: (v: boolean) => void;
   full: boolean; toggleFull: () => void; canDraw: boolean;
@@ -761,6 +776,10 @@ function Toolbar({
       </button>
 
       <span className="ml-auto flex shrink-0 items-center gap-2">
+        <ShareMenu
+          dict={dict} getPanes={getPanes} symbol={symbol} tf={tf}
+          site={exportSite === null ? null : (typeof window === "undefined" ? null : window.location.origin)}
+        />
         <HelpSheet dict={dict} canDraw={canDraw} />
         <button type="button" onClick={toggleFull} aria-pressed={full}
           title={full ? dict.chart.exitFullscreen : dict.chart.fullscreen}
