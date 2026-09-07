@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { barTime, dateOnly, num, volume as fmtVol } from "@/lib/format";
 import { PATHS, type Dict } from "@/lib/i18n";
 import { COLOR_VAR, INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
@@ -23,6 +23,8 @@ import {
 } from "@/lib/chart/history";
 import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
+import { linkedIndex } from "@/lib/chart/sync";
+import { useChartSync } from "./ChartSync";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
 import { DEFAULT_SCALE, denorm, effectiveScale, norm, padRange, pctOf, scaleTicks, SCALES, type ScaleId } from "@/lib/chart/scale";
@@ -153,7 +155,13 @@ export function ChartPro({
   // How far back the window sits, in bars. See `lib/chart/pan`.
   const [offset, setOffset] = useState(0);
   const [activeChoice, setActiveChoice] = useState<string[] | null>(null);
-  const [hover, setHover] = useState<number | null>(null);
+  const [hover, setHoverLocal] = useState<number | null>(null);
+  const sync = useChartSync();
+  // Stable per mount and unique per cell: two cells showing the SAME symbol in
+  // a grid must still be told apart, so the symbol is not enough.
+  const cellId = useId();
+
+  const setHover = setHoverLocal;
   // The pointer's own height, so the crosshair can answer "what price is my
   // cursor at" rather than only "what did this candle close at".
   const [cursorY, setCursorY] = useState<number | null>(null);
@@ -651,11 +659,43 @@ export function ChartPro({
   const barAtX = useCallback((px: number) =>
     Math.max(0, Math.min(view.length - 1, Math.round((px - PAD.left) / band - 0.5))), [view.length, band, PAD.left]);
 
+  /**
+   * Tell the grid which MOMENT this cell's pointer is on.
+   *
+   * Done in an effect rather than inside the pointer handler so it cannot fire
+   * during a state update, and keyed on the bar's timestamp so moving within
+   * one bar publishes nothing — a pointer crossing a candle emits dozens of
+   * events, and each would otherwise re-render every other cell.
+   */
+  const hoverT = hover !== null ? (view[hover]?.t ?? null) : null;
+  const publish = sync.publish;
+  const isSource = sync.sourceId === cellId;
+  useEffect(() => {
+    // Only the cell that owns the crosshair may clear it. Without this, a
+    // companion — which has no hover of its own — publishes null on the very
+    // render the source's hover caused, and erases it.
+    if (hoverT === null && !isSource) return;
+    publish(cellId, hoverT);
+  }, [publish, cellId, hoverT, isSource]);
+
+  const linked = useMemo(
+    () => (hover !== null || sync.sourceId === cellId ? null : linkedIndex(view, sync.hoverT)),
+    [hover, sync.hoverT, sync.sourceId, cellId, view],
+  );
   if (!view.length) {
     return <p className="py-16 text-center text-[13px] text-muted">{dict.common.noData}</p>;
   }
 
-  const idx = hover ?? view.length - 1;
+  /**
+   * The crosshair, which may belong to a sibling cell.
+   *
+   * This cell's own pointer wins when it has one. Otherwise the grid's hovered
+   * MOMENT is resolved against this symbol's own bars, and resolves to nothing
+   * when this symbol has no bar there — a companion that did not trade at that
+   * moment shows no crosshair rather than one parked on the nearest day.
+   */
+  const shownHover = hover ?? linked;
+  const idx = shownHover ?? view.length - 1;
   const activeBar = view[idx];
   const prevClose = idx > 0 ? view[idx - 1].c : activeBar.o;
   const activeChange = activeBar.c - prevClose;
@@ -1065,7 +1105,7 @@ export function ChartPro({
           <PricePane
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
-            type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
+            type={type} overlays={computed.price} hover={shownHover} idx={idx} H={priceH}
             refLines={refLines} alerts={alertLines} compareView={compareView} events={events} scale={scale} selectedId={selectedId}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
@@ -1096,16 +1136,16 @@ export function ChartPro({
           >
             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-line group-hover:bg-accent group-focus:bg-accent" />
           </div>
-          <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday} locale={locale} />
+          <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={shownHover} intraday={intraday} locale={locale} />
           {breadthView && (
             <BreadthPane
-              view={view} intraday={intraday} width={width} band={band} x={x} PAD={PAD} hover={hover}
+              view={view} intraday={intraday} width={width} band={band} x={x} PAD={PAD} hover={shownHover}
               pct={breadthView} label={breadth?.label ?? ""} locale={locale}
             />
           )}
           {foreignView && (
             <ForeignPane
-              view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday}
+              view={view} width={width} band={band} x={x} PAD={PAD} hover={shownHover} intraday={intraday}
               net={foreignView} label={foreign?.label ?? "Khối ngoại"} locale={locale}
             />
           )}
@@ -1113,10 +1153,10 @@ export function ChartPro({
             <OscillatorPane
               intraday={intraday}
               key={def.id} def={def} period={period} plots={plots} width={width}
-              band={band} x={x} PAD={PAD} hover={hover} idx={idx} locale={locale}
+              band={band} x={x} PAD={PAD} hover={shownHover} idx={idx} locale={locale}
             />
           ))}
-          <XAxis view={view} width={width} x={x} xStep={xStep} locale={locale} hover={hover} intraday={intraday} />
+          <XAxis view={view} width={width} x={x} xStep={xStep} locale={locale} hover={shownHover} intraday={intraday} />
           </div>
         </div>
       )}

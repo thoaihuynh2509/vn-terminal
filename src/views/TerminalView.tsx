@@ -20,6 +20,7 @@ import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
 import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import { getCorpEvents } from "@/lib/providers/events";
+import { ChartSyncProvider } from "@/components/chart/ChartSync";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { decodeView } from "@/lib/chart/view-state";
@@ -162,6 +163,26 @@ export async function TerminalView({
   // without markers beats no chart.
   const events = view.intraday ? [] : await getCorpEvents(sym, locale);
 
+  /**
+   * Per-companion reference lines and events.
+   *
+   * Each uses its OWN exchange band and its OWN previous close — reusing the
+   * main symbol's would draw an HNX stock's ceiling at a HOSE price, which is
+   * the exact bug P2-2 fixed for the primary chart.
+   */
+  const companionRefs: RefLine[][] = companionBars.map((cb, i) => {
+    const cBand = bandOf(companions[i]);
+    const cPrev = cb[cb.length - 2] ?? cb[cb.length - 1];
+    if (view.intraday || cBand === null || !cPrev) return [];
+    return [
+      { price: cPrev.c * (1 + cBand), label: dict.stocks.ceiling, dir: "up" as const },
+      { price: cPrev.c * (1 - cBand), label: dict.stocks.floor, dir: "down" as const },
+    ];
+  });
+  const companionEvents = view.intraday
+    ? companions.map(() => [])
+    : await Promise.all(companions.map((c) => getCorpEvents(c, locale)));
+
   // The shared view. Decoded HERE rather than in the browser: a hand-typed
   // ?ind= full of paid indicators is trimmed before anything renders, the same
   // fail-closed rule the intraday timeframe follows — never drawn and retracted.
@@ -263,6 +284,10 @@ export async function TerminalView({
         )}
       </div>
 
+      {/* One provider around the whole grid: the cells share the hovered MOMENT,
+          so a crosshair on one lands on the same session in every other. A
+          single chart is not wrapped, so the common case pays nothing. */}
+      <ChartSyncProvider>
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
           <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} events={events} initialView={chartView} tf={view.id} />
@@ -271,13 +296,18 @@ export async function TerminalView({
           companionBars[i].length ? (
             <div key={sym2} className="card min-w-0 p-4">
               <h2 className="mb-2 text-[14px] font-semibold tracking-tight">{sym2}</h2>
-              <ChartPro bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} tf={view.id} />
+              {/* Companions get their OWN ceiling/floor, computed from their own
+                  previous close and their own exchange's band. They were drawn
+                  bare, which made a 4-up grid three charts missing the first
+                  thing a VN trader looks for. */}
+              <ChartPro bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={companionRefs[i]} events={companionEvents[i]} tf={view.id} />
             </div>
           ) : (
             <div key={sym2} className="card p-4"><FeedBanner dict={dict} /></div>
           ),
         )}
       </div>
+      </ChartSyncProvider>
 
     </PageShell>
   );

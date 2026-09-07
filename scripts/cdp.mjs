@@ -1650,6 +1650,38 @@ try {
       await s.goto(BASE + "/vi/bieu-do/VNM?layout=4&s=FPT,HPG,VCB", { scheme: "light" });
       const cards = await s.evaluate(`document.querySelectorAll('main .card.min-w-0').length`);
       check("pro gets a four-chart grid", cards === 4, `${cards} charts`);
+
+      // ── linked crosshair (P2-14) ────────────────────────────────
+      // The grid was four independent charts sitting side by side. Hovering one
+      // must move the crosshair in the others, and — the part that actually
+      // matters — land on the SAME SESSION, not the same bar index. Two symbols
+      // rarely have the same history, so an index would line up unrelated days.
+      const readStamps = `(() => {
+        return [...document.querySelectorAll('main .card.min-w-0')].map(card => {
+          const axis = [...card.querySelectorAll('svg')].pop();
+          const t = axis?.querySelector('text[fill="var(--page)"]');
+          return t ? t.textContent.trim() : null;
+        });
+      })()`;
+      const gridBox = JSON.parse(await s.evaluate(`(() => {
+        const r = document.querySelector('main .card.min-w-0 svg[role=img]').getBoundingClientRect();
+        return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height });
+      })()`));
+      await s.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: gridBox.l + gridBox.w * 0.4,
+        y: gridBox.t + gridBox.h * 0.5,
+      });
+      const stamps = await s.waitFor(`(() => {
+        const v = ${readStamps};
+        return v.filter(Boolean).length >= 2 ? JSON.stringify(v) : null;
+      })()`, 5000);
+      const cellStamps = stamps ? JSON.parse(stamps) : [];
+      const shown = cellStamps.filter(Boolean);
+      check("hovering one cell shows a crosshair in the others",
+        shown.length >= 2, `${shown.length} of ${cellStamps.length} cells`);
+      check("every linked cell is on the same session",
+        shown.length >= 2 && new Set(shown).size === 1, shown.join(" | "));
       const shareable = await s.evaluate(`location.search.includes('layout=4')`);
       check("layout lives in the URL and is shareable", shareable === true);
     }
