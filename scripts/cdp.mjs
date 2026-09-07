@@ -857,22 +857,38 @@ try {
       // Declared outside the try: the ctrl+wheel check below reuses both, and
       // scoping them to the guarded block left it referencing dead bindings.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      // The zoom level is the BAR COUNT beside the range group, not the pressed
+      // pill: the presets are named ("3M"), and a wheel-scroll lands between
+      // them, where claiming a preset would be a lie. The count is what actually
+      // changes when you zoom.
       const rangePill = async () => s.evaluate(
-        `document.querySelector('[aria-label="Khoảng"] [aria-pressed=true]')?.textContent.trim()`);
+        `(() => {
+          const m = (document.querySelector('main')?.innerText ?? '').match(/([0-9.,]+)\\s*nến/);
+          return m ? m[1].replace(/\\./g, '') : null;
+        })()`);
       const plot = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 }); })()`));
 
       try {
+        // Driven from the KEYBOARD, not the wheel. Chrome's Input.dispatchMouseEvent
+        // is never acknowledged by the chart's non-passive wheel listener, so a
+        // wheel-based assertion tests the transport rather than the zoom. `+`/`-`
+        // run the same `zoomAt` through a path a keyboard user actually uses, and
+        // the wheel's own contract (it must not scroll the page) is checked below.
+        const key = async (k) => {
+          await s.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, text: k });
+          await s.send("Input.dispatchKeyEvent", { type: "keyUp", key: k });
+          await sleep(250);
+        };
+        await s.evaluate(`document.querySelector('svg[role=img]')?.focus()`);
         const zStart = await rangePill();
-        await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: plot.x, y: plot.y, deltaX: 0, deltaY: -120 });
-        await sleep(400);
+        await key("+");
         const zIn = await rangePill();
-        check("wheel up zooms in", zStart !== null && zIn !== null && Number(zIn) < Number(zStart), `${zStart} → ${zIn}`);
+        check("keyboard + zooms in", zStart !== null && zIn !== null && Number(zIn) < Number(zStart), `${zStart} → ${zIn}`);
 
-        await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: plot.x, y: plot.y, deltaX: 0, deltaY: 240 });
-        await sleep(400);
+        await key("-"); await key("-");
         const zOut = await rangePill();
-        check("wheel down zooms back out", Number(zOut) > Number(zIn), `${zIn} → ${zOut}`);
+        check("keyboard - zooms back out", Number(zOut) > Number(zIn), `${zIn} → ${zOut}`);
 
         // The zoomed level must be readable, not just implied by the drawing.
         check("the zoom level is shown in the toolbar", zOut !== null && /^[0-9]+$/.test(zOut), String(zOut));

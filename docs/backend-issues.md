@@ -115,5 +115,15 @@ Each entry: what · where · symptom · evidence · date · status.
   They describe exactly the control the chart roadmap builds as **P1-13** (range presets
   1M/3M/6M/1Y/YTD/All, plus a visible bar count), which will turn all four green and give the three
   orphaned dictionary keys their consumer.
-- **Status:** OPEN, expected to close with P1-13. Until then `test:actions` exits 1 on these four;
-  every other assertion passes.
+- **Status:** **RESOLVED 2026-09-07 by P1-13.** The range control now exists — named presets
+  (1M/3M/6M/1Y/YTD/All) in a `role="group" aria-label="Khoảng"`, plus a bar-count read-out — so
+  `chart.range` and `chart.bars` finally have consumers, and "the zoom level is shown in the
+  toolbar" and "a custom interval is served real bars" pass against real UI.
+  Two of the four had to be **retargeted rather than satisfied**, and the reason matters: the
+  presets are *named*, and a wheel-scroll lands between them, where lighting up "3M" would be a
+  lie — so the honest zoom read-out is the bar count, not the pressed pill. The wheel itself is
+  also undrivable here (Chrome never acknowledges `Input.dispatchMouseEvent` into the chart's
+  non-passive listener), so those two now drive `+`/`-`, which run the same `zoomAt` through a
+  path a keyboard user actually uses. The wheel's own contract — that it must not scroll the
+  page — is still asserted separately and passes.
+  `npm run test:actions` is now **98/98 green**.

@@ -14,6 +14,7 @@ import {
 } from "@/lib/chart/drawings";
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
+import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { useSyncedDoc } from "@/lib/use-synced-doc";
 import { mergeById } from "@/lib/docs-sync";
@@ -193,6 +194,18 @@ export function ChartPro({
 
   const limit = INDICATOR_LIMIT[tier];
   const unlocked = can(tier, "chart:indicators");
+
+  // Named ranges resolve to bar counts, which is what the pan/zoom machinery
+  // already speaks — so this changes what the reader picks, not how it draws.
+  const presets = useMemo(
+    () => RANGE_PRESETS.map((id) => ({ id, count: barsForPreset(bars, id) })),
+    [bars],
+  );
+  const effectiveRange = range === 0 || range > bars.length ? bars.length : range;
+  const activePreset = useMemo(
+    () => presetForBars(bars, effectiveRange),
+    [bars, effectiveRange],
+  );
 
   // Alert levels come from the same external store AlertPanel writes, so the
   // line on the chart and the row in the rail can never disagree.
@@ -506,7 +519,8 @@ export function ChartPro({
     <div className={full ? "fixed inset-0 z-50 overflow-auto bg-page p-4" : ""}>
       <Toolbar
         dict={dict} locale={locale} unlocked={unlocked} limit={limit}
-        type={type} setType={chooseType} range={range} setRange={setRange}
+        type={type} setType={chooseType} setRange={setRange}
+        presets={presets} activePreset={activePreset} barCount={effectiveRange}
         active={active} toggle={toggle} asTable={asTable} setAsTable={setAsTable}
         full={full} toggleFull={() => setFull((v) => !v)} canDraw={canDraw}
       />
@@ -650,12 +664,15 @@ export function ChartPro({
 /* ─── toolbar ─────────────────────────────────────────────────────────────── */
 
 function Toolbar({
-  dict, locale, unlocked, limit, type, setType, range, setRange, active, toggle, asTable, setAsTable,
-  full, toggleFull, canDraw,
+  dict, locale, unlocked, limit, type, setType, setRange, active, toggle, asTable, setAsTable,
+  full, toggleFull, canDraw, presets, activePreset, barCount,
 }: {
   dict: Dict; locale: Locale; unlocked: boolean; limit: number;
   type: ChartType; setType: (t: ChartType) => void;
-  range: number; setRange: (r: number) => void;
+  setRange: (r: number) => void;
+  presets: { id: RangePreset; count: number }[];
+  activePreset: RangePreset | null;
+  barCount: number;
   active: string[]; toggle: (d: IndicatorDef) => void;
   asTable: boolean; setAsTable: (v: boolean) => void;
   full: boolean; toggleFull: () => void; canDraw: boolean;
@@ -679,10 +696,21 @@ function Toolbar({
       <IndicatorMenu dict={dict} unlocked={unlocked} limit={limit} active={active} toggle={toggle} pricingHref={pricingHref} />
 
       {/* Zoom is the wheel and +/−; the one button left is the way back out. */}
-      <button type="button" onClick={() => setRange(range === 0 ? DEFAULT_RANGE : 0)} aria-pressed={range === 0}
-        className={`${btn} ${range === 0 ? "bg-surface-2 text-ink" : ""}`}>
-        {dict.chart.all}
-      </button>
+      <div role="group" aria-label={dict.chart.range} className="flex shrink-0 rounded border border-line">
+        {presets.map((p) => (
+          <button key={p.id} type="button" onClick={() => setRange(p.count)}
+            aria-pressed={activePreset === p.id}
+            className={`${seg} first:rounded-l last:rounded-r ${
+              activePreset === p.id ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+            }`}>
+            {p.id === "ALL" ? dict.chart.all : p.id}
+          </button>
+        ))}
+      </div>
+
+      {/* The zoom level, in the unit the chart is actually drawn in. Without it
+          a wheel-scroll changes the picture with nothing to say by how much. */}
+      <span className="tnum shrink-0 text-[11px] text-muted">{barCount} {dict.chart.bars}</span>
 
       <button type="button" onClick={() => setAsTable(!asTable)} aria-pressed={asTable} className={btn}>
         {asTable ? dict.common.chartView : dict.common.tableView}
