@@ -24,6 +24,7 @@ import {
 import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { linkedIndex } from "@/lib/chart/sync";
+import { atLeftEdge, grew, mergeBars, olderWindow } from "@/lib/chart/history-window";
 import { useChartSync } from "./ChartSync";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
@@ -99,7 +100,7 @@ function paneHeight(full: boolean, ratio: number | null): number {
  * parallel accessibility implementation.
  */
 export function ChartPro({
-  bars,
+  bars: barsProp,
   symbol,
   locale,
   dict,
@@ -316,6 +317,31 @@ export function ChartPro({
     () => Array.from(wrapRef.current?.querySelectorAll<SVGSVGElement>('svg[role="img"]') ?? []),
     [],
   );
+  /**
+   * Older bars fetched by panning past the left edge.
+   *
+   * Kept separately from the `bars` prop and merged for display, so a server
+   * re-render — a timeframe change, a `router.refresh` from LiveStamp — replaces
+   * the prop without silently discarding history the reader has already pulled
+   * in, and without this state having to be reconciled with it.
+   */
+  /**
+   * The series this history belongs to is stored WITH it, and a mismatch is
+   * resolved by deriving an empty one during render rather than by resetting in
+   * an effect. Clearing in an effect would render one frame of the previous
+   * symbol's history spliced into the new symbol's chart before the reset ran.
+   */
+  const seriesKey = `${symbol}:${tf}`;
+  const [pulled, setPulled] = useState<{ key: string; bars: Bar[]; done: boolean }>(
+    { key: seriesKey, bars: [], done: false },
+  );
+  const history = pulled.key === seriesKey ? pulled : { key: seriesKey, bars: [], done: false };
+  const exhausted = history.done;
+  const loading = useRef(false);
+
+  /** What the chart actually draws: the server's window plus anything pulled in. */
+  const bars = useMemo(() => mergeBars(barsProp, history.bars), [barsProp, history.bars]);
+
   const [width, setWidth] = useState(900);
   const [priceH, setPriceH] = useState(340);
   const hintSeen = useStored(HINT_KEY);
@@ -497,6 +523,56 @@ export function ChartPro({
     persistSettings({ scale: sc });
     track("chart_scale_changed", { scale: sc, tier });
   }, [persistSettings, tier]);
+  /**
+   * Pull in older history when the window reaches the left edge.
+   *
+   * Guarded three ways, because this is the one place in the chart that can
+   * issue a request from a pan: one flight at a time, nothing once the feed has
+   * been shown to have no more, and only when the edge is actually in reach.
+   * Without the `exhausted` latch the chart re-requests the same empty window
+   * on every frame once it hits 2012.
+   */
+  useEffect(() => {
+    if (exhausted || loading.current || !barsProp.length) return;
+    if (!atLeftEdge(bars.length, range, offset)) return;
+
+    loading.current = true;
+    const oldest = bars[0].t;
+    const bucket = Math.max(60, (bars[1]?.t ?? oldest + 86400) - oldest);
+    const { to } = olderWindow(oldest, bucket, range || 120);
+    const ctl = new AbortController();
+
+    (async () => {
+      try {
+        const url = `/api/bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&before=${to}`;
+        const res = await fetch(url, { signal: ctl.signal, headers: { accept: "application/json" } });
+        if (!res.ok) { setPulled({ key: seriesKey, bars: history.bars, done: true }); return; }
+        // The route answers through `ok()`, which wraps the payload — reading
+        // the body as a bare array made every page look empty, which latched
+        // `exhausted` on the first fetch and disabled the feature silently.
+        const body = (await res.json()) as { data?: Bar[] } | Bar[];
+        const page = Array.isArray(body) ? body : (body.data ?? []);
+        const merged = mergeBars(bars, Array.isArray(page) ? page : []);
+        // Nothing new means the feed has nothing older — stop asking.
+        if (!grew(bars, merged)) {
+          setPulled({ key: seriesKey, bars: history.bars, done: true });
+          return;
+        }
+        track("chart_history_loaded", { symbol, tf, added: merged.length - bars.length });
+        // Only the part the prop does not already carry is kept, so a server
+        // re-render never duplicates what it re-sends.
+        const known = new Set(barsProp.map((b) => b.t));
+        setPulled({ key: seriesKey, bars: merged.filter((b) => !known.has(b.t)), done: false });
+      } catch {
+        // Offline or aborted: the chart keeps what it has and may try again.
+      } finally {
+        loading.current = false;
+      }
+    })();
+
+    return () => ctl.abort();
+  }, [bars, barsProp, range, offset, symbol, tf, exhausted, seriesKey, history.bars]);
+
   const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, range, offset), [bars.length, range, offset]);
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
   // The compare series is aligned to the full bars, so slice it by the same

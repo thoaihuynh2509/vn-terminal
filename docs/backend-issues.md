@@ -204,3 +204,25 @@ Each entry: what · where · symptom · evidence · date · status.
   migration 006. `MIGRATE_DATABASE_URL` is still malformed in production, so cross-device layouts
   cannot be exercised against a real database yet. The merge rule itself is unit-tested, and the
   path fails soft — a reader whose sync is unavailable keeps working locally and sees no error.
+
+## 2026-09-07 — P2-16 probe: how much history the DNSE feed actually serves
+
+- **Why it matters:** the roadmap requires "honest caps per feed (probe + document)" before load-more
+  ships, so the chart stops asking at a real limit rather than looping on an empty window.
+- **Method:** direct windowed requests to
+  `services.entrade.com.vn/chart-api/v2/ohlcs/stock?from=&to=&resolution=`, varying the window and
+  the resolution. Run 2026-09-07.
+- **Daily and above — floor 2012-03-20.** Asking twenty years back returns 3,609 bars beginning
+  exactly 2012-03-20. FPT, HPG and VCB all start on that same date, which makes it the FEED's floor
+  rather than any listing date. Symbols listed later start later (ACV: 2016-11-21). A window wholly
+  older than the floor returns zero bars rather than an error, which is what the client's
+  "stop asking" latch keys on.
+- **Intraday — about 90 days, at every resolution.** A 120-to-90-day window returns bars; a
+  200-to-150-day window returns none. 1m asked for 30 days and 15m asked for 365 both stop at the
+  same calendar date, so the limit is the feed's RETENTION, not the resolution.
+- **Windowed requests into the past work**, which is what makes load-more possible at all:
+  `from`/`to` entirely in the past return exactly that window (~250 daily bars per year requested).
+- **Recorded in code** at `packages/core/src/chart/history-window.ts` as `DAILY_FLOOR_ISO` and
+  `INTRADAY_FLOOR_DAYS`, with a unit test asserting the constants match what was probed, so a future
+  re-probe has something to compare against.
+- **Status:** SHIPPED 2026-09-07 as P2-16.

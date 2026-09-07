@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MIN_RANGE, clampOffset, maxOffset, nearestIndex, offsetFromDrag, pinch, rangeAt, spreadOf, windowBounds, windowOf, zoomAt,
+  MIN_RANGE, clampOffset, maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf, windowBounds, windowOf, zoomAt,
 } from "./pan.ts";
 
 const bars = Array.from({ length: 100 }, (_, i) => i);

@@ -58,14 +58,22 @@ export type Kind = "stock" | "index";
 
 export async function getBars(
   symbol: string,
-  { days = 120, resolution = "1D", kind = "stock" }: { days?: number; resolution?: Resolution; kind?: Kind } = {},
+  { days = 120, resolution = "1D", kind = "stock", before }: {
+    days?: number; resolution?: Resolution; kind?: Kind;
+    /** Fetch the window ENDING here, for loading older history. */
+    before?: number;
+  } = {},
 ): Promise<Bar[]> {
   const sym = symbol.toUpperCase();
-  const to = Math.floor(Date.now() / 1000);
+  const to = before && Number.isFinite(before) ? Math.floor(before) : Math.floor(Date.now() / 1000);
   // Over-fetch calendar days so `days` trading sessions survive weekends/holidays.
   const from = to - Math.ceil(days * 1.6) * 86400;
 
-  return cached(`bars:${kind}:${sym}:${resolution}:${days}`, 60_000, async () => {
+  // A historical window never changes, so it is cached far longer than the
+  // live one — the same page re-requested while a reader pans back and forth
+  // must not become a request per pan.
+  const ttl = before ? 6 * 60 * 60_000 : 60_000;
+  return cached(`bars:${kind}:${sym}:${resolution}:${days}:${before ?? 0}`, ttl, async () => {
     try {
       const r = await fetchJson<OhlcResponse>(
         `${DNSE}/${kind}?from=${from}&to=${to}&symbol=${sym}&resolution=${resolution}`,
@@ -98,10 +106,10 @@ export async function getBars(
 export async function getTimeframeBars(
   symbol: string,
   tf: Timeframe | string,
-  { kind = "stock" }: { kind?: Kind } = {},
+  { kind = "stock", before }: { kind?: Kind; before?: number } = {},
 ): Promise<Bar[]> {
   const t = typeof tf === "string" ? timeframe(tf) : tf;
-  const raw = await getBars(symbol, { days: t.lookback, resolution: t.fetch, kind });
+  const raw = await getBars(symbol, { days: t.lookback, resolution: t.fetch, kind, before });
   if (t.months) return resampleMonthly(raw, t.months);
   if (!t.bucket) return raw;
   // Buckets shorter than a day restart each session; longer ones tile the epoch.

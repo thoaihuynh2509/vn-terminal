@@ -28,9 +28,18 @@ export async function GET(req: Request) {
     return fail(new Error("intraday timeframes require a Plus plan"), 402);
   }
 
+  // `before` loads older history: the window ENDING at that moment. Bounded to
+  // a plausible unix second so a hand-typed value cannot send the upstream a
+  // nonsense range, and ignored entirely when it is not one.
+  const rawBefore = Number(p.get("before"));
+  const before = Number.isFinite(rawBefore) && rawBefore > 0 && rawBefore < 4_102_444_800
+    ? rawBefore
+    : undefined;
+
   try {
     const bars = await getTimeframeBars(symbol, asked, {
       kind: (p.get("kind") as Kind) === "index" ? "index" : "stock",
+      before,
     });
     // Intraday is a PAID, tier-gated payload — it must never reach a shared edge
     // cache, or an anon request for the same URL is served the paid data and the

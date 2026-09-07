@@ -642,6 +642,63 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── load more history (P2-16) ─────────────────────────────────
+    {
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&r=ALL", { scheme: "light" });
+      await sleep(600);
+      const oldestLabel = `(() => {
+        const svgs = [...document.querySelectorAll('main svg')].filter(sv => sv.getAttribute('height') === '20');
+        const t = svgs[0]?.querySelector('text');
+        return t ? t.textContent.trim() : null;
+      })()`;
+      const loadedCount = `(() => {
+        const t = document.querySelector('main')?.innerText ?? '';
+        const m = t.match(/([0-9.,]+)[  ]nến/);
+        return m ? Number(m[1].replace(/[.,]/g, "")) : null;
+      })()`;
+      const startOldest = await s.evaluate(oldestLabel);
+      // Count the history requests directly. The VISIBLE bar count is not the
+      // signal — the window keeps its size, it is the reachable history that
+      // grows — so asserting on it would fail a working feature.
+      await s.evaluate(`(() => {
+        window.__hist = 0;
+        const real = window.fetch;
+        window.fetch = (...a) => {
+          if (String(a[0]).includes('before=')) window.__hist++;
+          return real(...a);
+        };
+      })()`);
+
+      // Panning to the left edge is what triggers the fetch. Shift+Left is the
+      // keyboard pan, so this drives the same path a reader's drag would.
+      await s.evaluate(`(() => {
+        const svg = document.querySelector('svg[role=img]');
+        svg.focus();
+        for (let i = 0; i < 12; i++) {
+          svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', shiftKey: true, bubbles: true }));
+        }
+      })()`);
+      const fetched = await s.waitFor(`window.__hist > 0 ? window.__hist : null`, 12000);
+      check("panning to the left edge requests older history", !!fetched, `${fetched} request(s)`);
+      const nowOldest = await s.evaluate(oldestLabel);
+      check("the chart really reaches further back than it started",
+        nowOldest !== startOldest, `${startOldest} -> ${nowOldest}`);
+
+      // The API contract the fetch relies on.
+      const older = JSON.parse(await s.evaluate(`(async () => {
+        const cut = Math.floor(Date.now() / 1000) - 400 * 86400;
+        const r = await fetch('/api/bars?symbol=VNM&tf=1D&before=' + cut);
+        const body = await r.json();
+        const b = Array.isArray(body) ? body : (body.data ?? []);
+        return JSON.stringify({ n: b.length, allBefore: b.every(x => x.t < cut) });
+      })()`));
+      check("/api/bars?before= serves a window that ends where asked",
+        older.n > 0 && older.allBefore === true, `${older.n} bars, all older: ${older.allBefore}`);
+
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+    }
+
     // ── pinch to zoom on a phone (P2-15) ──────────────────────────
     {
       // 390x1100 is the viewport the design targets, and the only place this
