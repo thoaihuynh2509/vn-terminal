@@ -13,7 +13,11 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ locale: string; symbol: string }>;
-  searchParams: Promise<{ layout?: string; s?: string; tf?: string; rail?: string; cmp?: string; fr?: string }>;
+  searchParams: Promise<{
+    layout?: string; s?: string; tf?: string; rail?: string; cmp?: string; fr?: string;
+    /** The view a shared link carries: chart type, indicators, visible range. */
+    type?: string; ind?: string; r?: string;
+  }>;
 }) {
   const { locale, symbol } = await params;
   const sp = await searchParams;
@@ -25,6 +29,7 @@ export default async function Page({
     .filter(Boolean)
     .slice(0, 3);
   return (
-    <TerminalView locale={guard(locale, "terminal", "bieu-do")} symbol={symbol} extra={extra} layout={layout} tf={sp.tf} rail={sp.rail} cmp={sp.cmp === "1"} fr={sp.fr === "1"} />
+    <TerminalView locale={guard(locale, "terminal", "bieu-do")} symbol={symbol} extra={extra} layout={layout} tf={sp.tf} rail={sp.rail} cmp={sp.cmp === "1"} fr={sp.fr === "1"}
+      view={{ type: sp.type, ind: sp.ind, r: sp.r }} />
   );
 }

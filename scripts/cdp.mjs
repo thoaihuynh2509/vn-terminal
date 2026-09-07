@@ -921,6 +921,37 @@ try {
       await sleep(400);
       check("ctrl+wheel is left to the browser", (await rangePill()) === ctrlBefore, `${ctrlBefore} → ${await rangePill()}`);
 
+      // ── a link reproduces the view ──────────────────────────────
+      // The story this protects: a reader bookmarks their chart, or sends it to
+      // someone, and it comes back as the chart they were actually looking at
+      // rather than a default one.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Đường')?.click()`);
+      await sleep(400);
+      const urlAfter = await s.evaluate("location.search");
+      check("changing the view rewrites the address bar", /type=line/.test(urlAfter), urlAfter);
+      check("the timeframe survives the rewrite", /tf=1D/.test(urlAfter), urlAfter);
+
+      // Reload that exact URL: the view must come back from the link alone.
+      await s.goto(BASE + "/vi/bieu-do/VNM" + urlAfter, { scheme: "light" });
+      const linePressed = await s.evaluate(
+        `!![...document.querySelectorAll('button[aria-pressed="true"]')].find(b => b.textContent.trim() === 'Đường')`);
+      check("reopening the link restores the view", linePressed === true);
+
+      // A link must not be able to hand out a paid indicator. Checked as FREE:
+      // asserting this while signed in as pro would prove nothing, because pro
+      // is entitled to see them.
+      await asTier("free");
+      await s.goto(BASE + "/vi/bieu-do/VNM?ind=macd,bb,rsi", { scheme: "light" });
+      await sleep(300);
+      const chips = await s.evaluate(
+        `[...document.querySelectorAll('main *')].map(e => e.textContent).join(' ')`);
+      check("a link cannot grant a paid indicator to a free reader",
+        !/MACD \(12/.test(chips), "MACD must not be active");
+      await asTier("pro");
+
       // ── crosshair read-out ──────────────────────────────────────
       // Reading a level off a chart means "what price is HERE", so the pointer
       // must answer with its own height, not with the hovered candle's close.

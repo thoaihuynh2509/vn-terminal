@@ -15,6 +15,7 @@ import {
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { candlePaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
+import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { useSyncedDoc } from "@/lib/use-synced-doc";
 import { mergeById } from "@/lib/docs-sync";
@@ -76,6 +77,7 @@ export function ChartPro({
   refLines = [],
   compare = null,
   foreign = null,
+  initialView = DEFAULT_VIEW,
 }: {
   bars: Bar[];
   symbol: string;
@@ -93,6 +95,8 @@ export function ChartPro({
   compare?: CompareSeries | null;
   /** Foreign net buy/sell per bar (VND), drawn as signed bars in its own pane. */
   foreign?: CompareSeries | null;
+  /** The view a shared link carried, already decoded and clamped server-side. */
+  initialView?: ChartView;
 }) {
   // null = the reader has not chosen this session, so the stored setup wins.
   // Derived rather than copied into state by an effect: an effect would cascade
@@ -102,6 +106,8 @@ export function ChartPro({
   // drawings below already rely on.
   const [typeChoice, setTypeChoice] = useState<ChartType | null>(null);
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
+  // Applied once, from the link, before the reader touches anything.
+  const seededRange = useRef(false);
   // How far back the window sits, in bars. See `lib/chart/pan`.
   const [offset, setOffset] = useState(0);
   const [activeChoice, setActiveChoice] = useState<string[] | null>(null);
@@ -204,11 +210,19 @@ export function ChartPro({
     () => RANGE_PRESETS.map((id) => ({ id, count: barsForPreset(bars, id) })),
     [bars],
   );
+  useEffect(() => {
+    if (seededRange.current || !initialView.range || !bars.length) return;
+    seededRange.current = true;
+    setRange(barsForPreset(bars, initialView.range));
+  }, [initialView.range, bars]);
+
   const effectiveRange = range === 0 || range > bars.length ? bars.length : range;
   const activePreset = useMemo(
     () => presetForBars(bars, effectiveRange),
     [bars, effectiveRange],
   );
+
+
 
   // Alert levels come from the same external store AlertPanel writes, so the
   // line on the chart and the row in the rail can never disagree.
@@ -233,8 +247,29 @@ export function ChartPro({
     };
   }, [storedSettings, limit, unlocked]);
 
-  const type = typeChoice ?? saved?.type ?? DEFAULT_SETTINGS.type;
-  const active = activeChoice ?? (saved?.indicators.length ? saved.indicators : DEFAULT_SETTINGS.indicators);
+  // Precedence: what the reader just chose, then what the LINK said, then their
+  // stored setup. A link beats a preference because they clicked that link — a
+  // shared chart that silently reverts to the recipient's own setup is not the
+  // chart that was shared.
+  const type = typeChoice ?? initialView.type ?? saved?.type ?? DEFAULT_SETTINGS.type;
+  const active =
+    activeChoice
+    ?? (initialView.ind.length ? initialView.ind : null)
+    ?? (saved?.indicators.length ? saved.indicators : DEFAULT_SETTINGS.indicators);
+
+  // Kept in the address bar with replaceState, not a router push: this is the
+  // reader adjusting what they are looking at, not navigating, so it must not
+  // add a history entry per indicator toggle — but the link they copy, and the
+  // one they bookmark, has to be the chart actually on screen.
+  const viewRef = useRef<string>("");
+  useEffect(() => {
+    const next = mergeViewIntoQuery(window.location.search, { type, ind: active, range: activePreset });
+    if (next === viewRef.current) return;
+    viewRef.current = next;
+    const url = `${window.location.pathname}${next ? `?${next}` : ""}`;
+    window.history.replaceState(null, "", url);
+  }, [type, active, activePreset]);
+
 
   // Persist deliberately, from the two handlers that change the setup, rather
   // than from an effect watching state — an effect would also fire for the

@@ -1,0 +1,101 @@
+/**
+ * The part of the chart a link can carry.
+ *
+ * Symbol, timeframe, layout, compare and the foreign pane were already in the
+ * URL. Chart type, active indicators and the visible range were not — so a link
+ * a reader sent never showed what they were actually looking at, and their own
+ * bookmark came back as a default chart. Everything a reader can SEE belongs in
+ * the address bar; everything they merely prefer belongs in storage.
+ *
+ * Decoding is tier-aware and happens on the SERVER, so a hand-typed `?ind=` full
+ * of paid indicators is trimmed before the page is rendered rather than being
+ * corrected afterwards in the browser — the same fail-closed rule the intraday
+ * timeframe already follows.
+ */
+import { INDICATOR_LIMIT, can, type Tier } from "../auth/entitlement.ts";
+import { RANGE_PRESETS, type RangePreset } from "./ranges.ts";
+
+export type ChartTypeId = "candle" | "line" | "area";
+const TYPES: ChartTypeId[] = ["candle", "line", "area"];
+
+export interface ChartView {
+  type: ChartTypeId;
+  /** Indicator ids, already trimmed to what this tier may actually show. */
+  ind: string[];
+  range: RangePreset | null;
+}
+
+export const DEFAULT_VIEW: ChartView = { type: "candle", ind: [], range: null };
+
+/** Registry ids are lowercase alphanumerics; anything else is not one. */
+const ID_RE = /^[a-z][a-z0-9]{0,23}$/;
+/** A hostile `?ind=` should cost a parse, not a loop over thousands of ids. */
+const MAX_IDS = 40;
+
+export interface DecodeOptions {
+  tier: Tier;
+  /** Whether an id exists in this build, and whether it is free. */
+  known: (id: string) => boolean;
+  isFree: (id: string) => boolean;
+}
+
+/**
+ * Read a view out of query parameters.
+ *
+ * Unknown values fall back rather than 404 — a link from an older build, or one
+ * mangled by a chat client, should still open the chart it names.
+ */
+export function decodeView(
+  params: { type?: string | null; ind?: string | null; r?: string | null },
+  { tier, known, isFree }: DecodeOptions,
+): ChartView {
+  const type = TYPES.includes(params.type as ChartTypeId)
+    ? (params.type as ChartTypeId)
+    : DEFAULT_VIEW.type;
+
+  const range = RANGE_PRESETS.includes(params.r as RangePreset)
+    ? (params.r as RangePreset)
+    : null;
+
+  const unlocked = can(tier, "chart:indicators");
+  const limit = INDICATOR_LIMIT[tier];
+  const seen = new Set<string>();
+  const ind: string[] = [];
+  for (const raw of (params.ind ?? "").split(",").slice(0, MAX_IDS)) {
+    const id = raw.trim().toLowerCase();
+    if (!ID_RE.test(id) || seen.has(id) || !known(id)) continue;
+    // A link cannot grant an entitlement: a paid indicator in the query string
+    // is dropped for a tier that does not hold one, not rendered and then
+    // retracted.
+    if (!unlocked && !isFree(id)) continue;
+    if (ind.length >= limit) break;
+    seen.add(id);
+    ind.push(id);
+  }
+
+  return { type, ind, range };
+}
+
+/**
+ * The query fragment for a view. Defaults are OMITTED, so a plain chart still
+ * has a clean, sharable URL instead of one carrying its own default state.
+ */
+export function encodeView(view: ChartView): string {
+  const p = new URLSearchParams();
+  if (view.type !== DEFAULT_VIEW.type) p.set("type", view.type);
+  if (view.ind.length) p.set("ind", view.ind.join(","));
+  if (view.range) p.set("r", view.range);
+  return p.toString();
+}
+
+/**
+ * Merge a view into an existing query string, preserving every parameter this
+ * module does not own (`tf`, `layout`, `s`, `cmp`, `fr`, `rail`, `src`).
+ * Rewriting the whole string would silently drop a reader's multi-chart grid.
+ */
+export function mergeViewIntoQuery(current: string, view: ChartView): string {
+  const p = new URLSearchParams(current);
+  for (const key of ["type", "ind", "r"]) p.delete(key);
+  for (const [k, v] of new URLSearchParams(encodeView(view))) p.set(k, v);
+  return p.toString();
+}

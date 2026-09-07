@@ -20,6 +20,8 @@ import { BAND, getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock"
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
+import { decodeView } from "@/lib/chart/view-state";
+import { INDICATORS } from "@/lib/ta/registry";
 import { TimeframePicker } from "@/components/chart/TimeframePicker";
 import type { Locale } from "@/lib/types";
 
@@ -31,7 +33,7 @@ import type { Locale } from "@/lib/types";
  * is never client-supplied.
  */
 export async function TerminalView({
-  locale, symbol, extra = [], layout = 1, tf, rail, cmp = false, fr = false,
+  locale, symbol, extra = [], layout = 1, tf, rail, cmp = false, fr = false, view: viewParams,
 }: {
   locale: Locale;
   symbol: string;
@@ -46,6 +48,8 @@ export async function TerminalView({
   cmp?: boolean;
   /** Foreign net buy/sell pane (`?fr=1`), from SSI FastConnect. Gated to Plus. */
   fr?: boolean;
+  /** Raw view params from the URL; decoded and tier-clamped on the server. */
+  view?: { type?: string; ind?: string; r?: string };
 }) {
   const dict = getDict(locale);
   const sym = symbol.toUpperCase();
@@ -126,6 +130,18 @@ export async function TerminalView({
     }
   }
 
+  // The shared view. Decoded HERE rather than in the browser: a hand-typed
+  // ?ind= full of paid indicators is trimmed before anything renders, the same
+  // fail-closed rule the intraday timeframe follows — never drawn and retracted.
+  const chartView = decodeView(
+    { type: viewParams?.type, ind: viewParams?.ind, r: viewParams?.r },
+    {
+      tier,
+      known: (id) => INDICATORS.some((d) => d.id === id),
+      isFree: (id) => !!INDICATORS.find((d) => d.id === id)?.free,
+    },
+  );
+
   // RSI for the alert panel, computed from the bars this page already loaded.
   // Without it an indicator alert simply is not evaluated in the browser — the
   // nightly job still catches it — which is far better than testing "RSI above
@@ -195,7 +211,7 @@ export async function TerminalView({
 
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-4">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} />
+          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} initialView={chartView} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
