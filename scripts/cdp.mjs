@@ -921,6 +921,23 @@ try {
       await sleep(400);
       check("ctrl+wheel is left to the browser", (await rangePill()) === ctrlBefore, `${ctrlBefore} → ${await rangePill()}`);
 
+      // ── crosshair read-out ──────────────────────────────────────
+      // Reading a level off a chart means "what price is HERE", so the pointer
+      // must answer with its own height, not with the hovered candle's close.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      const paneBox = JSON.parse(await s.evaluate(`(() => {
+        const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+        return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.35 });
+      })()`));
+      await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: paneBox.x, y: paneBox.y });
+      await sleep(350);
+      const crosshair = await s.evaluate(
+        `document.querySelectorAll('svg[role=img] line[stroke-dasharray="3 3"]').length`);
+      check("the pointer draws a horizontal crosshair", crosshair >= 1, `${crosshair} lines`);
+      const pctReadout = await s.evaluate(
+        `/[+-][0-9.,]+%/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
+      check("the crosshair prints a signed distance from the last close", pctReadout === true);
+
       // ── custom intervals ────────────────────────────────────────
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=7m", { scheme: "light" });
       check("a custom interval survives the URL",

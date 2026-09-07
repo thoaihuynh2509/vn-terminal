@@ -106,6 +106,9 @@ export function ChartPro({
   const [offset, setOffset] = useState(0);
   const [activeChoice, setActiveChoice] = useState<string[] | null>(null);
   const [hover, setHover] = useState<number | null>(null);
+  // The pointer's own height, so the crosshair can answer "what price is my
+  // cursor at" rather than only "what did this candle close at".
+  const [cursorY, setCursorY] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
   const [full, setFull] = useState(false);
 
@@ -475,6 +478,7 @@ export function ChartPro({
           });
         }
         setHover((h) => (h === null ? h : null));
+        setCursorY((v) => (v === null ? v : null));
         return;
       }
     }
@@ -484,6 +488,10 @@ export function ChartPro({
     // Moving a pixel inside the same candle changed nothing but still re-rendered
     // every pane. Returning the identical value makes React skip the update.
     setHover((h) => (h === next ? h : next));
+    // Rounded: a sub-pixel change moves nothing a reader can see but would
+    // re-render every pane.
+    const py = Math.round(e.clientY - rect.top);
+    setCursorY((v) => (v === py ? v : py));
   };
   const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
     // Shift+Arrow pans. A chart that can only be moved by dragging is a chart a
@@ -510,7 +518,7 @@ export function ChartPro({
         const base = h ?? view.length - 1;
         return Math.max(0, Math.min(view.length - 1, base + (e.key === "ArrowRight" ? 1 : -1)));
       });
-    } else if (e.key === "Escape") setHover(null);
+    } else if (e.key === "Escape") { setHover(null); setCursorY(null); }
   };
 
   const xStep = Math.max(1, Math.floor(view.length / 6));
@@ -637,7 +645,8 @@ export function ChartPro({
             refLines={refLines} alerts={alertLines} compareView={compareView} compareLabel={compare?.label ?? null}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
-            onMove={onMove} onLeave={() => setHover(null)} onKey={onKey} onUp={onUp} canPan={canPan}
+            onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
+            cursorY={cursorY}
           />
           <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday} locale={locale} />
           {foreignView && (
@@ -793,11 +802,12 @@ function niceTicks(min: number, max: number, count = 4): number[] {
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, compareLabel,
+  refLines, alerts, compareView, compareLabel, cursorY,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
   refLines: RefLine[]; alerts: PriceAlert[]; compareView: (number | null)[] | null; compareLabel: string | null;
+  cursorY: number | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
   onClick: (e: React.PointerEvent<SVGSVGElement>) => void;
   onMove: (e: React.PointerEvent<SVGSVGElement>) => void; onLeave: () => void;
@@ -1043,6 +1053,30 @@ function PricePane({
                 fill={up ? "var(--up)" : "var(--down)"} />
               <text x={PAD.left + plotW + PAD.right / 2} y={ly + 4} fontSize={10} textAnchor="middle"
                 fill="#fff" className="tnum">{num(lastBar.c, locale, digits)}</text>
+            </g>
+          );
+        })()}
+
+        {/* The horizontal half of the crosshair, at the POINTER rather than at the
+            candle: reading a level off a chart means "what price is here", and
+            answering only with the close makes the reader estimate the rest. */}
+        {cursorY !== null && cursorY > 8 && cursorY < H - 8 && (() => {
+          const atCursor = yMin + (1 - (cursorY - 10) / (H - 20)) * (yMax - yMin);
+          const lastC = view[view.length - 1]?.c;
+          const delta = lastC ? ((atCursor - lastC) / lastC) * 100 : 0;
+          return (
+            <g>
+              <line x1={PAD.left} x2={PAD.left + plotW} y1={cursorY} y2={cursorY}
+                stroke="var(--axis)" strokeWidth={1} strokeDasharray="3 3" />
+              <rect x={PAD.left + plotW + 2} y={cursorY - 8} width={PAD.right - 4} height={16} rx={2}
+                fill="var(--ink-2)" />
+              <text x={PAD.left + plotW + PAD.right / 2} y={cursorY + 4} fontSize={10} textAnchor="middle"
+                fill="var(--page)" className="tnum">{num(atCursor, locale, digits)}</text>
+              {/* Signed, so the distance from the last close reads without colour. */}
+              <text x={PAD.left + plotW - 4} y={cursorY - 5} fontSize={10} textAnchor="end"
+                fill="var(--muted)" className="tnum">
+                {delta >= 0 ? "+" : ""}{num(delta, locale, 2)}%
+              </text>
             </g>
           );
         })()}
