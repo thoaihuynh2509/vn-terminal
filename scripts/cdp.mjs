@@ -694,6 +694,108 @@ try {
       await s.evaluate("localStorage.removeItem('settings:chart')");
     }
 
+    // ── Phase 3 surfaces (P3-9) ───────────────────────────────────
+    {
+      // A shared setup must open the SENDER's screen, not a default chart of
+      // the same symbol — that is the whole growth loop.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1W&type=line&ind=rsi&sc=log", { scheme: "light" });
+      await sleep(500);
+      const tpl = await s.evaluate(`(() => {
+        const btn = [...document.querySelectorAll('button')].find(b => /Chép thiết lập/.test(b.textContent||''));
+        return !!btn;
+      })()`);
+      check("the chart offers to share its setup", tpl === true);
+
+      // Built the same way the button builds it, then opened cold.
+      const link = await s.evaluate(`(() => {
+        const c = { n: "Shared", s: "VNM", e: [], g: 1, tf: "1W", ty: "line", i: ["rsi"], r: null, sc: "log", c: [], f: 0, b: 0 };
+        return btoa(JSON.stringify(c)).split('+').join('-').split('/').join('_').split('=').join('');
+      })()`);
+      await s.goto(BASE + "/vi/bieu-do/VNM?tpl=" + link, { scheme: "light" });
+      await sleep(600);
+      const restored = await s.evaluate(`(() => {
+        const tf = document.querySelector('[aria-label="Khung thời gian"] [aria-current=page]')?.textContent.trim();
+        const rsi = !!document.querySelector('svg[aria-label^="RSI"]');
+        return JSON.stringify({ tf, rsi });
+      })()`);
+      const rs = JSON.parse(restored);
+      check("a shared setup opens the sender's screen", rs.tf === "1W" && rs.rsi === true, restored);
+      check("and needs no account to open it",
+        (await s.evaluate(`!!document.querySelector('svg[role=img]')`)) === true);
+
+      // The reader's own edits win over the template they opened.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&tpl=" + link, { scheme: "light" });
+      await sleep(600);
+      check("a parameter the reader can see beats the template",
+        (await s.evaluate(`document.querySelector('[aria-label="Khung thời gian"] [aria-current=page]')?.textContent.trim()`)) === "1D");
+
+      // The card a shared link unfurls into.
+      const og = await s.evaluate(`(async () => {
+        const r = await fetch('/vi/bieu-do/VNM/opengraph-image');
+        return JSON.stringify({ status: r.status, type: r.headers.get('content-type') });
+      })()`);
+      const ogr = JSON.parse(og);
+      check("a chart link previews as its own card",
+        ogr.status === 200 && String(ogr.type).includes("image/png"), og);
+
+      // The tool rail must be reachable on a phone.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light", width: 390, height: 1100 });
+      await sleep(500);
+      const rail = JSON.parse(await s.evaluate(`(() => {
+        const g = document.querySelector('[role=group][aria-label="Công cụ vẽ"]');
+        if (!g) return JSON.stringify({ found: false });
+        const b = g.querySelector('button');
+        const r = b.getBoundingClientRect();
+        return JSON.stringify({ found: true, w: Math.round(r.width), h: Math.round(r.height),
+          inside: r.right <= window.innerWidth + 1 });
+      })()`));
+      check("the drawing rail fits a 390px screen", rail.found && rail.inside === true, JSON.stringify(rail));
+      check("its touch targets are big enough to hit",
+        rail.w >= 40 && rail.h >= 40, `${rail.w}x${rail.h}`);
+    }
+
+    // ── the gate is explained where it is hit (P3-1) ──────────────
+    {
+      // Every ceiling emitted an event and then refused silently, which is
+      // indistinguishable from a broken tool. Free gets 3 drawings.
+      await s.evaluate("localStorage.removeItem('drawings:VNM')");
+      if (secret) await asTier("free");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await sleep(400);
+      const r = JSON.parse(await s.evaluate(`(() => {
+        const b = document.querySelector('svg[role=img]').getBoundingClientRect();
+        return JSON.stringify({ l: b.left, t: b.top, w: b.width, h: b.height });
+      })()`));
+      const clickAt2 = async (fx, fy) => {
+        const x = r.l + r.w * fx, y = r.t + r.h * fy;
+        await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        await sleep(250);
+      };
+      await s.evaluate(`document.querySelector('[aria-label="Mức giá"]')?.click()`);
+      await sleep(150);
+      // Four horizontal lines against a cap of three.
+      for (const fy of [0.3, 0.45, 0.6, 0.75]) await clickAt2(0.5, fy);
+      await sleep(400);
+      const stored = JSON.parse(await s.evaluate(`localStorage.getItem('drawings:VNM') || '[]'`));
+      check("the free drawing cap actually holds", stored.length === 3, `${stored.length} stored`);
+      const hint = await s.waitFor(`(() => {
+        const el = [...document.querySelectorAll('[role=status]')]
+          .find(x => /nét vẽ/.test(x.textContent || ''));
+        return el ? el.textContent.trim() : null;
+      })()`, 4000);
+      check("hitting it explains why, in place", !!hint, String(hint).slice(0, 60));
+      check("and offers the way past it",
+        (await s.evaluate(`(() => {
+          const el = [...document.querySelectorAll('[role=status]')].find(x => /nét vẽ/.test(x.textContent||''));
+          return !!el?.querySelector('a[href*="goi-dich-vu"], a[href*="dang-nhap"]');
+        })()`)) === true);
+      check("it never blocks the chart behind it",
+        (await s.evaluate(`!!document.querySelector('svg[role=img]')`)) === true);
+      await s.evaluate("localStorage.removeItem('drawings:VNM')");
+      if (secret) await asTier("pro");
+    }
+
     // ── pinch to zoom on a phone (P2-15) ──────────────────────────
     {
       // 390x1100 is the viewport the design targets, and the only place this

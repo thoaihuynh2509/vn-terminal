@@ -6,6 +6,7 @@ import { PATHS, type Dict } from "@/lib/i18n";
 import { COLOR_VAR, INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { clampPeriod, effectivePeriod, formatRef, labelFor, parseRef, sameIndicator, shortFor } from "@/lib/ta/params";
 import { IndicatorMenu } from "./IndicatorMenu";
+import { GateHint, type Gate } from "./GateHint";
 import { ShareMenu } from "./ShareMenu";
 import { useDismiss } from "@/lib/ui/use-dismiss";
 import { DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
@@ -22,6 +23,7 @@ import {
   type History,
 } from "@/lib/chart/history";
 import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
+import { FIRST_CHART_KEY } from "@/components/OnboardingWatchlist";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { linkedIndex } from "@/lib/chart/sync";
 import { atLeftEdge, grew, mergeBars, olderWindow } from "@/lib/chart/history-window";
@@ -203,6 +205,8 @@ export function ChartPro({
   });
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** The ceiling the reader just hit, so it can be explained where they hit it. */
+  const [gate, setGate] = useState<{ gate: Gate; limit?: number } | null>(null);
 
   /**
    * Undo history for this symbol's drawings.
@@ -305,6 +309,9 @@ export function ChartPro({
     (d: Drawing) => {
       if (drawings.length >= drawLimit) {
         track("chart_limit_hit", { gate: "drawing", tier, limit: drawLimit, symbol });
+        // Refusing silently reads as a bug; the fourth line simply not appearing
+        // is indistinguishable from a broken tool.
+        setGate({ gate: "drawing", limit: drawLimit });
         return false;
       }
       commitDrawings([...drawings, d]);
@@ -365,6 +372,7 @@ export function ChartPro({
   const [width, setWidth] = useState(900);
   const [priceH, setPriceH] = useState(340);
   const hintSeen = useStored(HINT_KEY);
+  const firstChart = useStored(FIRST_CHART_KEY);
 
   useEffect(() => {
     if (!full) return;
@@ -693,6 +701,7 @@ export function ChartPro({
   const toggle = useCallback((def: IndicatorDef) => {
     if (!def.free && !unlocked) {
       track("chart_limit_hit", { gate: "indicator", reason: "locked", id: def.id, tier, limit });
+      setGate({ gate: "indicator", limit });
       return;
     }
     const prev = activeRef.current;
@@ -701,6 +710,7 @@ export function ChartPro({
     const on = prev.some((t) => sameIndicator(t, def.id));
     if (!on && prev.length >= limit) {
       track("chart_limit_hit", { gate: "indicator", reason: "limit", id: def.id, tier, limit });
+      setGate({ gate: "indicator", limit });
       return; // at the tier's ceiling
     }
     const next = on ? prev.filter((t) => !sameIndicator(t, def.id)) : [...prev, def.id];
@@ -1153,6 +1163,24 @@ export function ChartPro({
         </p>
       )}
 
+      {/* Shown once, to a reader who has just arrived from onboarding: the
+          first thing worth doing on a chart is marking a level, and nobody
+          discovers a drawing rail by being left alone with it. */}
+      {firstChart === "1" && canDraw && (
+        <p role="status" className="mt-2 flex items-center justify-between gap-3 rounded border border-line bg-surface-2 px-3 py-2 text-[12px] text-ink-2">
+          {dict.chart.firstChartHint}
+          <button type="button" onClick={() => writeStored(FIRST_CHART_KEY, null)}
+            className="shrink-0 rounded border border-line px-2 py-0.5 text-[11px] font-medium hover:text-ink">
+            {dict.chart.gotIt}
+          </button>
+        </p>
+      )}
+
+      {gate && (
+        <GateHint gate={gate.gate} limit={gate.limit} locale={locale} dict={dict} tier={tier}
+          onClose={() => setGate(null)} />
+      )}
+
       {/* Status line: symbol + OHLC + indicator values, the way a terminal
           reports the bar under the cursor. */}
       <dl className="tnum mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-line bg-surface-2 px-2.5 py-1.5 text-[12px]">
@@ -1210,11 +1238,13 @@ export function ChartPro({
       {asTable ? (
         <BarTable bars={view} locale={locale} dict={dict} digits={digits} intraday={intraday} />
       ) : (
-        <div className="mt-2 flex gap-2">
-          {/* Vertical tool rail — the trading-terminal convention: tools live
-              beside the canvas, not competing for the top bar. */}
+        <div className="mt-2 flex flex-col gap-2 lg:flex-row">
+          {/* The tool rail. Beside the canvas on a desktop — the trading-terminal
+              convention — and a horizontal scroller ABOVE it on a phone, because
+              twelve 40px targets cannot fit 390px and a non-shrinking rail
+              pushes the whole page into horizontal overflow. */}
           <div role="group" aria-label={dict.chart.draw}
-            className="flex shrink-0 flex-col gap-1 rounded border border-line p-1">
+            className="flex w-full flex-row gap-1 overflow-x-auto rounded border border-line p-1 lg:w-auto lg:shrink-0 lg:flex-col lg:overflow-visible">
             {(["cursor", "hline", "vline", "trend", "ray", "rect", "fib", "fibext", "channel", "trade", "measure", "text"] as const).map((m) => {
               const locked = !canDraw && m !== "cursor";
               // The original five read their label straight off the tool name;
@@ -1235,7 +1265,7 @@ export function ChartPro({
                   aria-pressed={mode === m}
                   aria-label={locked ? `${label} — ${dict.chart.drawLocked}` : label}
                   title={locked ? dict.chart.drawLocked : label}
-                  className={`grid h-8 w-8 place-items-center rounded text-[13px] leading-none ${
+                  className={`grid h-10 w-10 shrink-0 place-items-center rounded text-[13px] leading-none lg:h-8 lg:w-8 ${
                     mode === m ? "bg-surface-2 text-ink"
                       : locked ? "text-muted opacity-50"
                       : "text-ink-2 hover:bg-surface-2 hover:text-ink"

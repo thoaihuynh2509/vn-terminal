@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { track } from "@/lib/analytics/posthog";
+import { GateHint } from "@/components/chart/GateHint";
 import { LAYOUT_LIMIT, can } from "@/lib/auth/entitlement";
 import { PATHS, type Dict } from "@/lib/i18n";
 import {
@@ -47,6 +48,7 @@ export function LayoutsTab({
 
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [hitLimit, setHitLimit] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -110,6 +112,7 @@ export function LayoutsTab({
       if (result.error === "limit") {
         setError(dict.chart.layoutLimit.replace("{n}", String(result.limit ?? limit)));
         track("chart_limit_hit", { gate: "layout", tier, limit });
+        setHitLimit(true);
       } else {
         setError(dict.chart.layoutBadName);
       }
@@ -196,6 +199,11 @@ export function LayoutsTab({
         </span>
         <span>{canSync ? dict.chart.layoutSynced : dict.chart.layoutLocalOnly}</span>
       </p>
+
+      {hitLimit && (
+        <GateHint gate="layout" limit={limit} locale={locale} dict={dict} tier={tier}
+          onClose={() => setHitLimit(false)} />
+      )}
 
       {layouts.length === 0 ? (
         <p className="mt-3 text-[12px] text-muted">{dict.chart.layoutNone}</p>

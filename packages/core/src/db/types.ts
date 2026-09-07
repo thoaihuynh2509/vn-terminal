@@ -167,6 +167,14 @@ export interface Db {
     remove(userId: string, kind: string, key: string): Promise<void>;
     /** How many docs of a kind this user has — the tier cap is counted on it. */
     count(userId: string, kind: string): Promise<number>;
+    /**
+     * Owner-and-kind for every stored artifact, for the admin dashboard.
+     *
+     * Deliberately returns no DATA: the question is how many readers have saved
+     * something, and reading their drawings to answer it would be a needless
+     * look at private content.
+     */
+    census(): Promise<{ userId: string; kind: string }[]>;
   };
   /**
    * Time series we record ourselves, for prices no feed publishes history for.

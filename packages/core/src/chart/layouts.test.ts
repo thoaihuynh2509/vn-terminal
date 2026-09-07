@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  isValidName, layoutFromQuery, layoutQuery, mergeLayouts, normaliseName, parseLayout, parseLayouts,
+  MAX_TEMPLATE_CHARS, decodeTemplate, encodeTemplate, isValidName, layoutFromQuery, layoutQuery, mergeLayouts, normaliseName, parseLayout, parseLayouts,
   removeLayout, serializeLayouts, sortLayouts, upsertLayout, type SavedLayout,
 } from "./layouts.ts";
 import { LAYOUT_LIMIT } from "../auth/entitlement.ts";
@@ -187,4 +187,35 @@ test("a layout remembers the axis it was saved on", () => {
 
 test("an unknown axis in a stored layout degrades to linear", () => {
   assert.equal(parseLayout({ name: "x", symbol: "VNM", scale: "renko" })!.scale, "lin");
+});
+
+// ── P3-4: a setup packed into a link ────────────────────────────────
+test("a template round-trips through a link", () => {
+  const l = L({ name: "Bank", symbol: "VCB", extra: ["CTG"], grid: 2, tf: "1h",
+    type: "line", ind: ["rsi:21"], range: "3M", scale: "log", cmp: ["VNINDEX"], fr: true, br: true });
+  const back = decodeTemplate(encodeTemplate(l))!;
+  assert.equal(back.symbol, "VCB");
+  assert.equal(back.grid, 2);
+  assert.deepEqual(back.ind, ["rsi:21"]);
+  assert.equal(back.scale, "log");
+  assert.equal(back.fr, true);
+  // The query it recalls to must match the original's.
+  assert.equal(layoutQuery(back), layoutQuery(l));
+});
+
+test("a hostile token is refused rather than half-applied", () => {
+  // Templates go through exactly the same validation as stored data.
+  for (const bad of ["", "!!!", "e30", Buffer.from('{"n":"x"}').toString("base64url")]) {
+    assert.equal(decodeTemplate(bad), null, bad);
+  }
+});
+
+test("a template cannot be used as storage", () => {
+  assert.equal(decodeTemplate("A".repeat(MAX_TEMPLATE_CHARS + 1)), null);
+});
+
+test("a template carries no timestamp from the sender", () => {
+  // Opening someone's link must not claim they saved it on your device.
+  const back = decodeTemplate(encodeTemplate(L({ savedAt: 999 })))!;
+  assert.equal(back.savedAt, 0);
 });

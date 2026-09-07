@@ -17,6 +17,8 @@ export default async function Page({
     layout?: string; s?: string; tf?: string; rail?: string; cmp?: string; fr?: string; br?: string;
     /** The view a shared link carries: chart type, indicators, visible range. */
     type?: string; ind?: string; r?: string; sc?: string;
+    /** A setup packed into the link (P3-4). Opens read-only; saving needs a slot. */
+    tpl?: string;
   }>;
 }) {
   const { locale, symbol } = await params;
@@ -30,6 +32,6 @@ export default async function Page({
     .slice(0, 3);
   return (
     <TerminalView locale={guard(locale, "terminal", "chart")} symbol={symbol} extra={extra} layout={layout} tf={sp.tf} rail={sp.rail} cmp={sp.cmp} fr={sp.fr === "1"} br={sp.br === "1"}
-      view={{ type: sp.type, ind: sp.ind, r: sp.r, sc: sp.sc }} />
+      view={{ type: sp.type, ind: sp.ind, r: sp.r, sc: sp.sc }} tpl={sp.tpl} />
   );
 }

@@ -411,6 +411,12 @@ export async function createPostgresDb(url: string): Promise<Db> {
           SELECT count(*)::text AS n FROM user_docs WHERE user_id = ${userId} AND kind = ${kind}`;
         return Number(row?.n ?? 0);
       },
+
+      async census() {
+        const rows = await sql<{ user_id: string; kind: string }[]>`
+          SELECT user_id, kind FROM user_docs`;
+        return rows.map((r) => ({ userId: r.user_id, kind: r.kind }));
+      },
     },
 
     series: {

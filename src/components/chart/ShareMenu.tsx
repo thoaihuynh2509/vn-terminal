@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { exportFilename, footerText } from "@/lib/chart/export";
+import { encodeTemplate, layoutFromQuery } from "@/lib/chart/layouts";
 import { track } from "@/lib/analytics/posthog";
 import type { Dict } from "@/lib/i18n";
 
@@ -65,6 +66,30 @@ export function ShareMenu({
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Share the SETUP rather than the address.
+   *
+   * A plain link carries whatever the reader is looking at right now; a template
+   * carries the arrangement — symbols, grid, indicators, axis — so the recipient
+   * opens the screen the sender built, not a default chart of the same symbol.
+   * Opening one needs no account and no slot; only saving it does.
+   */
+  const copyTemplate = useCallback(async () => {
+    try {
+      const l = layoutFromQuery("Shared", symbol, window.location.search, Date.now());
+      if (!l) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("tpl", encodeTemplate(l));
+      await navigator.clipboard.writeText(url.toString());
+      setCopied(true);
+      track("chart_shared", { method: "template", symbol });
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* a blocked clipboard is not worth an error dialog */
+    }
+  }, [symbol]);
 
   const copyLink = useCallback(async () => {
     try {
@@ -143,6 +168,9 @@ export function ShareMenu({
     <span className="flex shrink-0 items-center gap-1">
       <button type="button" onClick={copyLink} className={btn} aria-label={dict.chart.shareLink}>
         {copied ? dict.chart.shareCopied : dict.chart.shareLink}
+      </button>
+      <button type="button" onClick={copyTemplate} className={btn} aria-label={dict.chart.shareSetup}>
+        {dict.chart.shareSetup}
       </button>
       <button type="button" onClick={savePng} disabled={busy} className={btn} aria-label={dict.chart.sharePng}>
         {dict.chart.sharePng}

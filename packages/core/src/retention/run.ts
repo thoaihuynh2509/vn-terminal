@@ -170,19 +170,67 @@ export function renewalEmail(
 }
 
 /** The weekly teaser to a signed-up free reader. Pure. `unsubUrl` is required. */
+export interface WeekOnChart {
+  /** In-app alerts that fired for this reader in the last week. */
+  alertsFired: number;
+  /** Watchlist names that closed at their ceiling or floor. */
+  limitCloses: { symbol: string; dir: "ceiling" | "floor" }[];
+  /** Drawn levels price walked up to. */
+  levelsHit: number;
+}
+
 export function teaserEmail(
   locale: Locale,
-  links: { pricingUrl: string; unsubUrl: string },
+  links: { pricingUrl: string; unsubUrl: string; chartUrl?: string },
+  week?: WeekOnChart,
 ): { subject: string; text: string } {
   const vi = locale === "vi";
-  const subject = vi
-    ? "Mở khoá biểu đồ nâng cao, cảnh báo giá và trợ lý AI"
-    : "Unlock advanced charts, price alerts and the AI assistant";
+
+  /**
+   * The personal half, when there is one.
+   *
+   * A weekly mail that only says "here is what you could buy" is an
+   * advertisement, and free readers learn to ignore it. A mail that first tells
+   * them what happened on THEIR chart is worth opening, and the offer lands on a
+   * reader who has just been reminded the thing is useful.
+   */
+  const lines: string[] = [];
+  if (week) {
+    if (week.alertsFired > 0) {
+      lines.push(vi
+        ? `• ${week.alertsFired} cảnh báo của bạn đã kích hoạt tuần này.`
+        : `• ${week.alertsFired} of your alerts triggered this week.`);
+    }
+    for (const c of week.limitCloses.slice(0, 3)) {
+      const label = c.dir === "ceiling" ? (vi ? "giá trần" : "its ceiling") : (vi ? "giá sàn" : "its floor");
+      lines.push(vi ? `• ${c.symbol} đóng cửa ở ${label}.` : `• ${c.symbol} closed at ${label}.`);
+    }
+    if (week.levelsHit > 0) {
+      lines.push(vi
+        ? `• Giá đã chạm ${week.levelsHit} mức bạn đã vẽ.`
+        : `• Price reached ${week.levelsHit} level(s) you drew.`);
+    }
+  }
+  const personal = lines.length
+    ? `${vi ? "Tuần của bạn trên biểu đồ:" : "Your week on the chart:"}\n${lines.join("\n")}\n\n`
+    : "";
+
+  // The subject follows the content: a personal mail should not be dressed as
+  // an advert, and an advert should not pretend to be personal.
+  const subject = lines.length
+    ? (vi ? "Tuần của bạn trên biểu đồ" : "Your week on the chart")
+    : (vi
+      ? "Mở khoá biểu đồ nâng cao, cảnh báo giá và trợ lý AI"
+      : "Unlock advanced charts, price alerts and the AI assistant");
+
   const body = vi
     ? `Bạn đang dùng bản miễn phí của VN Terminal. Gói trả phí thêm: chỉ báo đầy đủ, cảnh báo giá gửi tận email, so sánh hai mã và trợ lý AI.\n\nXem gói: ${links.pricingUrl}`
     : `You're on the free plan of VN Terminal. A paid plan adds the full indicator library, price alerts delivered by email, two-symbol compare and the AI assistant.\n\nSee plans: ${links.pricingUrl}`;
+  const open = links.chartUrl
+    ? (vi ? `\n\nMở biểu đồ: ${links.chartUrl}` : `\n\nOpen your chart: ${links.chartUrl}`)
+    : "";
   const foot = vi ? `\n\nHuỷ nhận email: ${links.unsubUrl}\n` : `\n\nUnsubscribe: ${links.unsubUrl}\n`;
-  return { subject, text: `${body}${foot}` };
+  return { subject, text: `${personal}${body}${open}${foot}` };
 }
 
 /**

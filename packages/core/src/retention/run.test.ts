@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PriceAlert } from "../alerts/alerts.ts";
-import { alertEmail, alertSymbols, briefEmail, personalNote, renewalDue, renewalEmail, runUserAlerts, teaserEmail, type QuoteLite } from "./run.ts";
+import {
+  alertEmail, alertSymbols, briefEmail, personalNote, renewalDue, renewalEmail, runUserAlerts, teaserEmail, type QuoteLite,
+} from "./run.ts";
 import type { Brief } from "../brief.ts";
 
 const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
@@ -201,4 +203,50 @@ test("the English section links to the English route", () => {
     movers: [{ symbol: "FPT", changePct: 1 }], fired: [], levels: [],
   })!;
   assert.match(note, /\/en\/chart\/FPT\?src=brief/);
+});
+
+// ── P3-5: the weekly teaser leads with the reader's own week ────────
+test("a teaser with nothing personal is still the plain offer", () => {
+  const m = teaserEmail("vi", { pricingUrl: "p", unsubUrl: "u" });
+  assert.match(m.subject, /Mở khoá/);
+  assert.match(m.text, /Xem gói: p/);
+  assert.match(m.text, /Huỷ nhận email: u/);
+});
+
+test("a reader's own week leads, and retitles the mail", () => {
+  // A weekly mail that only says "here is what you could buy" is an advert, and
+  // free readers learn to ignore it.
+  const m = teaserEmail("vi", { pricingUrl: "p", unsubUrl: "u" }, {
+    alertsFired: 2,
+    limitCloses: [{ symbol: "HPG", dir: "ceiling" }],
+    levelsHit: 1,
+  });
+  assert.match(m.subject, /Tuần của bạn/);
+  assert.ok(m.text.indexOf("2 cảnh báo") < m.text.indexOf("Xem gói"), "personal must come first");
+  assert.match(m.text, /HPG đóng cửa ở giá trần/);
+  assert.match(m.text, /chạm 1 mức bạn đã vẽ/);
+});
+
+test("an empty week does not fabricate a personal section", () => {
+  const m = teaserEmail("en", { pricingUrl: "p", unsubUrl: "u" }, {
+    alertsFired: 0, limitCloses: [], levelsHit: 0,
+  });
+  assert.ok(!/Your week/.test(m.text));
+  assert.match(m.subject, /Unlock/);
+});
+
+test("the unsubscribe link survives a personal teaser", () => {
+  // The one line that must never be dropped by a template change.
+  const m = teaserEmail("en", { pricingUrl: "p", unsubUrl: "u" }, {
+    alertsFired: 1, limitCloses: [], levelsHit: 0,
+  });
+  assert.match(m.text, /Unsubscribe: u/);
+});
+
+test("only a handful of limit closes are listed", () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({ symbol: `S${i}`, dir: "floor" as const }));
+  const m = teaserEmail("en", { pricingUrl: "p", unsubUrl: "u" }, {
+    alertsFired: 0, limitCloses: many, levelsHit: 0,
+  });
+  assert.equal((m.text.match(/closed at/g) ?? []).length, 3);
 });

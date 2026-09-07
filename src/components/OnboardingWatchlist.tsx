@@ -1,11 +1,17 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { PATHS } from "@/lib/i18n";
+import type { Locale } from "@/lib/types";
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui";
 import { readWatchlist, readWatchlistOwner, toggleWatch } from "@/components/WatchButton";
 import { writeStored } from "@/lib/browser-store";
 import { track } from "@/lib/analytics/posthog";
 import type { Dict } from "@/lib/i18n";
+
+/** Set once, so the chart can nudge a first-time reader exactly one time. */
+export const FIRST_CHART_KEY = "hint:first-chart";
 
 const DONE_KEY = "vnt_onboarded";
 
@@ -30,7 +36,8 @@ const PICKS = ["VIC", "VNM", "FPT", "HPG", "VCB", "MWG", "VHM", "TCB", "MBB", "S
  * the client, so there is no hydration flash; dismissal is remembered so it
  * never nags. Signed-in readers already have the account loop and are skipped.
  */
-export function OnboardingWatchlist({ dict }: { dict: Dict }) {
+export function OnboardingWatchlist({ dict, locale }: { dict: Dict; locale: Locale }) {
+  const router = useRouter();
   const [show, setShow] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
 
@@ -54,6 +61,15 @@ export function OnboardingWatchlist({ dict }: { dict: Dict }) {
     picked.forEach(toggleWatch); // reuses the same store + sync + per-symbol event
     track("onboarding_completed", { count: picked.length });
     dismiss();
+    // Land on the chart of the first symbol they picked, not back on the board.
+    // Picking a watchlist is a statement of interest; the next useful thing is
+    // looking at one of them, and a reader left on the page they started from
+    // has to work out for themselves what they just achieved.
+    const first = picked[0];
+    if (first) {
+      writeStored(FIRST_CHART_KEY, "1");
+      router.push(`/${locale}/${PATHS.terminal[locale]}/${first}`);
+    }
   };
   const skip = () => {
     track("onboarding_skipped", {});

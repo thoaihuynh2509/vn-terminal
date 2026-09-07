@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/layout";
 import { ConfirmPaidButton } from "@/components/ConfirmPaidButton";
 import { vnd } from "@/lib/format";
 import { getDict } from "@/lib/i18n";
+import { INVESTED_KINDS, investedStats } from "@/lib/retention/invested";
 import type { OrderRecord } from "@/lib/db";
 import type { Locale } from "@/lib/types";
 
@@ -12,11 +13,17 @@ import type { Locale } from "@/lib/types";
  * page has checked `isAdmin`; it takes already-fetched rows and shows revenue,
  * paid/pending counts and the recent orders — read-only, no controls.
  */
-export function AdminView({ locale, orders }: { locale: Locale; orders: OrderRecord[] }) {
+export function AdminView({ locale, orders, census = [] }: {
+  locale: Locale;
+  orders: OrderRecord[];
+  /** Owner-and-kind for every saved artifact; no content is read. */
+  census?: { userId: string; kind: string }[];
+}) {
   const dict = getDict(locale);
   const paid = orders.filter((o) => o.status === "paid");
   const revenue = paid.reduce((sum, o) => sum + o.amount, 0);
   const pending = orders.filter((o) => o.status === "pending").length;
+  const invested = investedStats(census);
 
   const status = (s: OrderRecord["status"]) =>
     s === "paid" ? dict.admin.sPaid : s === "pending" ? dict.admin.sPending : dict.admin.sFailed;
@@ -38,6 +45,17 @@ export function AdminView({ locale, orders }: { locale: Locale; orders: OrderRec
         <StatTile label={dict.admin.revenue} value={<span className="tnum">{vnd(revenue, locale)}</span>} />
         <StatTile label={dict.admin.paidCount} value={<span className="tnum">{paid.length}</span>} />
         <StatTile label={dict.admin.pendingCount} value={<span className="tnum">{pending}</span>} />
+        {/* The number the roadmap is bet on: readers who have saved something. */}
+        <StatTile label={dict.admin.invested} value={<span className="tnum">{invested.invested}</span>} />
+        <StatTile label={dict.admin.artifacts} value={<span className="tnum">{invested.total}</span>} />
+        <StatTile
+          label={dict.admin.byKind}
+          value={
+            <span className="tnum text-[13px]">
+              {INVESTED_KINDS.map((k) => `${k} ${invested.byKind[k] ?? 0}`).join(" · ")}
+            </span>
+          }
+        />
       </div>
 
       {orders.length === 0 ? (

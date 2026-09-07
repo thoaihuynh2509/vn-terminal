@@ -521,6 +521,11 @@ export async function createFileDb(dir: string): Promise<Db> {
         withLock(s, false, (state) =>
           state.docs.filter((d) => d.userId === userId && d.kind === kind).length,
         ),
+
+      census: () =>
+        withLock(s, false, (state) =>
+          state.docs.map((d) => ({ userId: d.userId, kind: d.kind })),
+        ),
     },
 
     series: {

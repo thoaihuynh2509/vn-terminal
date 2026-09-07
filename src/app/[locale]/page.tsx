@@ -143,7 +143,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       )}
 
       {/* First-visit activation: pick a few symbols → the watchlist loop starts now. */}
-      <OnboardingWatchlist dict={dict} />
+      <OnboardingWatchlist dict={dict} locale={locale as Locale} />
 
       {/* Signed-in personalisation, up top: the reader's own board comes first. */}
       {watch.length > 0 && (

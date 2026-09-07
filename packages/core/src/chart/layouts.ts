@@ -239,3 +239,43 @@ export function layoutFromQuery(
     savedAt,
   });
 }
+
+/**
+ * A layout packed into a link.
+ *
+ * Sharing a setup should not require the recipient to have an account, a slot,
+ * or anything at all — the link IS the artifact. Saving it needs a slot; opening
+ * it never does, which is the growth loop: a reader shares their screen, and the
+ * person who opens it sees the product working before being asked for anything.
+ *
+ * Encoded as compact JSON in base64url rather than a database row, so a shared
+ * template costs no storage and cannot leak anything the sender did not put in
+ * it. Round-tripped through `parseLayout`, so a hostile link is subject to
+ * exactly the same validation as stored data.
+ */
+export function encodeTemplate(l: SavedLayout): string {
+  const compact = {
+    n: l.name, s: l.symbol, e: l.extra, g: l.grid, tf: l.tf,
+    ty: l.type, i: l.ind, r: l.range, sc: l.scale, c: l.cmp,
+    f: l.fr ? 1 : 0, b: l.br ? 1 : 0,
+  };
+  return Buffer.from(JSON.stringify(compact), "utf8").toString("base64url");
+}
+
+/** The longest template a link may carry, so a URL cannot be used as storage. */
+export const MAX_TEMPLATE_CHARS = 2048;
+
+export function decodeTemplate(token: string): SavedLayout | null {
+  if (!token || token.length > MAX_TEMPLATE_CHARS) return null;
+  try {
+    const raw = Buffer.from(token, "base64url").toString("utf8");
+    const c = JSON.parse(raw) as Record<string, unknown>;
+    return parseLayout({
+      name: c.n, symbol: c.s, extra: c.e, grid: c.g, tf: c.tf,
+      type: c.ty, ind: c.i, range: c.r, scale: c.sc, cmp: c.c,
+      fr: c.f === 1, br: c.b === 1, savedAt: 0,
+    });
+  } catch {
+    return null;
+  }
+}

@@ -23,6 +23,8 @@ import { getCorpEvents } from "@/lib/providers/events";
 import { getCoinBars } from "@/lib/providers/crypto";
 import { cryptoEnabled } from "@/lib/flags";
 import { ChartSyncProvider } from "@/components/chart/ChartSync";
+import { SavedLayoutBar } from "@/components/chart/SavedLayoutBar";
+import { decodeTemplate } from "@/lib/chart/layouts";
 import { chartSource, seriesKey } from "@/lib/chart/series";
 import { dbAvailable, getDb } from "@/lib/db";
 import type { Bar } from "@/lib/types";
@@ -78,7 +80,7 @@ async function recordedBars(code: string): Promise<Bar[]> {
 }
 
 export async function TerminalView({
-  locale, symbol, extra = [], layout = 1, tf, rail, cmp, fr = false, br = false, view: viewParams,
+  locale, symbol, extra = [], layout = 1, tf, rail, cmp, fr = false, br = false, view: viewParams, tpl,
 }: {
   locale: Locale;
   symbol: string;
@@ -97,11 +99,34 @@ export async function TerminalView({
   br?: boolean;
   /** Raw view params from the URL; decoded and tier-clamped on the server. */
   view?: { type?: string; ind?: string; r?: string; sc?: string };
+  /** A shared setup, applied when the URL carries no view of its own. */
+  tpl?: string;
 }) {
   const dict = getDict(locale);
   const sym = symbol.toUpperCase();
   const session = await getSession();
   const tier = session?.tier ?? "anon";
+
+  /**
+   * A shared setup fills in only what the URL did NOT say.
+   *
+   * A template must never override a parameter the reader can see in their own
+   * address bar: if they edited the timeframe after opening the link, that is
+   * their chart now, and silently reverting it would be the template fighting
+   * the reader.
+   */
+  const shared = tpl ? decodeTemplate(tpl) : null;
+  if (shared) {
+    viewParams = {
+      type: viewParams?.type ?? shared.type,
+      ind: viewParams?.ind ?? (shared.ind.length ? shared.ind.join(",") : undefined),
+      r: viewParams?.r ?? shared.range ?? undefined,
+      sc: viewParams?.sc ?? shared.scale,
+    };
+    if (!tf) tf = shared.tf;
+    if (!cmp && shared.cmp.length) cmp = shared.cmp.join(",");
+    if (!extra.length && shared.extra.length) { extra = shared.extra; layout = shared.grid; }
+  }
 
   // Intraday is a paid interval, so the tier decides it on the SERVER. A free
   // reader who types ?tf=5m gets the daily chart, not a 402 — and never the bars.
@@ -329,6 +354,10 @@ export async function TerminalView({
           pricingHref={`/${locale}/${PATHS.pricing[locale]}?plan=plus`}
         />
         <LayoutSwitcher locale={locale} dict={dict} symbol={sym} extra={extra} layout={cells} multi={multi} tf={view.id} />
+        {/* Saved setups are a click away here; the rail stays where they are
+            managed. Switching between them is a thing a reader does constantly
+            and it should not cost opening a panel first. */}
+        <SavedLayoutBar locale={locale} dict={dict} current={sym} />
         <CompareToggle
           locale={locale} dict={dict} symbol={sym} tf={view.id}
           on={compare.length > 0} canCompare={canCompare} frOn={!!foreign}
