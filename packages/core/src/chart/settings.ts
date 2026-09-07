@@ -22,11 +22,44 @@ export interface ChartSettings {
   indicators: string[];
   /** Price axis. A preference, so it is remembered like the chart type. */
   scale: ScaleId;
+  /**
+   * Reader-set price-pane height, as a FRACTION of the viewport, or `null` for
+   * the automatic size.
+   *
+   * A fraction rather than pixels because this setting syncs: a 900px pane
+   * dragged out on a desktop would be taller than a phone's whole screen, and
+   * restoring it there would push every other pane off the page. A fraction
+   * says what the reader actually meant — "give the price about this much of
+   * the screen" — and travels.
+   */
+  paneRatio: number | null;
 }
 
 export const SETTINGS_KEY = "settings:chart";
 
-export const DEFAULT_SETTINGS: ChartSettings = { type: "candle", indicators: ["sma20"], scale: DEFAULT_SCALE };
+export const DEFAULT_SETTINGS: ChartSettings = {
+  type: "candle", indicators: ["sma20"], scale: DEFAULT_SCALE, paneRatio: null,
+};
+
+/**
+ * Bounds on the price pane's share of the viewport.
+ *
+ * The floor keeps the candles readable; the ceiling keeps the volume pane, the
+ * oscillators and the toolbar from being pushed off the bottom, which a drag
+ * with no upper bound will do on the first try.
+ */
+export const MIN_PANE_RATIO = 0.25;
+export const MAX_PANE_RATIO = 0.85;
+
+/** A stored or dragged ratio, brought inside the usable range. */
+export function clampPaneRatio(r: number): number {
+  // Only NaN needs a guard: it defeats every comparison, so Math.min/max would
+  // propagate it. Infinities clamp correctly on their own, and clamping them to
+  // the floor — as an is-finite guard would — turns "as tall as possible" into
+  // "as short as possible".
+  if (Number.isNaN(r)) return MIN_PANE_RATIO;
+  return Math.min(MAX_PANE_RATIO, Math.max(MIN_PANE_RATIO, r));
+}
 
 const TYPES: ChartTypeId[] = ["candle", "line", "area"];
 
@@ -55,14 +88,19 @@ export function parseSettings(raw: string | null): ChartSettings | null {
       }
     }
     const scale = isScale(v.scale) ? v.scale : DEFAULT_SETTINGS.scale;
-    return { type, indicators, scale };
+    // A stored ratio is clamped rather than trusted: hand-edited storage should
+    // not be able to collapse the chart to nothing.
+    const paneRatio = typeof v.paneRatio === "number" && Number.isFinite(v.paneRatio)
+      ? clampPaneRatio(v.paneRatio)
+      : null;
+    return { type, indicators, scale, paneRatio };
   } catch {
     return null;
   }
 }
 
 export function serializeSettings(s: ChartSettings): string {
-  return JSON.stringify({ type: s.type, indicators: s.indicators, scale: s.scale });
+  return JSON.stringify({ type: s.type, indicators: s.indicators, scale: s.scale, paneRatio: s.paneRatio });
 }
 
 /**
@@ -75,6 +113,7 @@ export function restorable(s: ChartSettings, indicatorLimit: number, known: (id:
   return {
     type: s.type,
     scale: s.scale,
+    paneRatio: s.paneRatio,
     // `known` answers about an indicator, so it is asked about the id — passing
     // the whole `rsi:21` token would make every tuned indicator look unknown.
     indicators: s.indicators

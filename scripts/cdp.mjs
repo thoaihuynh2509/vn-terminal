@@ -642,6 +642,41 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── pane resize (P2-13) ───────────────────────────────────────
+    {
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await sleep(400);
+      const divider = 'div[role=separator][aria-orientation=horizontal]';
+      check("the price pane has a resize divider",
+        (await s.evaluate(`!!document.querySelector('${divider}')`)) === true);
+      // Operable by keyboard, not only by pointer.
+      const before = await s.evaluate(`document.querySelector('svg[role=img]').getBoundingClientRect().height`);
+      await s.evaluate(`(() => {
+        const d = document.querySelector('${divider}');
+        d.focus();
+        for (let i = 0; i < 4; i++) {
+          d.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        }
+      })()`);
+      // Four presses must move four steps, not one. A held arrow key repeats far
+      // faster than React re-renders, so a nudge that reads its starting point
+      // from render state collapses the whole burst into a single step.
+      const grew = await s.waitFor(`(() => {
+        const h = document.querySelector('svg[role=img]').getBoundingClientRect().height;
+        return h > ${before} + 80 ? h : null;
+      })()`, 4000);
+      check("repeated arrow presses compose", !!grew, `${before} -> ${grew}`);
+      check("the divider reports its size to assistive tech",
+        (await s.evaluate(`document.querySelector('${divider}').getAttribute('aria-valuenow')`)) !== null);
+      // The whole point: it has to come back.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await sleep(500);
+      const after = await s.evaluate(`document.querySelector('svg[role=img]').getBoundingClientRect().height`);
+      check("a resized pane survives a reload", Math.abs(after - grew) < 8, `${grew} -> ${after}`);
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+    }
+
     // ── select, move, undo/redo, new tools (P2-12) ────────────────
     {
       const dr = () => s.evaluate(`localStorage.getItem('drawings:VNM') || '[]'`);

@@ -32,6 +32,7 @@ import { useSyncedDoc } from "@/lib/use-synced-doc";
 import { mergeById } from "@/lib/docs-sync";
 import {
   DEFAULT_SETTINGS, SETTINGS_KEY, parseSettings, restorable, serializeSettings,
+  clampPaneRatio, MIN_PANE_RATIO, MAX_PANE_RATIO,
 } from "@/lib/chart/settings";
 import { track } from "@/lib/analytics/posthog";
 import { parseAlerts, STORAGE_KEY as ALERTS_KEY, type PriceAlert } from "@/lib/alerts/alerts";
@@ -74,8 +75,11 @@ const HINT_KEY = "hint:chart";
  * viewport (the rail is a bottom sheet there, so nothing competes for the
  * height), on a desktop it grows with the window instead of a fixed 340px.
  */
-function paneHeight(full: boolean): number {
+function paneHeight(full: boolean, ratio: number | null): number {
   if (typeof window === "undefined") return 340;
+  // A height the reader dragged wins over every automatic rule, including the
+  // desktop ceiling — they asked for a taller chart, so they get one.
+  if (ratio !== null) return Math.max(160, Math.round(window.innerHeight * clampPaneRatio(ratio)));
   if (full) return Math.max(280, window.innerHeight - 230);
   if (window.innerWidth < 1024) return Math.max(280, Math.round(window.innerHeight * 0.6));
   return Math.max(280, Math.min(520, Math.round(window.innerHeight * 0.48)));
@@ -142,6 +146,7 @@ export function ChartPro({
   // drawings below already rely on.
   const [typeChoice, setTypeChoice] = useState<ChartType | null>(null);
   const [scaleChoice, setScaleChoice] = useState<ScaleId | null>(null);
+  const [ratioChoice, setRatioChoice] = useState<number | null>(null);
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
   // Applied once, from the link, before the reader touches anything.
   const seededRange = useRef(false);
@@ -295,13 +300,6 @@ export function ChartPro({
   const hintSeen = useStored(HINT_KEY);
 
   useEffect(() => {
-    const measure = () => setPriceH(paneHeight(full));
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [full]);
-
-  useEffect(() => {
     if (!full) return;
     const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setFull(false); };
     document.addEventListener("keydown", onEsc);
@@ -360,6 +358,7 @@ export function ChartPro({
         (id) => unlocked || INDICATORS.find((d) => d.id === id)?.free,
       ),
       scale: usable.scale,
+      paneRatio: usable.paneRatio,
     };
   }, [storedSettings, limit, unlocked]);
 
@@ -373,6 +372,16 @@ export function ChartPro({
   const scale = scaleChoice
     ?? (initialView.scale !== DEFAULT_SCALE ? initialView.scale : null)
     ?? saved?.scale ?? DEFAULT_SETTINGS.scale;
+  // Not carried in the URL: how tall a reader likes their pane is a preference
+  // about their screen, not part of the chart a link describes.
+  const paneRatio = ratioChoice ?? saved?.paneRatio ?? DEFAULT_SETTINGS.paneRatio;
+
+  useEffect(() => {
+    const measure = () => setPriceH(paneHeight(full, paneRatio));
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [full, paneRatio]);
   const active =
     activeChoice
     ?? (initialView.ind.length ? initialView.ind : null)
@@ -395,18 +404,71 @@ export function ChartPro({
   // Persist deliberately, from the two handlers that change the setup, rather
   // than from an effect watching state — an effect would also fire for the
   // restore itself and write back what it just read.
-  const persistSettings = useCallback((next: { type?: ChartType; indicators?: string[]; scale?: ScaleId }) => {
+  const persistSettings = useCallback((next: {
+    type?: ChartType; indicators?: string[]; scale?: ScaleId; paneRatio?: number | null;
+  }) => {
     const current = parseSettings(storedSettings) ?? DEFAULT_SETTINGS;
     writeStored(SETTINGS_KEY, serializeSettings({
       type: next.type ?? current.type,
       indicators: next.indicators ?? current.indicators,
       scale: next.scale ?? current.scale,
+      paneRatio: next.paneRatio !== undefined ? next.paneRatio : current.paneRatio,
     }));
   }, [storedSettings]);
 
   const chooseType = useCallback((t: ChartType) => {
     setTypeChoice(t);
     persistSettings({ type: t });
+  }, [persistSettings]);
+
+  /**
+   * Drag the divider between the price pane and everything under it.
+   *
+   * The height is applied live so the chart follows the pointer, but only
+   * WRITTEN on release: persisting per frame would put a storage write (and, on
+   * a paid tier, a queued sync) behind every pixel of the drag.
+   */
+  const resize = useRef<{ startY: number; startH: number } | null>(null);
+  const onDividerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    resize.current = { startY: e.clientY, startH: priceH };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }, [priceH]);
+  const onDividerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const r = resize.current;
+    if (!r || (e.buttons & 1) !== 1) return;
+    const next = clampPaneRatio((r.startH + (e.clientY - r.startY)) / window.innerHeight);
+    ratioRef.current = next;
+    setRatioChoice(next);
+  }, []);
+  const onDividerUp = useCallback(() => {
+    if (!resize.current) return;
+    resize.current = null;
+    setRatioChoice((r) => {
+      if (r !== null) persistSettings({ paneRatio: r });
+      return r;
+    });
+  }, [persistSettings]);
+
+  /**
+   * Keyboard equivalent: a divider only a mouse can move is not operable.
+   *
+   * The current ratio is advanced through a ref before the state update, the
+   * same way the indicator toggle does it. Reading it from render state instead
+   * makes a HELD arrow key — which repeats far faster than React re-renders —
+   * compute every step from the same stale height, so ten presses move the
+   * divider once.
+   */
+  const ratioRef = useRef<number | null>(null);
+  useEffect(() => {
+    ratioRef.current = paneRatio ?? (typeof window === "undefined" ? null : priceH / window.innerHeight);
+  }, [paneRatio, priceH]);
+
+  const nudgeDivider = useCallback((dir: -1 | 1) => {
+    const base = ratioRef.current ?? 0.5;
+    const next = clampPaneRatio(base + (dir * 24) / window.innerHeight);
+    ratioRef.current = next;
+    setRatioChoice(next);
+    persistSettings({ paneRatio: next });
   }, [persistSettings]);
 
   const chooseScale = useCallback((sc: ScaleId) => {
@@ -1010,6 +1072,30 @@ export function ChartPro({
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
             cursorY={cursorY}
           />
+          {/* The divider between the price pane and everything below it.
+              `separator` with a value is what a screen reader needs to say what
+              dragging it does, and the arrow keys make it operable without a
+              pointer — a divider only a mouse can move is not a control. */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={dict.chart.resizePane}
+            aria-valuenow={Math.round((paneRatio ?? priceH / (typeof window === "undefined" ? 1000 : window.innerHeight)) * 100)}
+            aria-valuemin={Math.round(MIN_PANE_RATIO * 100)}
+            aria-valuemax={Math.round(MAX_PANE_RATIO * 100)}
+            tabIndex={0}
+            onPointerDown={onDividerDown}
+            onPointerMove={onDividerMove}
+            onPointerUp={onDividerUp}
+            onPointerCancel={onDividerUp}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowUp") { e.preventDefault(); nudgeDivider(-1); }
+              if (e.key === "ArrowDown") { e.preventDefault(); nudgeDivider(1); }
+            }}
+            className="group relative h-2 cursor-row-resize touch-none"
+          >
+            <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-line group-hover:bg-accent group-focus:bg-accent" />
+          </div>
           <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={hover} intraday={intraday} locale={locale} />
           {breadthView && (
             <BreadthPane
