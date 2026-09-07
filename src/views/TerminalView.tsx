@@ -59,6 +59,15 @@ import type { Locale } from "@/lib/types";
  * intraday intervals a reader can pick for an equity have nothing to serve here
  * and the chart stays on the one interval that exists.
  */
+/** A malformed escape is not a reason to fail the page; use it as typed. */
+function safeDecode(v: string): string {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
 async function cryptoBars(id: string): Promise<Bar[]> {
   if (!cryptoEnabled()) return [];
   try {
@@ -103,7 +112,15 @@ export async function TerminalView({
   tpl?: string;
 }) {
   const dict = getDict(locale);
-  const sym = symbol.toUpperCase();
+  /**
+   * Decoded FIRST, because Next hands the route segment percent-encoded.
+   *
+   * Every equity symbol is plain letters and so survives either way, which is
+   * exactly why this went unnoticed: it only bites the namespaced symbols —
+   * `GOLD:SJC` arrives as `GOLD%3ASJC`, is classified as an equity, finds no
+   * bars, and 404s.
+   */
+  const sym = safeDecode(symbol).toUpperCase();
   const session = await getSession();
   const tier = session?.tier ?? "anon";
 

@@ -694,6 +694,21 @@ try {
       await s.evaluate("localStorage.removeItem('settings:chart')");
     }
 
+    // ── namespaced symbols survive the URL ────────────────────────
+    // Next hands the route segment percent-encoded, so `GOLD:SJC` arrives as
+    // `GOLD%3ASJC`. Undecoded it looks like an equity, finds no bars and 404s —
+    // which is what shipped, because every equity symbol is plain letters and
+    // so survives either way. Only a real request catches this.
+    for (const [sym, label] of [["GOLD:SJC", "gold"], ["CRYPTO:bitcoin", "crypto"]]) {
+      const code = await s.evaluate(`(async () => {
+        const r = await fetch(${JSON.stringify("/vi/bieu-do/")} + encodeURIComponent(${JSON.stringify(sym)}));
+        return r.status;
+      })()`);
+      check(`a ${label} symbol resolves through the URL`, code === 200, `${sym} -> ${code}`);
+    }
+    check("an unknown symbol is still a 404",
+      (await s.evaluate(`(async () => (await fetch('/vi/bieu-do/ZZZZ')).status)()`)) === 404);
+
     // ── Phase 3 surfaces (P3-9) ───────────────────────────────────
     {
       // A shared setup must open the SENDER's screen, not a default chart of
