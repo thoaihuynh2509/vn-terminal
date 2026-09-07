@@ -87,16 +87,47 @@ export function add(alerts: PriceAlert[], alert: PriceAlert, max: number): Price
 
 export const STORAGE_KEY = "alerts";
 
+const SYMBOL_RE = /^[A-Z0-9]{1,10}$/;
+
+/**
+ * Coerce untrusted input into alerts, dropping anything malformed.
+ *
+ * Shared by the browser (reader-owned localStorage, which an extension or an
+ * older build can corrupt) and the API (a request body, which is hostile until
+ * proven otherwise). One definition of "a valid alert" means the two can never
+ * disagree about what is storable.
+ */
+export function sanitizeAlerts(v: unknown): PriceAlert[] {
+  if (!Array.isArray(v)) return [];
+  const out: PriceAlert[] = [];
+  const seen = new Set<string>();
+  for (const a of v) {
+    if (!a || typeof a !== "object") continue;
+    const { id, symbol, condition, price, createdAt, triggeredAt } = a as Record<string, unknown>;
+    if (typeof id !== "string" || !id || id.length > 32 || seen.has(id)) continue;
+    if (typeof symbol !== "string" || !SYMBOL_RE.test(symbol.toUpperCase())) continue;
+    if (typeof condition !== "string" || !["above", "below", "cross_up", "cross_down"].includes(condition)) continue;
+    // A non-positive or non-finite threshold can never be crossed meaningfully
+    // and would sit in the list firing or never firing, with no way to tell.
+    if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) continue;
+    seen.add(id);
+    out.push({
+      id,
+      symbol: symbol.toUpperCase(),
+      condition: condition as AlertCondition,
+      price,
+      createdAt: typeof createdAt === "number" && Number.isFinite(createdAt) ? createdAt : Date.now(),
+      ...(typeof triggeredAt === "number" && Number.isFinite(triggeredAt) ? { triggeredAt } : {}),
+    });
+  }
+  return out;
+}
+
 /** Tolerant parse: a corrupt entry must not lose every other alert. */
 export function parseAlerts(raw: string | null): PriceAlert[] {
   if (!raw) return [];
   try {
-    const v = JSON.parse(raw);
-    if (!Array.isArray(v)) return [];
-    return v.filter((a): a is PriceAlert =>
-      a && typeof a.id === "string" && typeof a.symbol === "string" &&
-      Number.isFinite(a.price) &&
-      ["above", "below", "cross_up", "cross_down"].includes(a.condition));
+    return sanitizeAlerts(JSON.parse(raw));
   } catch {
     return [];
   }

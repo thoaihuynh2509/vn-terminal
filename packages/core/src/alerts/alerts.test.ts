@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  shouldFire, evaluate, reset, remove, add, parseAlerts, serializeAlerts,
+  shouldFire, evaluate, reset, remove, add, parseAlerts, sanitizeAlerts, serializeAlerts,
   type PriceAlert, type AlertCondition,
 } from "./alerts.ts";
 
@@ -95,4 +95,50 @@ test("corrupt storage drops only the bad entries", () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].id, "ok");
   for (const junk of [null, "", "nope", "{}"]) assert.deepEqual(parseAlerts(junk as string | null), []);
+});
+
+// ── sanitizeAlerts: one definition of "storable", shared by browser and API ──
+
+test("hostile or malformed entries are dropped, not accepted", () => {
+  const cleaned = sanitizeAlerts([
+    { id: "ok", symbol: "vnm", condition: "above", price: 50, createdAt: 1 },
+    null,
+    "nope",
+    { id: "", symbol: "VNM", condition: "above", price: 50 },          // no id
+    { id: "a", symbol: "TOOLONGSYMBOL", condition: "above", price: 5 }, // bad symbol
+    { id: "b", symbol: "VNM", condition: "sideways", price: 5 },        // bad condition
+    { id: "c", symbol: "VNM", condition: "above", price: 0 },           // non-positive
+    { id: "d", symbol: "VNM", condition: "above", price: -1 },
+    { id: "e", symbol: "VNM", condition: "above", price: Number.NaN },
+    { id: "f", symbol: "VNM", condition: "above", price: "50" },        // string price
+  ]);
+  assert.equal(cleaned.length, 1);
+  assert.equal(cleaned[0].symbol, "VNM", "symbols are normalised to upper case");
+});
+
+test("a non-array body yields no alerts rather than throwing", () => {
+  for (const v of [null, undefined, 42, "x", {}]) {
+    assert.deepEqual(sanitizeAlerts(v), []);
+  }
+});
+
+test("duplicate ids collapse — the id is what reset and delete address", () => {
+  const cleaned = sanitizeAlerts([
+    { id: "same", symbol: "VNM", condition: "above", price: 10, createdAt: 1 },
+    { id: "same", symbol: "HPG", condition: "below", price: 20, createdAt: 2 },
+  ]);
+  assert.equal(cleaned.length, 1);
+});
+
+test("a missing createdAt is filled rather than dropping the alert", () => {
+  const cleaned = sanitizeAlerts([{ id: "a", symbol: "VNM", condition: "above", price: 10 }]);
+  assert.equal(cleaned.length, 1);
+  assert.ok(Number.isFinite(cleaned[0].createdAt));
+});
+
+test("a triggered alert keeps its timestamp through a round trip", () => {
+  const cleaned = sanitizeAlerts([
+    { id: "a", symbol: "VNM", condition: "above", price: 10, createdAt: 1, triggeredAt: 99 },
+  ]);
+  assert.equal(cleaned[0].triggeredAt, 99);
 });

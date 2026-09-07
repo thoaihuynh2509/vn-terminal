@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { ALERT_LIMIT, can } from "@/lib/auth/entitlement";
 import {
   add, evaluate, newAlertId, parseAlerts, remove, reset, serializeAlerts,
   STORAGE_KEY, type AlertCondition, type PriceAlert,
 } from "@/lib/alerts/alerts";
+import { useAlertSync } from "@/lib/alerts/use-alert-sync";
 import { num } from "@/lib/format";
+import { track } from "@/lib/analytics/posthog";
 import { PATHS, type Dict } from "@/lib/i18n";
 import type { Locale, Tier } from "@/lib/types";
 
@@ -54,6 +56,20 @@ export function AlertPanel({
 
   const triggered = useMemo(() => mine.filter((a) => a.triggeredAt), [mine]);
 
+  // Alerts reach the account only on a tier that bought delivery; on free they
+  // stay in this browser and fire in the open tab, which is what the scope note
+  // below promises. Called before any early return — a hook cannot be
+  // conditional, and the locked branch renders no alerts anyway.
+  const writeAll = useCallback(
+    (next: PriceAlert[]) => writeStored(STORAGE_KEY, next.length ? serializeAlerts(next) : null),
+    [],
+  );
+  const { markDirty } = useAlertSync({ local: all, applyRemote: writeAll, canSync: can(tier, "sync:docs") });
+  const save = useCallback(
+    (next: PriceAlert[]) => { writeAll(next); markDirty(); },
+    [writeAll, markDirty],
+  );
+
   if (!allowed) {
     return (
       <div>
@@ -66,7 +82,6 @@ export function AlertPanel({
     );
   }
 
-  const save = (next: PriceAlert[]) => writeStored(STORAGE_KEY, next.length ? serializeAlerts(next) : null);
   const atLimit = all.length >= max;
 
   function create(e: React.FormEvent) {
@@ -76,6 +91,7 @@ export function AlertPanel({
     save(add(all, {
       id: newAlertId(), symbol: symbol.toUpperCase(), condition, price: p, createdAt: Date.now(),
     }, max));
+    track("chart_alert_created", { condition, kind: "price", source: "panel", symbol });
     setPrice("");
   }
 
@@ -143,7 +159,9 @@ export function AlertPanel({
       )}
 
       {/* Says what the feature actually does, so nobody relies on it overnight. */}
-      <p className="mt-3 text-[11px] leading-relaxed text-muted">{dict.chart.alertScope}</p>
+      <p className="mt-3 text-[11px] leading-relaxed text-muted">
+        {can(tier, "alerts:email") ? dict.chart.alertScopeEmail : dict.chart.alertScope}
+      </p>
     </div>
   );
 }
