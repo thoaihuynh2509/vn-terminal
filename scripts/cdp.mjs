@@ -1101,6 +1101,45 @@ try {
         `/[+-][0-9.,]+%/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
       check("the crosshair prints a signed distance from the last close", pctReadout === true);
 
+      // ── dense windows decimate (P2-9) ───────────────────────────
+      // A wide intraday window is the only place today where visible bars
+      // exceed what the plot can resolve. The chart must stay correct there,
+      // not merely fast: the columns drawn are capped, and the series high and
+      // low still appear, because folding keeps extremes and sampling would not.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=5m", { scheme: "light", width: 1440, height: 900 });
+      // An earlier check leaves the chart in line mode, and the setup persists,
+      // so candle mode is asserted here rather than assumed.
+      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Nến')?.click()`);
+      await sleep(250);
+      await s.evaluate(`(() => {
+        const g = document.querySelector('[role=group][aria-label="Khoảng"]');
+        const all = [...(g?.querySelectorAll('button') ?? [])].pop();
+        all?.click();
+      })()`);
+      await sleep(600);
+      const dense = await s.waitFor(`(() => {
+        const t = document.querySelector('main')?.innerText ?? '';
+        const m = t.match(/([0-9.,]+)[  ]nến/);
+        const bars = m ? Number(m[1].replace(/[.,]/g, "")) : 0;
+        if (bars < 850) return null;               // not a dense window yet
+        const bodies = [...document.querySelectorAll('svg[role=img] path')]
+          .map(p => (p.getAttribute('d') || ''))
+          .filter(d => /^M[\\d.]+,[\\d.]+H/.test(d));   // candle bodies are H-rects
+        const columns = bodies.reduce((n, d) => n + (d.match(/M/g) || []).length, 0);
+        return { bars, columns };
+      })()`, 6000);
+      if (dense) {
+        check("a wide intraday window exceeds what the plot can resolve",
+          dense.bars > 850, `${dense.bars} bars`);
+        // 1440px wide minus axis padding, at 1.5px per column, is under 1000.
+        check("drawn columns are capped below the visible bar count",
+          dense.columns > 0 && dense.columns < dense.bars,
+          `${dense.columns} columns for ${dense.bars} bars`);
+      } else {
+        check("a wide intraday window exceeds what the plot can resolve", false,
+          "could not reach a dense window");
+      }
+
       // ── custom intervals ────────────────────────────────────────
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=7m", { scheme: "light" });
       check("a custom interval survives the URL",

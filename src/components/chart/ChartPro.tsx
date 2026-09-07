@@ -16,7 +16,7 @@ import {
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
 import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
-import { candlePaths, volumePaths } from "@/lib/chart/paths";
+import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
 import { dashFor } from "@/lib/chart/compare";
@@ -918,20 +918,24 @@ function PricePane({
   // pixel band, so relative SHAPE is comparable even when an index at 1,300 and
   // a share at 27 sit on the chart together — and none of them touch the price
   // scale, the candles or the crosshair.
+  // How many columns this plot can actually resolve. Past it, neighbouring
+  // bars share a pixel and the extra geometry is invisible work — the browser
+  // still parses and rasterises every byte of it on each pan frame.
+  const maxCols = maxColumnsFor(plotW);
+
   const comparePaths = compareView.map((c) => {
     const vals = c.series.filter((v): v is number => v !== null);
     const lo = vals.length ? Math.min(...vals) : 0;
     const hi = vals.length ? Math.max(...vals) : 1;
     const cy = (v: number) => 10 + (H - 20) - ((v - lo) / ((hi - lo) || 1)) * (H - 20);
-    const d = c.series
-      .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${cy(v).toFixed(1)}`))
-      .filter(Boolean)
-      .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
-      .join(" ");
-    return { label: c.label, d };
+    return { label: c.label, d: seriesPath(c.series, x, cy, maxCols) };
   }).filter((c) => c.d);
 
-  const linePath = view.map((b, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(b.c).toFixed(1)}`).join(" ");
+  // Only built when it is drawn: in candle mode this was a full pass over every
+  // visible bar whose result was thrown away.
+  const linePath = type === "line" || type === "area"
+    ? seriesPath(view.map((b) => b.c), x, y, maxCols)
+    : "";
 
   return (
     <div className="relative">
@@ -963,7 +967,7 @@ function PricePane({
         {/* Four paths rather than three nodes per candle. hollow = up,
             filled = down: direction without relying on hue. */}
         {type === "candle" && (() => {
-          const p = candlePaths(view, { x, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) });
+          const p = candlePaths(view, { x, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) }, maxCols);
           return (
             <g>
               <path d={p.upWick} stroke="var(--up)" strokeWidth={1} fill="none" />
@@ -975,11 +979,7 @@ function PricePane({
         })()}
 
         {overlays.map((o) => {
-          const d = o.series
-            .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`))
-            .filter(Boolean)
-            .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
-            .join(" ");
+          const d = seriesPath(o.series, x, y, maxCols);
           return (
             <path key={o.key} d={d} fill="none" stroke={COLOR_VAR[o.color]}
               strokeWidth={o.style === "band" ? 1 : 1.5} strokeDasharray={o.style === "band" ? "3 3" : undefined}
@@ -1281,7 +1281,7 @@ function VolumePane({ view, width, band, x, PAD, hover, locale }: PaneGeom & { l
       {(() => {
         const p = volumePaths(view, {
           x, barWidth: Math.max(1, Math.min(band * 0.62, 14)), height: H, maxVolume: maxV,
-        });
+        }, maxColumnsFor(width - PAD.left - PAD.right));
         return (
           <g opacity={0.32}>
             <path d={p.up} fill="var(--up)" />
@@ -1312,19 +1312,17 @@ function ForeignPane({
   return (
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="block">
       <line x1={PAD.left} x2={PAD.left + (width - PAD.left - PAD.right)} y1={mid} y2={mid} stroke="var(--grid)" strokeWidth={1} />
-      {net.map((v, i) => {
-        if (v === null || v === 0) return null;
-        const h = (Math.abs(v) / maxAbs) * (mid - 6);
-        const up = v > 0;
+      {(() => {
+        const p = signedBarPaths(net, {
+          x, y: (v) => mid - (v / maxAbs) * (mid - 6), zeroY: mid, barWidth: bw,
+        }, maxColumnsFor(width - PAD.left - PAD.right));
         return (
-          <rect
-            key={i}
-            x={x(i) - bw / 2} width={bw}
-            y={up ? mid - h : mid} height={h}
-            className={up ? "text-up" : "text-down"} fill="currentColor" opacity={0.55}
-          />
+          <g opacity={0.55}>
+            <path d={p.up} className="text-up" fill="currentColor" />
+            <path d={p.down} className="text-down" fill="currentColor" />
+          </g>
         );
-      })}
+      })()}
       {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
       <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
     </svg>
@@ -1343,11 +1341,7 @@ function BreadthPane({
   const H = 54;
   const plotW = width - PAD.left - PAD.right;
   const y = (v: number) => 8 + (H - 16) - (v / 100) * (H - 16);
-  const d = pct
-    .map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`))
-    .filter(Boolean)
-    .map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`)
-    .join(" ");
+  const d = seriesPath(pct, x, y, maxColumnsFor(plotW));
   const last = [...pct].reverse().find((v): v is number => v !== null);
   return (
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="block">
@@ -1374,6 +1368,7 @@ function OscillatorPane({
   const span = hi - lo || 1;
   const y = (v: number) => 14 + (H - 24) - ((v - lo) / span) * (H - 24);
   const zeroY = lo < 0 && hi > 0 ? y(0) : H - 10;
+  const maxCols = maxColumnsFor(width - PAD.left - PAD.right);
 
   return (
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={def.label} className="block border-t border-line">
@@ -1393,24 +1388,25 @@ function OscillatorPane({
         </g>
       ))}
 
-      {plots.map((p) =>
-        p.style === "histogram" ? (
-          <g key={p.key}>
-            {p.series.map((v, i) =>
-              v === null ? null : (
-                <rect key={i} x={x(i) - Math.min(band * 0.5, 5)} y={Math.min(y(v), zeroY)}
-                  width={Math.max(1, Math.min(band * 1.0, 10))} height={Math.max(0.5, Math.abs(y(v) - zeroY))}
-                  fill={v >= 0 ? "var(--up)" : "var(--down)"} opacity={0.45} />
-              ),
-            )}
+      {plots.map((p) => {
+        if (p.style !== "histogram") {
+          return (
+            <path key={p.key} d={seriesPath(p.series, x, y, maxCols)}
+              fill="none" stroke={COLOR_VAR[p.color]} strokeWidth={1.5} />
+          );
+        }
+        // Two paths rather than one node per bar — the same cost the candle
+        // paths were written to remove, which had survived in this pane.
+        const h = signedBarPaths(p.series, {
+          x, y, zeroY, barWidth: Math.max(1, Math.min(band, 10)),
+        }, maxCols);
+        return (
+          <g key={p.key} opacity={0.45}>
+            <path d={h.up} fill="var(--up)" />
+            <path d={h.down} fill="var(--down)" />
           </g>
-        ) : (
-          <path key={p.key}
-            d={p.series.map((v, i) => (v === null ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`))
-              .filter(Boolean).map((pt, i) => `${i === 0 ? "M" : "L"}${pt}`).join(" ")}
-            fill="none" stroke={COLOR_VAR[p.color]} strokeWidth={1.5} />
-        ),
-      )}
+        );
+      })}
 
       {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
     </svg>
@@ -1470,7 +1466,7 @@ function BarTable({ bars, locale, dict, digits, intraday }: { bars: Bar[]; local
         </thead>
         <tbody>
           {[...bars].reverse().map((b) => (
-            <tr key={b.t} className="border-t border-line">
+            <tr key={b.t} className="cv-row border-t border-line">
               <td className="px-2">{stamp(b.t, locale, intraday)}</td>
               <td className="px-2 text-right">{num(b.o, locale, digits)}</td>
               <td className="px-2 text-right">{num(b.h, locale, digits)}</td>

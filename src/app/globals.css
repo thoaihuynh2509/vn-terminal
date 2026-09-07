@@ -233,3 +233,15 @@ body {
   --down-1: #3a1e1f; --down-2: #6b2e2f; --down-3: #a34443; --down-4: #d15b59;
   --heat-zero: #24262a;
 }
+
+/*
+ * Rows outside the scroll viewport skip layout and paint until they approach it.
+ * The bar table renders one row per visible bar — several hundred at a wide
+ * range — and only about twenty are ever on screen. `contain-intrinsic-size`
+ * supplies the height of a skipped row so the scrollbar stays honest instead of
+ * jumping as rows are realised.
+ */
+.cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
+}
