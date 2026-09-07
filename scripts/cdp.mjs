@@ -642,6 +642,68 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── pinch to zoom on a phone (P2-15) ──────────────────────────
+    {
+      // 390x1100 is the viewport the design targets, and the only place this
+      // gesture exists: the chart had no zoom at all on touch.
+      //
+      // Driven with synthetic PointerEvents rather than CDP's touch dispatch,
+      // which times out against this harness. That is a real limit worth
+      // stating: this exercises the component's own gesture handling — two
+      // pointers, the spread between them, the range it produces — but NOT the
+      // browser's touch-action behaviour, so it cannot catch the page zooming
+      // instead of the chart. The pinch arithmetic itself is unit-tested.
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light", width: 390, height: 1100 });
+      await sleep(400);
+
+      const barCount = `(() => {
+        const t = document.querySelector('main')?.innerText ?? '';
+        const m = t.match(/([0-9.,]+)[  ]nến/);
+        return m ? Number(m[1].replace(/[.,]/g, "")) : null;
+      })()`;
+      const pinchBy = (from, to) => s.evaluate(`(() => {
+        const svg = document.querySelector('svg[role=img]');
+        const r = svg.getBoundingClientRect();
+        const y = r.top + r.height / 2;
+        const at = (f) => r.left + r.width * f;
+        const ev = (type, id, x) => svg.dispatchEvent(new PointerEvent(type, {
+          pointerId: id, pointerType: 'touch', clientX: x, clientY: y,
+          buttons: 1, bubbles: true, cancelable: true,
+        }));
+        ev('pointerdown', 1, at(0.5 - ${from}));
+        ev('pointerdown', 2, at(0.5 + ${from}));
+        for (const f of ${JSON.stringify([0.25, 0.5, 0.75, 1])}.map(k => ${from} + (${to} - ${from}) * k)) {
+          ev('pointermove', 1, at(0.5 - f));
+          ev('pointermove', 2, at(0.5 + f));
+        }
+        ev('pointerup', 1, at(0.5 - ${to}));
+        ev('pointerup', 2, at(0.5 + ${to}));
+        return true;
+      })()`);
+
+      const before = await s.evaluate(barCount);
+      await pinchBy(0.08, 0.42);
+      const after = await s.waitFor(`(() => {
+        const n = ${barCount};
+        return n !== null && n < ${before} ? n : null;
+      })()`, 5000);
+      check("pinching apart zooms in on touch", !!after, `${before} -> ${after} bars`);
+
+      const mid = await s.evaluate(barCount);
+      await pinchBy(0.42, 0.06);
+      const out = await s.waitFor(`(() => {
+        const n = ${barCount};
+        return n !== null && n > ${mid} ? n : null;
+      })()`, 5000);
+      check("pinching together zooms out on touch", !!out, `${mid} -> ${out} bars`);
+
+      check("the chart does not overflow a 390px viewport",
+        (await s.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")) === true);
+
+      await s.evaluate("localStorage.removeItem('settings:chart')");
+    }
+
     // ── pane resize (P2-13) ───────────────────────────────────────
     {
       await s.evaluate("localStorage.removeItem('settings:chart')");

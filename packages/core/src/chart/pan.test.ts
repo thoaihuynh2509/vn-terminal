@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clampOffset, maxOffset, offsetFromDrag, windowOf } from "./pan.ts";
+import {
+  MIN_RANGE, clampOffset, maxOffset, nearestIndex, offsetFromDrag, pinch, rangeAt, spreadOf, windowBounds, windowOf, zoomAt,
+} from "./pan.ts";
 
 const bars = Array.from({ length: 100 }, (_, i) => i);
 
@@ -59,7 +61,6 @@ test("clamping rejects nonsense rather than propagating it", () => {
   assert.equal(clampOffset(12.4, 100, 20), 12, "offsets are whole bars");
 });
 
-import { MIN_RANGE, zoomAt } from "./pan.ts";
 
 /** Absolute index of the bar sitting under `fraction` of the plot. */
 const barUnder = (total: number, range: number, offset: number, f: number) =>
@@ -120,7 +121,6 @@ test("zoom never produces a window outside the loaded history", () => {
   }
 });
 
-import { nearestIndex, windowBounds } from "./pan.ts";
 
 test("bounds and slice always agree", () => {
   for (const range of [0, 20, 60, 120, 500]) {
@@ -153,5 +153,111 @@ test("nearestIndex agrees with a linear scan on every timestamp", () => {
   };
   for (let target = -20; target < 1420; target += 3) {
     assert.equal(nearestIndex(t, target), scan(target), `target ${target}`);
+  }
+});
+
+// ── P2-15: pinch ────────────────────────────────────────────────────
+const P = (x: number, y = 0) => ({ x, y });
+
+test("spread is the distance between two fingers", () => {
+  assert.equal(spreadOf(P(0, 0), P(3, 4)), 5);
+  assert.equal(spreadOf(P(10), P(10)), 0);
+});
+
+test("fingers moving apart zooms IN — fewer bars, each wider", () => {
+  const out = pinch({
+    total: 1000, startRange: 200, startOffset: 0,
+    startSpread: 100, spread: 200, fraction: 0.5,
+  });
+  assert.equal(out.range, 100);
+});
+
+test("fingers coming together zooms OUT", () => {
+  const out = pinch({
+    total: 1000, startRange: 200, startOffset: 0,
+    startSpread: 200, spread: 100, fraction: 0.5,
+  });
+  assert.equal(out.range, 400);
+});
+
+test("an unchanged spread changes nothing", () => {
+  const args = {
+    total: 1000, startRange: 200, startOffset: 30,
+    startSpread: 150, spread: 150, fraction: 0.3,
+  };
+  assert.deepEqual(pinch(args), { range: 200, offset: 30 });
+});
+
+test("pinching out and back returns to the range it began with", () => {
+  // The reason the scale is measured from the START of the gesture: accumulating
+  // per-frame ratios rounds to whole bars each time, and the error compounds
+  // until a pinch does not undo itself.
+  const start = { total: 1000, startRange: 240, startOffset: 50, startSpread: 120, fraction: 0.5 };
+  let last = { range: start.startRange, offset: start.startOffset };
+  for (const spread of [130, 160, 200, 260, 200, 160, 130, 120]) {
+    last = pinch({ ...start, spread });
+  }
+  assert.deepEqual(last, { range: 240, offset: 50 });
+});
+
+test("the bar under the fingers stays under the fingers", () => {
+  // Same anchoring contract the wheel has: pinch about the left edge must not
+  // slide the leftmost bar away.
+  const total = 1000, startRange = 200, startOffset = 0;
+  const before = windowBounds(total, startRange, startOffset);
+  const after = pinch({ total, startRange, startOffset, startSpread: 100, spread: 200, fraction: 0 });
+  const bounds = windowBounds(total, after.range, after.offset);
+  assert.equal(bounds[0], before[0]);
+});
+
+test("pinch and wheel anchor identically", () => {
+  // Both go through rangeAt, so a chart cannot feel different depending on
+  // which device the reader used.
+  const base = { total: 1000, range: 200, offset: 40, fraction: 0.25 };
+  const wheel = zoomAt({ ...base, direction: -1 });
+  const byPinch = pinch({
+    total: base.total, startRange: base.range, startOffset: base.offset,
+    startSpread: 100, spread: 120, fraction: base.fraction,
+  });
+  assert.deepEqual(byPinch, wheel);
+});
+
+test("pinch respects the floor and the ceiling on range", () => {
+  const huge = pinch({
+    total: 500, startRange: 200, startOffset: 0, startSpread: 1, spread: 1000, fraction: 0.5,
+  });
+  assert.equal(huge.range, MIN_RANGE);
+  const tiny = pinch({
+    total: 500, startRange: 200, startOffset: 0, startSpread: 1000, spread: 1, fraction: 0.5,
+  });
+  assert.equal(tiny.range, 500);
+});
+
+test("a gesture with no starting spread does nothing rather than dividing by zero", () => {
+  const out = pinch({
+    total: 1000, startRange: 200, startOffset: 10, startSpread: 0, spread: 50, fraction: 0.5,
+  });
+  assert.deepEqual(out, { range: 200, offset: 10 });
+  const gone = pinch({
+    total: 1000, startRange: 200, startOffset: 10, startSpread: 50, spread: 0, fraction: 0.5,
+  });
+  assert.deepEqual(gone, { range: 200, offset: 10 });
+});
+
+test("pinching from 'everything loaded' starts from the real bar count", () => {
+  const out = pinch({
+    total: 300, startRange: 0, startOffset: 0, startSpread: 100, spread: 200, fraction: 0.5,
+  });
+  assert.equal(out.range, 150);
+});
+
+test("the window never runs off the loaded history", () => {
+  for (const spread of [1, 40, 99, 250, 4000]) {
+    const out = pinch({
+      total: 400, startRange: 100, startOffset: 300, startSpread: 100, spread, fraction: 0.9,
+    });
+    assert.ok(out.offset >= 0 && out.offset <= maxOffset(400, out.range), `spread ${spread}`);
+    const [a, b] = windowBounds(400, out.range, out.offset);
+    assert.ok(a >= 0 && b <= 400 && a < b, `bounds ${a}..${b}`);
   }
 });

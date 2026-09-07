@@ -14,7 +14,7 @@ import {
   newId, parseDrawings, serializeDrawings, storageKey, translate, trendPriceAt,
   type Drawing, type DrawingKind,
 } from "@/lib/chart/drawings";
-import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
+import { maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
 import {
   canRedo as histCanRedo, canUndo as histCanUndo, current as histCurrent,
@@ -263,6 +263,19 @@ export function ChartPro({
     setSelectedId(null);
     if (gone) track("chart_drawing_deleted", { kind: gone.kind, symbol });
   }, [selectedId, drawings, commitDrawings, symbol]);
+
+  /**
+   * Live touch points, by pointer id.
+   *
+   * A chart that can only be zoomed by wheel and keyboard offers no zoom at all
+   * on a phone, which is where most of this market reads. Two fingers pinch;
+   * one still drags.
+   */
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  /** The gesture's starting geometry, so the scale is measured from its start. */
+  const gesture = useRef<
+    { spread: number; range: number; offset: number; fraction: number; cx: number } | null
+  >(null);
 
   /** An in-progress drawing edit: which drawing, which anchor, and from where. */
   const edit = useRef<
@@ -786,6 +799,29 @@ export function ChartPro({
   // erase), dragged it is a pan. Deciding on pointerUP means a drawing is never
   // dropped by a hand that shifted a few pixels.
   const onDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch") {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.current.size === 2) {
+        // A second finger converts the gesture: abandon whatever the first was
+        // doing, so a pinch never leaves a half-drawn line or a stray pan.
+        const [a, b] = [...touches.current.values()];
+        const rect = e.currentTarget.getBoundingClientRect();
+        const cx = (a.x + b.x) / 2;
+        gesture.current = {
+          spread: spreadOf(a, b),
+          range: effectiveRange,
+          offset,
+          // Anchored at the midpoint, so the bars between the fingers are the
+          // ones that stay put — the same contract the wheel has.
+          fraction: Math.min(1, Math.max(0, (cx - rect.left - PAD.left) / (plotW || 1))),
+          cx,
+        };
+        drag.current = null;
+        edit.current = null;
+        setPending([]);
+        return;
+      }
+    }
     // In cursor mode a press on a drawing starts an edit, not a pan. Decided
     // here rather than on move, because by the time the pointer has travelled
     // far enough to look like a drag the chart would already have panned.
@@ -816,6 +852,17 @@ export function ChartPro({
   };
 
   const onUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch") {
+      touches.current.delete(e.pointerId);
+      // Lifting one finger of a pinch ends the gesture rather than silently
+      // handing the remaining finger a pan from wherever it happens to be.
+      if (touches.current.size < 2 && gesture.current) {
+        gesture.current = null;
+        touches.current.clear();
+        drag.current = null;
+        return;
+      }
+    }
     const ed = edit.current;
     edit.current = null;
     if (ed) {
@@ -843,6 +890,23 @@ export function ChartPro({
   };
 
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch" && touches.current.has(e.pointerId)) {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const g = gesture.current;
+      if (g && touches.current.size === 2) {
+        const [a, b] = [...touches.current.values()];
+        const next = pinch({
+          total: bars.length, startRange: g.range, startOffset: g.offset,
+          startSpread: g.spread, spread: spreadOf(a, b), fraction: g.fraction,
+        });
+        // Two fingers also PAN: the midpoint moving is a drag, so a reader can
+        // zoom and reposition in one gesture instead of two.
+        const mid = (a.x + b.x) / 2;
+        setRange(next.range);
+        setOffset(offsetFromDrag(next.offset, mid - g.cx, plotW / Math.max(1, next.range), bars.length, next.range));
+        return;
+      }
+    }
     const ed = edit.current;
     if (ed && (e.buttons & 1) === 1 && view.length) {
       const rect = e.currentTarget.getBoundingClientRect();

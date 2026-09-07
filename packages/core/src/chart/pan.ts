@@ -88,17 +88,71 @@ export function zoomAt(
     total: number; range: number; offset: number; fraction: number; direction: 1 | -1;
   },
 ): { range: number; offset: number } {
+  const cur = Math.min(range > 0 ? range : total, total);
+  return rangeAt({
+    total, range, offset, fraction,
+    next: direction > 0 ? cur * ZOOM_STEP : cur / ZOOM_STEP,
+  });
+}
+
+/**
+ * Move to an arbitrary new range, keeping the bar under `fraction` in place.
+ *
+ * Shared by the wheel, the keyboard and pinch, so all three anchor identically.
+ * A pinch that anchored differently from the wheel would feel like a different
+ * chart depending on the input device.
+ */
+export function rangeAt(
+  { total, range, offset, fraction, next: wanted }: {
+    total: number; range: number; offset: number; fraction: number; next: number;
+  },
+): { range: number; offset: number } {
   // "Everything loaded" has to become a concrete count before it can be scaled.
   const cur = Math.min(range > 0 ? range : total, total);
   const safeOffset = clampOffset(offset, total, cur);
   const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0.5));
 
-  const scaled = direction > 0 ? cur * ZOOM_STEP : cur / ZOOM_STEP;
-  const next = Math.min(total, Math.max(MIN_RANGE, Math.round(scaled)));
+  const next = Number.isFinite(wanted)
+    ? Math.min(total, Math.max(MIN_RANGE, Math.round(wanted)))
+    : cur;
   if (next === cur) return { range: cur, offset: safeOffset };
 
   const start = total - cur - safeOffset;
   const anchor = start + f * cur;
   const nextStart = Math.round(anchor - f * next);
   return { range: next, offset: clampOffset(total - next - nextStart, total, next) };
+}
+
+/** Distance between two touch points, in pixels. */
+export function spreadOf(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/**
+ * Pinch to zoom.
+ *
+ * Scaled against where the gesture STARTED rather than the previous frame, so
+ * the range depends only on how far apart the fingers are now. Accumulating
+ * per-frame ratios drifts: each frame rounds to a whole number of bars, and the
+ * rounding error compounds until pinching out and back does not return the
+ * reader to the range they began with.
+ *
+ * Fingers moving apart means zooming IN — fewer bars, each wider — which is the
+ * direction every map and photo viewer agrees on.
+ */
+export function pinch(
+  { total, startRange, startOffset, startSpread, spread, fraction }: {
+    total: number; startRange: number; startOffset: number;
+    startSpread: number; spread: number; fraction: number;
+  },
+): { range: number; offset: number } {
+  const base = Math.min(startRange > 0 ? startRange : total, total);
+  // A gesture that began with the fingers together has no scale to measure.
+  if (!(startSpread > 0) || !(spread > 0)) {
+    return { range: base, offset: clampOffset(startOffset, total, base) };
+  }
+  return rangeAt({
+    total, range: startRange, offset: startOffset, fraction,
+    next: base / (spread / startSpread),
+  });
 }
