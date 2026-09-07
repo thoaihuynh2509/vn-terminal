@@ -13,7 +13,7 @@ import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { getSession } from "@/lib/auth/session";
 import { cryptoEnabled } from "@/lib/flags";
 import { siteUrl } from "@/lib/site";
-import { VN30 } from "@/lib/providers/vnstock";
+import { ALL_SYMBOLS } from "@/lib/universe";
 
 const SITE = siteUrl();
 
@@ -76,7 +76,7 @@ export default async function LocaleLayout({
         >
           {locale === "vi" ? "Tới nội dung chính" : "Skip to content"}
         </a>
-        <Header locale={locale} dict={dict} email={session?.email ?? null} tier={session?.tier ?? "anon"} symbols={[...VN30]} cryptoEnabled={cryptoEnabled()} />
+        <Header locale={locale} dict={dict} email={session?.email ?? null} tier={session?.tier ?? "anon"} symbols={ALL_SYMBOLS} cryptoEnabled={cryptoEnabled()} />
         <TickerStrip locale={locale} />
         <WatchlistSync email={session?.email ?? null} />
         <Analytics />

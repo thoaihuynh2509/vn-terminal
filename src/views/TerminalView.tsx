@@ -16,7 +16,8 @@ import { activeProvider } from "@/lib/ask/provider";
 import { equityPrice } from "@/lib/format";
 import { rsi } from "@/lib/ta/indicators";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
-import { BAND, getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
+import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
+import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
@@ -68,7 +69,10 @@ export async function TerminalView({
 
   if (barsR.status === "rejected" || !barsR.value.length) {
     // A symbol we cannot chart at all is a 404; a broken board is not.
-    if (!VN30.includes(sym as (typeof VN30)[number])) notFound();
+    // 404 only when we do not recognise the symbol at all. Keying this on VN30
+    // would have rejected every HNX and UPCOM name the moment they became
+    // chartable.
+    if (!exchangeOf(sym)) notFound();
     return (
       <>
         <PageHeader title={sym} subtitle={dict.chart.subtitle} />
@@ -95,11 +99,18 @@ export async function TerminalView({
 
   // VN ceiling/floor (trần/sàn): the session's ±band limits off the reference
   // (previous close). A daily concept, so only on daily+ timeframes.
-  const refLines: RefLine[] = view.intraday
+  // The band is the EXCHANGE's, not always HOSE's. Every symbol used to be drawn
+  // with HOSE's ±7%, so an HNX stock (±10%) or an UPCOM one (±15%) showed a
+  // ceiling well inside where it could actually trade — a wrong number in the
+  // one place a VN trader looks first. When the exchange is unknown we draw
+  // NOTHING: a missing pair of lines is a gap the reader can see, a wrong pair
+  // is one they cannot.
+  const band = bandOf(sym);
+  const refLines: RefLine[] = view.intraday || band === null
     ? []
     : [
-        { price: prev.c * (1 + BAND.HOSE), label: dict.stocks.ceiling, dir: "up" },
-        { price: prev.c * (1 - BAND.HOSE), label: dict.stocks.floor, dir: "down" },
+        { price: prev.c * (1 + band), label: dict.stocks.ceiling, dir: "up" },
+        { price: prev.c * (1 - band), label: dict.stocks.floor, dir: "down" },
       ];
 
   // VNINDEX overlay for relative strength — gated to Plus, URL-driven so it is
@@ -174,7 +185,9 @@ export async function TerminalView({
             <WatchButton symbol={sym} addLabel={dict.stocks.addWatch} removeLabel={dict.stocks.removeWatch} />
             <SymbolSearchButton label={dict.chart.changeSymbol} compact />
           </div>
-          <p className="mt-0.5 text-[12px] text-muted">HOSE · {dict.common.unit}: {dict.common.thousandVnd}</p>
+          <p className="mt-0.5 text-[12px] text-muted">
+            {exchangeOf(sym) ?? dict.common.noData} · {dict.common.unit}: {dict.common.thousandVnd}
+          </p>
           {/* Session-aware: the chart was the one live surface with no refresh at
               all, but it must not pulse "live" at a price frozen since 15:00. */}
           <div className="mt-1"><LiveStamp locale={locale} sessionAware /></div>
@@ -240,7 +253,9 @@ function LayoutSwitcher({
 }: {
   locale: Locale; dict: Dict; symbol: string; extra: string[]; layout: number; multi: boolean; tf: string;
 }) {
-  const defaults = VN30.filter((s) => s !== symbol).slice(0, 3);
+  // Companions for an empty grid slot come from the large-cap basket, which
+  // is what a reader most likely wants beside their symbol.
+  const defaults = HOSE_SYMBOLS.filter((s) => s !== symbol).slice(0, 3);
   const href = (n: number) => {
     const path = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}`;
     if (n === 1) return path;
