@@ -642,6 +642,42 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── price axis: linear, log, percent (P2-11) ──────────────────
+    // The axis is asserted by its ARITHMETIC, not by a class name: a log axis
+    // is one whose tick ratios are constant, and a linear axis one whose tick
+    // differences are. A control that renders but does not change the mapping
+    // would pass any test that only looked at the button.
+    const axisTicks = async (sc) => {
+      await s.goto(BASE + `/vi/bieu-do/VNM?tf=1M&r=ALL${sc ? `&sc=${sc}` : ""}`, { scheme: "light" });
+      await sleep(400);
+      return s.evaluate(`(() => {
+        const svg = document.querySelector('svg[role=img]');
+        return [...svg.querySelectorAll('text.tnum')]
+          .map(t => t.textContent.trim()).slice(0, 5);
+      })()`);
+    };
+    const spread = (v) => {
+      const n = v.map(x => Number(String(x).replace(/\./g, "").replace(",", ".")));
+      return n.every(Number.isFinite) && n.length >= 4 ? n : null;
+    };
+    const linTicks = spread(await axisTicks(""));
+    const logTicks = spread(await axisTicks("log"));
+    if (linTicks && logTicks) {
+      const diffs = linTicks.slice(1).map((v, i) => v - linTicks[i]);
+      const evenDiff = Math.max(...diffs) - Math.min(...diffs) < 0.05;
+      check("a linear axis steps by equal amounts", evenDiff, diffs.map(d => d.toFixed(2)).join(", "));
+      const ratios = logTicks.slice(1).map((v, i) => v / logTicks[i]);
+      const evenRatio = Math.max(...ratios) - Math.min(...ratios) < 0.01;
+      check("a log axis steps by equal percentages", evenRatio, ratios.map(r => r.toFixed(3)).join(", "));
+      check("the two axes are actually different",
+        Math.abs(linTicks[1] - logTicks[1]) > 0.01, `${linTicks[1]} vs ${logTicks[1]}`);
+    } else {
+      check("a log axis steps by equal percentages", false, "could not read axis labels");
+    }
+    const pctTicks = await axisTicks("pct");
+    check("a percent axis prints signed percentages",
+      pctTicks.every(t => /^[+-].*%$/.test(t)), pctTicks.join(" "));
+
     // ── saved layouts (P1-6) ──────────────────────────────────────
     // LAYOUT_LIMIT existed with no consumer: the cap guarded writes that could
     // not happen. These checks are what makes it a real gate.

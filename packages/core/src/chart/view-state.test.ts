@@ -16,13 +16,13 @@ test("an empty query is the default view", () => {
 });
 
 test("a view round-trips through the query string", () => {
-  const view = { type: "line" as const, ind: ["sma20", "rsi"], range: "3M" as const };
+  const view = { type: "line" as const, ind: ["sma20", "rsi"], range: "3M" as const, scale: "lin" as const };
   assert.deepEqual(decodeView(Object.fromEntries(new URLSearchParams(encodeView(view))), opts("pro")), view);
 });
 
 test("defaults are omitted so a plain chart has a clean link", () => {
   assert.equal(encodeView(DEFAULT_VIEW), "");
-  assert.equal(encodeView({ type: "candle", ind: [], range: "1Y" }), "r=1Y");
+  assert.equal(encodeView({ type: "candle", ind: [], range: "1Y", scale: "lin" as const }), "r=1Y");
 });
 
 test("an unknown type or range falls back instead of 404ing", () => {
@@ -67,7 +67,7 @@ test("merging preserves every parameter this module does not own", () => {
   // Rewriting the whole query string would silently drop the reader's grid.
   const merged = mergeViewIntoQuery(
     "tf=1h&layout=4&s=FPT,HPG&cmp=1&fr=1&rail=alerts&type=area&ind=old&r=1M",
-    { type: "line", ind: ["rsi"], range: "6M" },
+    { type: "line", ind: ["rsi"], range: "6M", scale: "lin" as const },
   );
   const p = new URLSearchParams(merged);
   assert.equal(p.get("tf"), "1h");
@@ -120,6 +120,26 @@ test("a tuned paid indicator is still refused to a tier that cannot see it", () 
 });
 
 test("tuned views round-trip through encode", () => {
-  const view = { type: "candle" as const, ind: ["rsi:21"], range: null };
+  const view = { type: "candle" as const, ind: ["rsi:21"], range: null, scale: "lin" as const };
   assert.deepEqual(decodeView({ ind: new URLSearchParams(encodeView(view)).get("ind") }, anyKnown).ind, ["rsi:21"]);
+});
+
+// ── P2-11: price axis ───────────────────────────────────────────────
+test("the axis choice travels in the link", () => {
+  assert.deepEqual(decodeView({ sc: "log" }, anyKnown).scale, "log");
+  assert.deepEqual(decodeView({ sc: "pct" }, anyKnown).scale, "pct");
+});
+
+test("an unknown axis falls back to linear rather than 404ing", () => {
+  assert.equal(decodeView({ sc: "renko" }, anyKnown).scale, "lin");
+  assert.equal(decodeView({}, anyKnown).scale, "lin");
+});
+
+test("the axis is free — no tier loses the scale a link was sent on", () => {
+  assert.equal(decodeView({ sc: "log" }, { tier: "anon", known: () => true, isFree: () => false }).scale, "log");
+});
+
+test("a linear axis is omitted from the link", () => {
+  assert.equal(encodeView({ type: "candle", ind: [], range: null, scale: "lin" }), "");
+  assert.equal(encodeView({ type: "candle", ind: [], range: null, scale: "log" }), "sc=log");
 });

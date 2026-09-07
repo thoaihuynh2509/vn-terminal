@@ -20,6 +20,7 @@ import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
+import { DEFAULT_SCALE, denorm, effectiveScale, norm, padRange, pctOf, scaleTicks, SCALES, type ScaleId } from "@/lib/chart/scale";
 import { dashFor } from "@/lib/chart/compare";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { useSyncedDoc } from "@/lib/use-synced-doc";
@@ -125,6 +126,7 @@ export function ChartPro({
   // render matches and this settles on the next frame — the same mechanism the
   // drawings below already rely on.
   const [typeChoice, setTypeChoice] = useState<ChartType | null>(null);
+  const [scaleChoice, setScaleChoice] = useState<ScaleId | null>(null);
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
   // Applied once, from the link, before the reader touches anything.
   const seededRange = useRef(false);
@@ -268,6 +270,7 @@ export function ChartPro({
       indicators: usable.indicators.filter(
         (id) => unlocked || INDICATORS.find((d) => d.id === id)?.free,
       ),
+      scale: usable.scale,
     };
   }, [storedSettings, limit, unlocked]);
 
@@ -276,6 +279,11 @@ export function ChartPro({
   // shared chart that silently reverts to the recipient's own setup is not the
   // chart that was shared.
   const type = typeChoice ?? initialView.type ?? saved?.type ?? DEFAULT_SETTINGS.type;
+  // A link that names an axis wins over a stored preference, for the same
+  // reason the chart type does: the reader clicked that link.
+  const scale = scaleChoice
+    ?? (initialView.scale !== DEFAULT_SCALE ? initialView.scale : null)
+    ?? saved?.scale ?? DEFAULT_SETTINGS.scale;
   const active =
     activeChoice
     ?? (initialView.ind.length ? initialView.ind : null)
@@ -287,22 +295,23 @@ export function ChartPro({
   // one they bookmark, has to be the chart actually on screen.
   const viewRef = useRef<string>("");
   useEffect(() => {
-    const next = mergeViewIntoQuery(window.location.search, { type, ind: active, range: activePreset });
+    const next = mergeViewIntoQuery(window.location.search, { type, ind: active, range: activePreset, scale });
     if (next === viewRef.current) return;
     viewRef.current = next;
     const url = `${window.location.pathname}${next ? `?${next}` : ""}`;
     window.history.replaceState(null, "", url);
-  }, [type, active, activePreset]);
+  }, [type, active, activePreset, scale]);
 
 
   // Persist deliberately, from the two handlers that change the setup, rather
   // than from an effect watching state — an effect would also fire for the
   // restore itself and write back what it just read.
-  const persistSettings = useCallback((next: { type?: ChartType; indicators?: string[] }) => {
+  const persistSettings = useCallback((next: { type?: ChartType; indicators?: string[]; scale?: ScaleId }) => {
     const current = parseSettings(storedSettings) ?? DEFAULT_SETTINGS;
     writeStored(SETTINGS_KEY, serializeSettings({
       type: next.type ?? current.type,
       indicators: next.indicators ?? current.indicators,
+      scale: next.scale ?? current.scale,
     }));
   }, [storedSettings]);
 
@@ -310,6 +319,12 @@ export function ChartPro({
     setTypeChoice(t);
     persistSettings({ type: t });
   }, [persistSettings]);
+
+  const chooseScale = useCallback((sc: ScaleId) => {
+    setScaleChoice(sc);
+    persistSettings({ scale: sc });
+    track("chart_scale_changed", { scale: sc, tier });
+  }, [persistSettings, tier]);
   const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, range, offset), [bars.length, range, offset]);
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
   // The compare series is aligned to the full bars, so slice it by the same
@@ -464,19 +479,22 @@ export function ChartPro({
   // and the drawn scale stay identical. A stable string key drives the memo.
   const refKey = refLines.map((r) => r.price).join(",");
   const priceGeom = useMemo(() => {
-    if (!view.length) return { yMin: 0, yMax: 1, H: priceH };
+    if (!view.length) return { yMin: 0, yMax: 1, H: priceH, sc: "lin" as ScaleId };
     const refPrices = refKey ? refKey.split(",").map(Number) : [];
     const overlayVals = computed.price.flatMap((o) => o.series.filter((v): v is number => v !== null));
     const min = Math.min(...view.map((b) => b.l), ...overlayVals, ...refPrices);
     const max = Math.max(...view.map((b) => b.h), ...overlayVals, ...refPrices);
-    const pad = (max - min) * 0.06 || max * 0.02 || 1;
-    return { yMin: min - pad, yMax: max + pad, H: priceH };
-  }, [view, computed.price, priceH, refKey]);
+    // The requested scale is only honoured if the data supports it; a series
+    // touching zero has no logarithm, and falling back beats a broken axis.
+    const sc = effectiveScale(scale, min, max, view[0].c);
+    const { min: yMin, max: yMax } = padRange(sc, min, max);
+    return { yMin, yMax, H: priceH, sc };
+  }, [view, computed.price, priceH, refKey, scale]);
 
   const priceAtY = useCallback((py: number) => {
-    const { yMin, yMax, H } = priceGeom;
+    const { yMin, yMax, H, sc } = priceGeom;
     const frac = 1 - (py - 10) / (H - 20);
-    return yMin + frac * (yMax - yMin);
+    return denorm(sc, frac, yMin, yMax);
   }, [priceGeom]);
 
   const barAtX = useCallback((px: number) =>
@@ -625,7 +643,7 @@ export function ChartPro({
     <div className={full ? "fixed inset-0 z-50 overflow-auto bg-page p-4" : ""}>
       <Toolbar
         dict={dict} locale={locale} unlocked={unlocked} limit={limit}
-        type={type} setType={chooseType} setRange={setRange}
+        type={type} setType={chooseType} scale={scale} setScale={chooseScale} setRange={setRange}
         presets={presets} activePreset={activePreset} barCount={effectiveRange}
         getPanes={getPanes} symbol={symbol} tf={tf}
         exportSite={can(tier, "sync:docs") ? null : undefined}
@@ -748,7 +766,7 @@ export function ChartPro({
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
             type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
-            refLines={refLines} alerts={alertLines} compareView={compareView} events={events}
+            refLines={refLines} alerts={alertLines} compareView={compareView} events={events} scale={scale}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -785,11 +803,12 @@ export function ChartPro({
 /* ─── toolbar ─────────────────────────────────────────────────────────────── */
 
 function Toolbar({
-  dict, locale, unlocked, limit, type, setType, setRange, active, toggle, asTable, setAsTable,
+  dict, locale, unlocked, limit, type, setType, scale, setScale, setRange, active, toggle, asTable, setAsTable,
   full, toggleFull, canDraw, presets, activePreset, barCount, getPanes, symbol, tf, exportSite,
 }: {
   dict: Dict; locale: Locale; unlocked: boolean; limit: number;
   type: ChartType; setType: (t: ChartType) => void;
+  scale: ScaleId; setScale: (s: ScaleId) => void;
   setRange: (r: number) => void;
   presets: { id: RangePreset; count: number }[];
   activePreset: RangePreset | null;
@@ -830,6 +849,21 @@ function Toolbar({
               activePreset === p.id ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
             }`}>
             {p.id === "ALL" ? dict.chart.all : p.id}
+          </button>
+        ))}
+      </div>
+
+      {/* The price axis. Free for every tier: reading a chart on the right axis
+          is a basic, and over years a linear axis makes doubling your money
+          look smaller than a ten-percent move. */}
+      <div role="group" aria-label={dict.chart.scale} className="flex shrink-0 rounded border border-line">
+        {SCALES.map((sc) => (
+          <button key={sc} type="button" onClick={() => setScale(sc)} aria-pressed={scale === sc}
+            title={dict.chart.scaleHint[sc]}
+            className={`${seg} first:rounded-l last:rounded-r ${
+              scale === sc ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+            }`}>
+            {dict.chart.scaleLabel[sc]}
           </button>
         ))}
       </div>
@@ -993,19 +1027,14 @@ function PeriodChip({
   );
 }
 
-function niceTicks(min: number, max: number, count = 4): number[] {
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return [min];
-  return Array.from({ length: count + 1 }, (_, i) => min + ((max - min) * i) / count);
-}
-
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, cursorY, events,
+  refLines, alerts, compareView, cursorY, events, scale,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
-  refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[];
+  refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[]; scale: ScaleId;
   compareView: { label: string; series: (number | null)[] }[];
   cursorY: number | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
@@ -1018,10 +1047,15 @@ function PricePane({
   const refPrices = refLines.map((r) => r.price);
   const min = Math.min(...view.map((b) => b.l), ...overlayVals, ...refPrices);
   const max = Math.max(...view.map((b) => b.h), ...overlayVals, ...refPrices);
-  const pad = (max - min) * 0.06 || max * 0.02 || 1;
-  const yMin = min - pad;
-  const yMax = max + pad;
-  const y = (v: number) => 10 + (H - 20) - ((v - yMin) / (yMax - yMin)) * (H - 20);
+  // Percent change is measured from the first VISIBLE bar, so panning moves the
+  // baseline — which is what "how far has it come" means for the window a
+  // reader is actually looking at.
+  const base = view[0]?.c ?? min;
+  const sc = effectiveScale(scale, min, max, base);
+  const { min: yMin, max: yMax } = padRange(sc, min, max);
+  // One mapping for candles, drawings, alert levels, reference lines and the
+  // crosshair, so switching the axis cannot move some of them and not others.
+  const y = (v: number) => 10 + (H - 20) - norm(sc, v, yMin, yMax) * (H - 20);
 
   // Compare line: its OWN min/max mapped to the pane's pixel band, so it shows
   // relative SHAPE without touching the price scale, candles or crosshair.
@@ -1057,11 +1091,16 @@ function PricePane({
         onPointerDown={onClick} onPointerUp={onUp} onPointerCancel={onUp}
         className={mode !== "cursor" ? "cursor-crosshair touch-pan-y" : canPan ? "cursor-grab touch-pan-y active:cursor-grabbing" : "touch-pan-y"}
       >
-        {niceTicks(yMin, yMax).map((v) => (
+        {scaleTicks(sc, yMin, yMax).map((v) => (
           <g key={v}>
             <line x1={PAD.left} x2={PAD.left + plotW} y1={y(v)} y2={y(v)} stroke="var(--grid)" strokeWidth={1} />
+            {/* On a percent axis the reader asked for distance travelled, so
+                that is what the axis prints — signed, and glyphed like every
+                other direction in this app. */}
             <text x={PAD.left + plotW + 6} y={y(v) + 3.5} fontSize={10} fill="var(--muted)" className="tnum">
-              {num(v, locale, digits)}
+              {sc === "pct"
+                ? `${pctOf(v, base) >= 0 ? "+" : ""}${num(pctOf(v, base), locale, 1)}%`
+                : num(v, locale, digits)}
             </text>
           </g>
         ))}

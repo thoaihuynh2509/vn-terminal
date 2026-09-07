@@ -17,6 +17,7 @@
  */
 import { LAYOUT_LIMIT, type Tier } from "../auth/entitlement.ts";
 import type { RangePreset } from "./ranges.ts";
+import { DEFAULT_SCALE, isScale, type ScaleId } from "./scale.ts";
 import type { ChartTypeId } from "./view-state.ts";
 
 export interface SavedLayout {
@@ -31,6 +32,8 @@ export interface SavedLayout {
   /** Indicator tokens (`rsi`, `rsi:21`). */
   ind: string[];
   range: RangePreset | null;
+  /** Price axis. */
+  scale: ScaleId;
   /** Compare overlay symbols. */
   cmp: string[];
   /** Foreign-flow pane. */
@@ -87,6 +90,7 @@ export function parseLayout(v: unknown): SavedLayout | null {
     type: o.type === "line" || o.type === "area" ? o.type : "candle",
     ind: strArr(o.ind, 40),
     range: typeof o.range === "string" ? (o.range as RangePreset) : null,
+    scale: isScale(o.scale) ? o.scale : DEFAULT_SCALE,
     cmp: strArr(o.cmp, 3).map((s) => s.toUpperCase()),
     fr: o.fr === true,
     br: o.br === true,
@@ -188,6 +192,7 @@ export function layoutQuery(l: SavedLayout): string {
   if (l.type !== "candle") p.set("type", l.type);
   if (l.ind.length) p.set("ind", l.ind.join(","));
   if (l.range) p.set("r", l.range);
+  if (l.scale !== DEFAULT_SCALE) p.set("sc", l.scale);
   if (l.cmp.length) p.set("cmp", l.cmp.join(","));
   if (l.fr) p.set("fr", "1");
   if (l.br) p.set("br", "1");
@@ -227,6 +232,7 @@ export function layoutFromQuery(
     type: p.get("type") ?? "candle",
     ind: (p.get("ind") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 40),
     range: p.get("r"),
+    scale: p.get("sc"),
     cmp: list(p.get("cmp"), 3),
     fr: p.get("fr") === "1",
     br: p.get("br") === "1",

@@ -12,6 +12,7 @@
  * answer to a bad settings blob is the default chart, never a crash.
  */
 import { parseRef } from "../ta/params.ts";
+import { DEFAULT_SCALE, isScale, type ScaleId } from "./scale.ts";
 
 export type ChartTypeId = "candle" | "line" | "area";
 
@@ -19,11 +20,13 @@ export interface ChartSettings {
   type: ChartTypeId;
   /** Indicator tokens (`id` or `id:period`), in the order the reader added them. */
   indicators: string[];
+  /** Price axis. A preference, so it is remembered like the chart type. */
+  scale: ScaleId;
 }
 
 export const SETTINGS_KEY = "settings:chart";
 
-export const DEFAULT_SETTINGS: ChartSettings = { type: "candle", indicators: ["sma20"] };
+export const DEFAULT_SETTINGS: ChartSettings = { type: "candle", indicators: ["sma20"], scale: DEFAULT_SCALE };
 
 const TYPES: ChartTypeId[] = ["candle", "line", "area"];
 
@@ -51,14 +54,15 @@ export function parseSettings(raw: string | null): ChartSettings | null {
         indicators.push(x.trim().toLowerCase());
       }
     }
-    return { type, indicators };
+    const scale = isScale(v.scale) ? v.scale : DEFAULT_SETTINGS.scale;
+    return { type, indicators, scale };
   } catch {
     return null;
   }
 }
 
 export function serializeSettings(s: ChartSettings): string {
-  return JSON.stringify({ type: s.type, indicators: s.indicators });
+  return JSON.stringify({ type: s.type, indicators: s.indicators, scale: s.scale });
 }
 
 /**
@@ -70,6 +74,7 @@ export function serializeSettings(s: ChartSettings): string {
 export function restorable(s: ChartSettings, indicatorLimit: number, known: (id: string) => boolean): ChartSettings {
   return {
     type: s.type,
+    scale: s.scale,
     // `known` answers about an indicator, so it is asked about the id — passing
     // the whole `rsi:21` token would make every tuned indicator look unknown.
     indicators: s.indicators

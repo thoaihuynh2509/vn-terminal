@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, parseSettings, restorable, serializeSettings } from "
 const known = (id: string) => ["sma20", "rsi", "macd", "bb"].includes(id);
 
 test("settings round-trip", () => {
-  const s = { type: "line" as const, indicators: ["sma20", "rsi"] };
+  const s = { type: "line" as const, indicators: ["sma20", "rsi"], scale: "lin" as const };
   assert.deepEqual(parseSettings(serializeSettings(s)), s);
 });
 
@@ -54,24 +54,24 @@ test("a non-array indicators field is treated as empty", () => {
 test("restoring is capped by the tier's budget", () => {
   // A reader who had eight indicators on Plus and lapsed must come back to a
   // working chart, not one silently over budget that refuses the next toggle.
-  const s = { type: "candle" as const, indicators: ["sma20", "rsi", "macd", "bb"] };
+  const s = { type: "candle" as const, indicators: ["sma20", "rsi", "macd", "bb"], scale: "lin" as const };
   assert.deepEqual(restorable(s, 2, known).indicators, ["sma20", "rsi"]);
   assert.deepEqual(restorable(s, 0, known).indicators, []);
   assert.deepEqual(restorable(s, 99, known).indicators, s.indicators);
 });
 
 test("restoring drops indicators the build no longer ships", () => {
-  const s = { type: "candle" as const, indicators: ["sma20", "removedone", "rsi"] };
+  const s = { type: "candle" as const, indicators: ["sma20", "removedone", "rsi"], scale: "lin" as const };
   assert.deepEqual(restorable(s, 10, known).indicators, ["sma20", "rsi"]);
 });
 
 test("restoring never invents a type", () => {
-  assert.equal(restorable({ type: "area", indicators: [] }, 5, known).type, "area");
+  assert.equal(restorable({ type: "area", indicators: [], scale: "lin" as const }, 5, known).type, "area");
 });
 
 // ── P2-10: tuned periods must survive a reload ──────────────────────
 test("a tuned indicator survives being stored and read back", () => {
-  const round = parseSettings(serializeSettings({ type: "line", indicators: ["rsi:21", "sma20"] }));
+  const round = parseSettings(serializeSettings({ type: "line", indicators: ["rsi:21", "sma20"], scale: "lin" as const }));
   assert.deepEqual(round?.indicators, ["rsi:21", "sma20"]);
 });
 
@@ -80,12 +80,12 @@ test("restorable asks about the indicator, not the whole token", () => {
   // look unknown and silently vanish on reload.
   const known = (id: string) => id === "rsi";
   assert.deepEqual(
-    restorable({ type: "candle", indicators: ["rsi:21", "bogus:5"] }, 8, known).indicators,
+    restorable({ type: "candle", indicators: ["rsi:21", "bogus:5"], scale: "lin" as const }, 8, known).indicators,
     ["rsi:21"],
   );
 });
 
 test("stored settings drop a malformed token instead of trusting it", () => {
-  const s = parseSettings(JSON.stringify({ type: "candle", indicators: ["rsi:21", "rsi:0", 7, "x y"] }));
+  const s = parseSettings(JSON.stringify({ type: "candle", indicators: ["rsi:21", "rsi:0", 7, "x y"], scale: "lin" as const }));
   assert.deepEqual(s?.indicators, ["rsi:21"]);
 });

@@ -15,6 +15,7 @@
 import { INDICATOR_LIMIT, can, type Tier } from "../auth/entitlement.ts";
 import { parseRef } from "../ta/params.ts";
 import { RANGE_PRESETS, type RangePreset } from "./ranges.ts";
+import { DEFAULT_SCALE, isScale, type ScaleId } from "./scale.ts";
 
 export type ChartTypeId = "candle" | "line" | "area";
 const TYPES: ChartTypeId[] = ["candle", "line", "area"];
@@ -24,9 +25,11 @@ export interface ChartView {
   /** Indicator tokens (`id` or `id:period`), trimmed to what this tier may show. */
   ind: string[];
   range: RangePreset | null;
+  /** Price axis: linear, logarithmic or percent change. Free for every tier. */
+  scale: ScaleId;
 }
 
-export const DEFAULT_VIEW: ChartView = { type: "candle", ind: [], range: null };
+export const DEFAULT_VIEW: ChartView = { type: "candle", ind: [], range: null, scale: DEFAULT_SCALE };
 
 /**
  * Indicator tokens are `id` or `id:period` — `parseRef` owns the grammar, so
@@ -50,7 +53,7 @@ export interface DecodeOptions {
  * mangled by a chat client, should still open the chart it names.
  */
 export function decodeView(
-  params: { type?: string | null; ind?: string | null; r?: string | null },
+  params: { type?: string | null; ind?: string | null; r?: string | null; sc?: string | null },
   { tier, known, isFree }: DecodeOptions,
 ): ChartView {
   const type = TYPES.includes(params.type as ChartTypeId)
@@ -60,6 +63,10 @@ export function decodeView(
   const range = RANGE_PRESETS.includes(params.r as RangePreset)
     ? (params.r as RangePreset)
     : null;
+
+  // Not tier-gated: reading a chart on the right axis is a basic, and a gate
+  // here would make a shared link open on a different scale than it was sent.
+  const scale = isScale(params.sc) ? params.sc : DEFAULT_SCALE;
 
   const unlocked = can(tier, "chart:indicators");
   const limit = INDICATOR_LIMIT[tier];
@@ -82,7 +89,7 @@ export function decodeView(
     ind.push(ref.period === null ? ref.id : `${ref.id}:${ref.period}`);
   }
 
-  return { type, ind, range };
+  return { type, ind, range, scale };
 }
 
 /**
@@ -94,6 +101,7 @@ export function encodeView(view: ChartView): string {
   if (view.type !== DEFAULT_VIEW.type) p.set("type", view.type);
   if (view.ind.length) p.set("ind", view.ind.join(","));
   if (view.range) p.set("r", view.range);
+  if (view.scale !== DEFAULT_VIEW.scale) p.set("sc", view.scale);
   return p.toString();
 }
 
@@ -104,7 +112,7 @@ export function encodeView(view: ChartView): string {
  */
 export function mergeViewIntoQuery(current: string, view: ChartView): string {
   const p = new URLSearchParams(current);
-  for (const key of ["type", "ind", "r"]) p.delete(key);
+  for (const key of ["type", "ind", "r", "sc"]) p.delete(key);
   for (const [k, v] of new URLSearchParams(encodeView(view))) p.set(k, v);
   return p.toString();
 }

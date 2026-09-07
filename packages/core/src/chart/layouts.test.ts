@@ -8,7 +8,7 @@ import { LAYOUT_LIMIT } from "../auth/entitlement.ts";
 
 const L = (over: Partial<SavedLayout> = {}): SavedLayout => ({
   name: "Bank screen", symbol: "VCB", extra: [], grid: 1, tf: "1D", type: "candle",
-  ind: [], range: null, cmp: [], fr: false, br: false, savedAt: 1000, ...over,
+  ind: [], range: null, scale: "lin", cmp: [], fr: false, br: false, savedAt: 1000, ...over,
 });
 
 test("a saved layout round-trips through storage", () => {
@@ -18,10 +18,10 @@ test("a saved layout round-trips through storage", () => {
 
 test("a layout from a newer build degrades to a chart that opens", () => {
   // Anything unrecognised must default, never throw on the rail.
-  const l = parseLayout({ name: "x", symbol: "vnm", grid: 9, type: "renko", scale: "log", ind: "nope" });
+  const l = parseLayout({ name: "x", symbol: "vnm", grid: 9, type: "renko", paneHeights: [3], ind: "nope" });
   assert.deepEqual(l, {
     name: "x", symbol: "VNM", extra: [], grid: 1, tf: "1D", type: "candle",
-    ind: [], range: null, cmp: [], fr: false, br: false, savedAt: 0,
+    ind: [], range: null, scale: "lin", cmp: [], fr: false, br: false, savedAt: 0,
   });
 });
 
@@ -153,11 +153,11 @@ test("a duplicated name in storage collapses to one entry", () => {
 test("a layout captured from the address bar recalls to the same chart", () => {
   // The round trip is the whole contract: capture reads the URL, recall
   // rebuilds it, and a drift between the two silently changes the reader's setup.
-  const search = "?tf=1h&layout=4&s=FPT,HPG&type=line&ind=rsi:21,sma20&r=3M&cmp=VNINDEX&fr=1&br=1";
+  const search = "?tf=1h&layout=4&s=FPT,HPG&type=line&ind=rsi:21,sma20&r=3M&sc=log&cmp=VNINDEX&fr=1&br=1";
   const captured = layoutFromQuery("Desk", "VCB", search, 42)!;
   const round = new URLSearchParams(layoutQuery(captured));
   const original = new URLSearchParams(search.slice(1));
-  for (const k of ["tf", "layout", "s", "type", "ind", "r", "cmp", "fr", "br"]) {
+  for (const k of ["tf", "layout", "s", "type", "ind", "r", "sc", "cmp", "fr", "br"]) {
     assert.equal(round.get(k), original.get(k), k);
   }
 });
@@ -177,4 +177,14 @@ test("capture ignores parameters that are not part of a setup", () => {
 
 test("a capture with an unusable name is refused, not stored half-formed", () => {
   assert.equal(layoutFromQuery("bad/name", "VNM", "", 1), null);
+});
+
+test("a layout remembers the axis it was saved on", () => {
+  const l = layoutFromQuery("Log view", "VNM", "?sc=log", 1)!;
+  assert.equal(l.scale, "log");
+  assert.equal(layoutQuery(l), "sc=log");
+});
+
+test("an unknown axis in a stored layout degrades to linear", () => {
+  assert.equal(parseLayout({ name: "x", symbol: "VNM", scale: "renko" })!.scale, "lin");
 });

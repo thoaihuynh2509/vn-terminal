@@ -56,7 +56,7 @@ export async function TerminalView({
   /** VN30 breadth pane (`?br=1`). Gated to Pro. */
   br?: boolean;
   /** Raw view params from the URL; decoded and tier-clamped on the server. */
-  view?: { type?: string; ind?: string; r?: string };
+  view?: { type?: string; ind?: string; r?: string; sc?: string };
 }) {
   const dict = getDict(locale);
   const sym = symbol.toUpperCase();
@@ -166,7 +166,7 @@ export async function TerminalView({
   // ?ind= full of paid indicators is trimmed before anything renders, the same
   // fail-closed rule the intraday timeframe follows — never drawn and retracted.
   const chartView = decodeView(
-    { type: viewParams?.type, ind: viewParams?.ind, r: viewParams?.r },
+    { type: viewParams?.type, ind: viewParams?.ind, r: viewParams?.r, sc: viewParams?.sc },
     {
       tier,
       known: (id) => INDICATORS.some((d) => d.id === id),
