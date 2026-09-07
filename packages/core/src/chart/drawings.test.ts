@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { channelOffset, channelPrices, distanceToChannel, distanceToFib, distanceToHLine, distanceToTrend, fibLevels, parseDrawings, serializeDrawings, storageKey, trendPriceAt, type Drawing, type TrendLine } from "./drawings.ts";
+import {
+  MAX_TEXT_LEN, anchorsOf, channelOffset, channelPrices, distanceToChannel, distanceToFib, distanceToHLine, distanceToRay, distanceToRect, distanceToTrend, fibLevels, hitAnchor, hitTest, moveAnchor, parseDrawings, serializeDrawings, storageKey, translate, trendPriceAt, type Drawing, type TrendLine,
+} from "./drawings.ts";
 
 const trend: TrendLine = { id: "a", kind: "trend", t1: 0, p1: 10, t2: 100, p2: 20 };
 // Identity normalisation keeps the arithmetic checkable by hand.
@@ -211,4 +213,155 @@ test("a channel missing its third point is dropped", () => {
   const out = parseDrawings(raw);
   assert.equal(out.length, 1);
   assert.equal(out[0].id, "y");
+});
+
+// ── P2-12: new kinds, anchors, move, unified hit-testing ────────────
+const NRM = { t: (v: number) => v / 100, p: (v: number) => v / 100 };
+
+const seg = (kind: "trend" | "ray" | "rect" | "measure" | "fib" | "fibext") =>
+  ({ id: "x", kind, t1: 0, p1: 0, t2: 100, p2: 100 }) as Drawing;
+
+test("every kind exposes anchors a reader can grab", () => {
+  const all: Drawing[] = [
+    { id: "a", kind: "hline", price: 10 },
+    { id: "b", kind: "vline", t: 5 },
+    { id: "c", kind: "trade", t: 5, price: 10 },
+    { id: "d", kind: "text", t: 5, price: 10, text: "note" },
+    { id: "e", kind: "channel", t1: 0, p1: 0, t2: 10, p2: 10, t3: 0, p3: 5 },
+    seg("trend"), seg("ray"), seg("rect"), seg("measure"),
+  ];
+  for (const d of all) assert.ok(anchorsOf(d).length >= 1, d.kind);
+  assert.equal(anchorsOf(all[4]).length, 3, "a channel has three");
+});
+
+test("an anchor only claims the axes its drawing actually has", () => {
+  // A handle that let a reader drag an hline sideways would offer a change the
+  // model cannot store.
+  assert.equal(anchorsOf({ id: "a", kind: "hline", price: 10 })[0].axis, "price");
+  assert.equal(anchorsOf({ id: "b", kind: "vline", t: 5 })[0].axis, "time");
+  assert.equal(anchorsOf(seg("trend"))[0].axis, "both");
+});
+
+test("moving an anchor changes that point and no other", () => {
+  const moved = moveAnchor(seg("trend"), 1, 50, 25) as Extract<Drawing, { kind: "trend" }>;
+  assert.equal(moved.t1, 0);
+  assert.equal(moved.p1, 0);
+  assert.equal(moved.t2, 50);
+  assert.equal(moved.p2, 25);
+});
+
+test("moving an hline's handle changes its price, never a time", () => {
+  const moved = moveAnchor({ id: "a", kind: "hline", price: 10 }, 0, 999, 42);
+  assert.deepEqual(moved, { id: "a", kind: "hline", price: 42 });
+});
+
+test("moving a vline's handle changes its time, never a price", () => {
+  const moved = moveAnchor({ id: "b", kind: "vline", t: 5 }, 0, 77, 999);
+  assert.deepEqual(moved, { id: "b", kind: "vline", t: 77 });
+});
+
+test("an anchor index that does not exist changes nothing", () => {
+  const d = seg("trend");
+  assert.equal(moveAnchor(d, 5, 1, 1), d);
+  assert.equal(moveAnchor({ id: "a", kind: "hline", price: 10 }, 3, 1, 1).id, "a");
+});
+
+test("translating keeps a drawing's shape", () => {
+  const before = seg("trend") as Extract<Drawing, { kind: "trend" }>;
+  const after = translate(before, 10, -5) as Extract<Drawing, { kind: "trend" }>;
+  assert.equal(after.t2 - after.t1, before.t2 - before.t1);
+  assert.equal(after.p2 - after.p1, before.p2 - before.p1);
+  assert.equal(after.t1, 10);
+  assert.equal(after.p1, -5);
+});
+
+test("translating a channel carries its third point too", () => {
+  const c = { id: "c", kind: "channel", t1: 0, p1: 0, t2: 10, p2: 10, t3: 0, p3: 5 } as Drawing;
+  const m = translate(c, 5, 5) as Extract<Drawing, { kind: "channel" }>;
+  // The width must be preserved, or dragging a channel reshapes it.
+  assert.equal(channelOffset(m), channelOffset(c as Extract<Drawing, { kind: "channel" }>));
+  assert.equal(m.t3, 5);
+});
+
+test("translating an hline ignores the time delta it cannot hold", () => {
+  const m = translate({ id: "a", kind: "hline", price: 10 }, 500, 2);
+  assert.deepEqual(m, { id: "a", kind: "hline", price: 12 });
+});
+
+test("a ray keeps mattering past its second point; a segment does not", () => {
+  // The whole reason to store which one the reader meant.
+  const far = { t: 400, p: 400 };
+  const onLine = distanceToRay(seg("ray") as never, far.t, far.p, NRM);
+  const offEnd = distanceToTrend(seg("trend") as never, far.t, far.p, NRM);
+  assert.ok(onLine < 1e-9, `ray should still be hit: ${onLine}`);
+  assert.ok(offEnd > 1, `segment should not: ${offEnd}`);
+});
+
+test("a ray does not extend backwards from its first point", () => {
+  const behind = distanceToRay(seg("ray") as never, -200, -200, NRM);
+  assert.ok(behind > 1, `${behind}`);
+});
+
+test("a rectangle is grabbed by its outline, not by its whole area", () => {
+  // Zero distance inside would make a box swallow every click over the region
+  // it covers, including drawings beneath it.
+  const inside = distanceToRect(seg("rect") as never, 50, 50, NRM);
+  assert.ok(inside > 0.1, `centre should not be a hit: ${inside}`);
+  const onEdge = distanceToRect(seg("rect") as never, 50, 0, NRM);
+  assert.ok(onEdge < 1e-9, `edge should be a hit: ${onEdge}`);
+});
+
+test("hit-testing finds the nearest drawing within tolerance", () => {
+  const near: Drawing = { id: "near", kind: "hline", price: 10 };
+  const far: Drawing = { id: "far", kind: "hline", price: 90 };
+  assert.equal(hitTest([far, near], 0, 10.2, NRM, 0.05)?.id, "near");
+  assert.equal(hitTest([far, near], 0, 50, NRM, 0.05), null);
+});
+
+test("when two drawings overlap the one on top is grabbed", () => {
+  // Ties go to the drawing added last; picking the older one would leave a
+  // reader unable to grab the thing they can see.
+  const a: Drawing = { id: "under", kind: "hline", price: 10 };
+  const b: Drawing = { id: "over", kind: "hline", price: 10 };
+  assert.equal(hitTest([a, b], 0, 10, NRM, 0.05)?.id, "over");
+});
+
+test("an anchor is found only when the click is close to it", () => {
+  const d = seg("trend");
+  assert.equal(hitAnchor(d, 0, 0, NRM, 0.05), 0);
+  assert.equal(hitAnchor(d, 100, 100, NRM, 0.05), 1);
+  assert.equal(hitAnchor(d, 50, 50, NRM, 0.05), -1);
+});
+
+test("an hline's handle is grabbed by price alone, at any time", () => {
+  // It is drawn at a fixed x, so requiring a time match would make it
+  // ungrabbable wherever the reader clicked.
+  assert.equal(hitAnchor({ id: "a", kind: "hline", price: 10 }, 99999, 10, NRM, 0.05), 0);
+});
+
+test("the new kinds survive being stored and read back", () => {
+  const all: Drawing[] = [
+    { id: "r", kind: "ray", t1: 1, p1: 2, t2: 3, p2: 4 },
+    { id: "v", kind: "vline", t: 7 },
+    { id: "b", kind: "rect", t1: 1, p1: 2, t2: 3, p2: 4 },
+    { id: "n", kind: "text", t: 1, price: 2, text: "earnings" },
+    { id: "m", kind: "measure", t1: 1, p1: 2, t2: 3, p2: 4 },
+  ];
+  assert.deepEqual(parseDrawings(serializeDrawings(all)), all);
+});
+
+test("a note with no text is not storable", () => {
+  // It would render as an invisible drawing the reader cannot find to delete.
+  assert.deepEqual(parseDrawings('[{"id":"n","kind":"text","t":1,"price":2,"text":""}]'), []);
+  assert.deepEqual(parseDrawings('[{"id":"n","kind":"text","t":1,"price":2}]'), []);
+});
+
+test("an over-long note is refused rather than truncated on read", () => {
+  const long = JSON.stringify([{ id: "n", kind: "text", t: 1, price: 2, text: "x".repeat(MAX_TEXT_LEN + 1) }]);
+  assert.deepEqual(parseDrawings(long), []);
+});
+
+test("a malformed new-kind drawing is dropped, not half-read", () => {
+  assert.deepEqual(parseDrawings('[{"id":"v","kind":"vline"}]'), []);
+  assert.deepEqual(parseDrawings('[{"id":"r","kind":"ray","t1":1,"p1":2}]'), []);
 });

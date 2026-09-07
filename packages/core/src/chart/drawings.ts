@@ -9,7 +9,9 @@
  * Pure and dependency-free so the geometry and hit-testing are unit tested; the
  * component only maps these values through its scales.
  */
-export type DrawingKind = "hline" | "trend" | "fib" | "fibext" | "channel" | "trade";
+export type DrawingKind =
+  | "hline" | "trend" | "fib" | "fibext" | "channel" | "trade"
+  | "ray" | "vline" | "rect" | "text" | "measure";
 
 /** Any two anchored points. Several tools are built from one. */
 export interface Segment {
@@ -72,7 +74,131 @@ export interface TradeMarker {
   qty?: number;
 }
 
-export type Drawing = HLine | TrendLine | FibDrawing | ChannelDrawing | TradeMarker;
+/**
+ * A trendline that stops mattering at its second point is a segment; one that
+ * keeps going is a ray. Traders draw both, and which they meant is not
+ * recoverable after the fact, so it is stored rather than inferred.
+ */
+export interface RayLine extends Segment {
+  id: string;
+  kind: "ray";
+}
+
+/** A moment worth marking — an earnings date, a policy announcement. */
+export interface VLine {
+  id: string;
+  kind: "vline";
+  t: number;
+}
+
+/** A box over a region of the chart: a range, a consolidation, an event window. */
+export interface RectDrawing extends Segment {
+  id: string;
+  kind: "rect";
+}
+
+/** A note anchored to a bar and a price, so it moves with the data. */
+export interface TextNote {
+  id: string;
+  kind: "text";
+  t: number;
+  price: number;
+  text: string;
+}
+
+/**
+ * A measurement between two points.
+ *
+ * Stored like any other drawing rather than being a transient overlay: a reader
+ * who measured a move usually wants it still there when they come back, and a
+ * measurement that vanishes on the next click is a tool you have to keep
+ * re-doing.
+ */
+export interface MeasureDrawing extends Segment {
+  id: string;
+  kind: "measure";
+}
+
+export type Drawing =
+  | HLine | TrendLine | FibDrawing | ChannelDrawing | TradeMarker
+  | RayLine | VLine | RectDrawing | TextNote | MeasureDrawing;
+
+/** The longest note that may be stored, so one drawing cannot fill the budget. */
+export const MAX_TEXT_LEN = 120;
+
+/**
+ * An editable point on a drawing.
+ *
+ * `axis` says which coordinates the point actually has: a horizontal line has a
+ * price but no time, a vertical line the reverse. A handle that let a reader
+ * drag an hline sideways would be offering a change the model cannot store.
+ */
+export interface Anchor {
+  t: number;
+  p: number;
+  axis: "both" | "price" | "time";
+}
+
+/** The points a reader may grab, in a stable order per kind. */
+export function anchorsOf(d: Drawing): Anchor[] {
+  switch (d.kind) {
+    case "hline": return [{ t: NaN, p: d.price, axis: "price" }];
+    case "vline": return [{ t: d.t, p: NaN, axis: "time" }];
+    case "trade": return [{ t: d.t, p: d.price, axis: "both" }];
+    case "text": return [{ t: d.t, p: d.price, axis: "both" }];
+    case "channel":
+      return [
+        { t: d.t1, p: d.p1, axis: "both" },
+        { t: d.t2, p: d.p2, axis: "both" },
+        { t: d.t3, p: d.p3, axis: "both" },
+      ];
+    default:
+      return [
+        { t: d.t1, p: d.p1, axis: "both" },
+        { t: d.t2, p: d.p2, axis: "both" },
+      ];
+  }
+}
+
+/**
+ * Move one anchor to a new place.
+ *
+ * Out-of-range indices and coordinates the anchor cannot hold are IGNORED
+ * rather than applied — a drag that would move a horizontal line sideways
+ * silently does nothing to the time, instead of writing a field the renderer
+ * will never read back.
+ */
+export function moveAnchor(d: Drawing, index: number, t: number, p: number): Drawing {
+  switch (d.kind) {
+    case "hline": return index === 0 ? { ...d, price: p } : d;
+    case "vline": return index === 0 ? { ...d, t } : d;
+    case "trade": return index === 0 ? { ...d, t, price: p } : d;
+    case "text": return index === 0 ? { ...d, t, price: p } : d;
+    case "channel":
+      if (index === 0) return { ...d, t1: t, p1: p };
+      if (index === 1) return { ...d, t2: t, p2: p };
+      if (index === 2) return { ...d, t3: t, p3: p };
+      return d;
+    default:
+      if (index === 0) return { ...d, t1: t, p1: p };
+      if (index === 1) return { ...d, t2: t, p2: p };
+      return d;
+  }
+}
+
+/** Shift a whole drawing by a time and price delta, keeping its shape. */
+export function translate(d: Drawing, dt: number, dp: number): Drawing {
+  switch (d.kind) {
+    case "hline": return { ...d, price: d.price + dp };
+    case "vline": return { ...d, t: d.t + dt };
+    case "trade": return { ...d, t: d.t + dt, price: d.price + dp };
+    case "text": return { ...d, t: d.t + dt, price: d.price + dp };
+    case "channel":
+      return { ...d, t1: d.t1 + dt, p1: d.p1 + dp, t2: d.t2 + dt, p2: d.p2 + dp, t3: d.t3 + dt, p3: d.p3 + dp };
+    default:
+      return { ...d, t1: d.t1 + dt, p1: d.p1 + dp, t2: d.t2 + dt, p2: d.p2 + dp };
+  }
+}
 
 /** Price gap between the baseline and the parallel line. */
 export function channelOffset(d: ChannelDrawing): number {
@@ -179,6 +305,129 @@ export function trendPriceAt(d: Segment, t: number): number {
   return d.p1 + slope * (t - d.t1);
 }
 
+/**
+ * Perpendicular distance to a RAY — a segment whose second point is a direction
+ * rather than an end. Clamped only at the start, so the line keeps mattering to
+ * the right of where it was drawn, which is the whole reason to pick a ray.
+ */
+export function distanceToRay(
+  d: Segment,
+  t: number,
+  p: number,
+  norm: { t: (v: number) => number; p: (v: number) => number },
+): number {
+  const x1 = norm.t(d.t1), y1 = norm.p(d.p1);
+  const x2 = norm.t(d.t2), y2 = norm.p(d.p2);
+  const x0 = norm.t(t), y0 = norm.p(p);
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(x0 - x1, y0 - y1);
+  const u = Math.max(0, ((x0 - x1) * dx + (y0 - y1) * dy) / len2);
+  return Math.hypot(x0 - (x1 + u * dx), y0 - (y1 + u * dy));
+}
+
+/**
+ * Distance to a rectangle's nearest EDGE.
+ *
+ * Zero inside the box would make a rectangle swallow every click over the
+ * region it covers, including on drawings beneath it. A box is grabbed by its
+ * outline, the same way every other drawing here is.
+ */
+export function distanceToRect(
+  d: Segment,
+  t: number,
+  p: number,
+  norm: { t: (v: number) => number; p: (v: number) => number },
+): number {
+  const edges: Segment[] = [
+    { t1: d.t1, p1: d.p1, t2: d.t2, p2: d.p1 },
+    { t1: d.t2, p1: d.p1, t2: d.t2, p2: d.p2 },
+    { t1: d.t2, p1: d.p2, t2: d.t1, p2: d.p2 },
+    { t1: d.t1, p1: d.p2, t2: d.t1, p2: d.p1 },
+  ];
+  return Math.min(...edges.map((e) => distanceToTrend(e, t, p, norm)));
+}
+
+/**
+ * Distance from a point to any drawing, in normalised units.
+ *
+ * One dispatcher rather than a chain of `if (d.kind === ...)` at each call site:
+ * select, move and erase all have to agree about what "you clicked this" means,
+ * and three copies of that rule would drift.
+ */
+export function distanceTo(
+  d: Drawing,
+  t: number,
+  p: number,
+  norm: { t: (v: number) => number; p: (v: number) => number },
+): number {
+  switch (d.kind) {
+    // A horizontal line spans the pane, so only the price gap matters.
+    case "hline": return Math.abs(norm.p(d.price) - norm.p(p));
+    // Likewise a vertical line, in the other axis.
+    case "vline": return Math.abs(norm.t(d.t) - norm.t(t));
+    case "trade":
+    case "text": return Math.hypot(norm.t(d.t) - norm.t(t), norm.p(d.price) - norm.p(p));
+    case "channel": return distanceToChannel(d, t, p, norm);
+    case "ray": return distanceToRay(d, t, p, norm);
+    case "rect": return distanceToRect(d, t, p, norm);
+    case "fib":
+    case "fibext": {
+      // Fib levels are horizontal and extend rightward only, so they are
+      // measured in price — but normalised, so the number is comparable with
+      // every other kind's.
+      if (t < Math.min(d.t1, d.t2)) return Infinity;
+      return Math.min(...fibLevels(d).map((l) => Math.abs(norm.p(l.price) - norm.p(p))));
+    }
+    default: return distanceToTrend(d, t, p, norm);
+  }
+}
+
+/**
+ * Which drawing a click grabbed, or null.
+ *
+ * Nearest wins, and only within `tolerance`. Ties go to the drawing added LAST,
+ * because that is the one on top: picking the older one would make a reader
+ * unable to grab the thing they can see.
+ */
+export function hitTest(
+  drawings: Drawing[],
+  t: number,
+  p: number,
+  norm: { t: (v: number) => number; p: (v: number) => number },
+  tolerance: number,
+): Drawing | null {
+  let best: Drawing | null = null;
+  let bestD = Infinity;
+  for (const d of drawings) {
+    const dist = distanceTo(d, t, p, norm);
+    if (dist <= tolerance && dist <= bestD) { best = d; bestD = dist; }
+  }
+  return best;
+}
+
+/** Index of the anchor a click grabbed, or -1 when it hit none. */
+export function hitAnchor(
+  d: Drawing,
+  t: number,
+  p: number,
+  norm: { t: (v: number) => number; p: (v: number) => number },
+  tolerance: number,
+): number {
+  const anchors = anchorsOf(d);
+  let best = -1;
+  let bestD = Infinity;
+  anchors.forEach((a, i) => {
+    // An anchor missing an axis is unconstrained there: an hline handle is
+    // grabbed by price alone, wherever along the pane it is drawn.
+    const dt = a.axis === "price" ? 0 : norm.t(a.t) - norm.t(t);
+    const dp = a.axis === "time" ? 0 : norm.p(a.p) - norm.p(p);
+    const dist = Math.hypot(dt, dp);
+    if (dist <= tolerance && dist < bestD) { best = i; bestD = dist; }
+  });
+  return best;
+}
+
 export const STORAGE_PREFIX = "drawings:";
 
 export function storageKey(symbol: string): string {
@@ -203,6 +452,16 @@ export function parseDrawings(raw: string | null): Drawing[] {
       // A trade with a non-positive entry would make every unrealised figure
       // meaningless, so it is not storable rather than stored and ignored.
       if (d.kind === "trade") return Number.isFinite(d.t) && Number.isFinite(d.price) && d.price > 0;
+      if (d.kind === "ray" || d.kind === "rect" || d.kind === "measure") {
+        return [d.t1, d.p1, d.t2, d.p2].every(Number.isFinite);
+      }
+      if (d.kind === "vline") return Number.isFinite(d.t);
+      // An empty note would render as an invisible drawing the reader cannot
+      // find to delete.
+      if (d.kind === "text") {
+        return Number.isFinite(d.t) && Number.isFinite(d.price)
+          && typeof d.text === "string" && d.text.length > 0 && d.text.length <= MAX_TEXT_LEN;
+      }
       return false;
     });
   } catch {

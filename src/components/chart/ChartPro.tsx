@@ -10,12 +10,17 @@ import { ShareMenu } from "./ShareMenu";
 import { useDismiss } from "@/lib/ui/use-dismiss";
 import { DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
 import {
-  channelParallel, distanceToChannel, distanceToFib, distanceToHLine, distanceToTrend,
-  fibLevels, newId, parseDrawings, serializeDrawings, storageKey, trendPriceAt,
+  MAX_TEXT_LEN, anchorsOf, channelParallel, fibLevels, hitAnchor, hitTest, moveAnchor,
+  newId, parseDrawings, serializeDrawings, storageKey, translate, trendPriceAt,
   type Drawing, type DrawingKind,
 } from "@/lib/chart/drawings";
 import { maxOffset, nearestIndex, offsetFromDrag, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
+import {
+  canRedo as histCanRedo, canUndo as histCanUndo, current as histCurrent,
+  initHistory, push as histPush, redo as histRedo, reset as histReset, undo as histUndo,
+  type History,
+} from "@/lib/chart/history";
 import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
@@ -44,12 +49,22 @@ const TOOL_GLYPH: Record<"cursor" | DrawingKind, string> = {
   // The channel has no single character that reads as two parallel lines and
   // still fits the button, so it draws its own icon below.
   cursor: "⌖", hline: "─", trend: "╱", fib: "≣", fibext: "⇗", channel: "", trade: "▮",
+  ray: "↗", vline: "│", rect: "▭", text: "T", measure: "↔",
 };
 
 /** How many clicks each tool needs before it becomes a drawing. */
 const TOOL_POINTS: Record<DrawingKind, number> = {
   hline: 1, trend: 2, fib: 2, fibext: 2, channel: 3, trade: 1,
+  ray: 2, vline: 1, rect: 2, text: 1, measure: 2,
 };
+/**
+ * How close a click has to be, in normalised pane units, to grab something.
+ * Anchors get a wider reach than lines: a handle is a specific point a reader
+ * is aiming at, and missing it drags the whole drawing instead.
+ */
+const HIT_TOLERANCE = 0.012;
+const ANCHOR_TOLERANCE = 0.02;
+
 const DEFAULT_RANGE = 120; // bars; 0 = everything loaded
 /** Shown once, then dismissed for good. */
 const HINT_KEY = "hint:chart";
@@ -171,14 +186,88 @@ export function ChartPro({
     canSync,
   });
 
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  /**
+   * Undo history for this symbol's drawings.
+   *
+   * Held in a ref rather than state because it is only ever read inside
+   * handlers: rendering does not depend on the stack, only on what is stored,
+   * so keeping it in state would re-render the chart on every recorded step for
+   * nothing.
+   */
+  const hist = useRef<History<Drawing[]>>(initHistory(drawings));
+  /**
+   * Whether the buttons are live.
+   *
+   * Mirrored into state rather than read off the ref during render: a ref read
+   * at render time is not a legal read point, and the buttons have to change
+   * the moment the stack does.
+   */
+  const [histFlags, setHistFlags] = useState({ undo: false, redo: false });
+  const applyHist = useCallback((next: History<Drawing[]>) => {
+    hist.current = next;
+    const flags = { undo: histCanUndo(next), redo: histCanRedo(next) };
+    setHistFlags((f) => (f.undo === flags.undo && f.redo === flags.redo ? f : flags));
+  }, []);
+  /** The last value WE wrote, so a change from elsewhere can be told apart. */
+  const lastWritten = useRef<string | null>(null);
+
+  // A write from another tab, or a sync adopting the account's copy, is not the
+  // reader's own action — it reseeds the stack instead of becoming an undo step,
+  // because undoing it would re-upload what the other device just replaced.
+  useEffect(() => {
+    const raw = serializeDrawings(drawings);
+    if (raw === lastWritten.current) return;
+    lastWritten.current = raw;
+    applyHist(histReset(drawings));
+    setSelectedId(null);
+  }, [drawings, applyHist]);
+
   // Every mutation goes through here so a local edit is both stored and queued.
   const saveDrawings = useCallback(
     (next: Drawing[]) => {
+      lastWritten.current = serializeDrawings(next);
       writeDrawings(next);
       markDirty();
     },
     [writeDrawings, markDirty],
   );
+
+  /** A reader-initiated change: stored, queued for sync, and undoable. */
+  const commitDrawings = useCallback(
+    (next: Drawing[]) => {
+      applyHist(histPush(hist.current, next, (a, b) => serializeDrawings(a) === serializeDrawings(b)));
+      saveDrawings(next);
+    },
+    [saveDrawings, applyHist],
+  );
+
+  const deleteSelected = useCallback(() => {
+    if (!selectedId) return;
+    const gone = drawings.find((d) => d.id === selectedId);
+    commitDrawings(drawings.filter((d) => d.id !== selectedId));
+    setSelectedId(null);
+    if (gone) track("chart_drawing_deleted", { kind: gone.kind, symbol });
+  }, [selectedId, drawings, commitDrawings, symbol]);
+
+  /** An in-progress drawing edit: which drawing, which anchor, and from where. */
+  const edit = useRef<
+    { id: string; anchor: number; t: number; price: number; before: Drawing[]; moved: boolean } | null
+  >(null);
+
+  const stepHistory = useCallback((dir: "undo" | "redo") => {
+    const before = hist.current;
+    const after = dir === "undo" ? histUndo(before) : histRedo(before);
+    if (after === before) return;
+    applyHist(after);
+    const next = histCurrent(after);
+    // Written directly rather than through commitDrawings: stepping through
+    // history must not record a new step, or undo could never reach the start.
+    saveDrawings(next);
+    setSelectedId((id) => (next.some((d) => d.id === id) ? id : null));
+    track("chart_drawing_history", { dir, symbol });
+  }, [saveDrawings, symbol, applyHist]);
 
   // The free ceiling is enforced here because free drawings never reach the
   // server; the paid ceiling is re-checked there. Both read DRAWING_LIMIT, so
@@ -189,11 +278,11 @@ export function ChartPro({
         track("chart_limit_hit", { gate: "drawing", tier, limit: drawLimit, symbol });
         return false;
       }
-      saveDrawings([...drawings, d]);
+      commitDrawings([...drawings, d]);
       track("chart_drawing_created", { kind: d.kind, count: drawings.length + 1, symbol });
       return true;
     },
-    [drawings, drawLimit, saveDrawings, tier, symbol],
+    [drawings, drawLimit, commitDrawings, tier, symbol],
   );
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -527,6 +616,17 @@ export function ChartPro({
       addDrawing({ id: newId(), kind: "trade", t, price });
       return;
     }
+    // A moment, with no price: an earnings date, a policy announcement.
+    if (mode === "vline") {
+      addDrawing({ id: newId(), kind: "vline", t });
+      return;
+    }
+    if (mode === "text") {
+      const note = (window.prompt(dict.chart.toolTextPrompt) ?? "").trim();
+      // An empty note is a cancelled action, not a blank label on the chart.
+      if (note) addDrawing({ id: newId(), kind: "text", t, price, text: note.slice(0, MAX_TEXT_LEN) });
+      return;
+    }
     if (mode !== "cursor") {
       // Each click adds an anchor until the tool has all it needs. Order is
       // meaningful: Fibonacci reads the pair as the swing being measured, and a
@@ -534,40 +634,100 @@ export function ChartPro({
       const pts = [...pending, { t, p: price }];
       if (pts.length < TOOL_POINTS[mode]) return setPending(pts);
       const [a, b, c] = pts;
-      addDrawing(mode === "channel"
-        ? { id: newId(), kind: "channel", t1: a.t, p1: a.p, t2: b.t, p2: b.p, t3: c.t, p3: c.p }
-        : { id: newId(), kind: mode, t1: a.t, p1: a.p, t2: b.t, p2: b.p });
+      if (mode === "channel") {
+        addDrawing({ id: newId(), kind: "channel", t1: a.t, p1: a.p, t2: b.t, p2: b.p, t3: c.t, p3: c.p });
+      } else {
+        // Spelled out per kind rather than spread with a computed `kind`: the
+        // union stays discriminated, so a tool added without a branch here is a
+        // compile error rather than a silent gap.
+        const seg = { id: newId(), t1: a.t, p1: a.p, t2: b.t, p2: b.p };
+        addDrawing(
+          mode === "trend" ? { ...seg, kind: "trend" }
+          : mode === "fib" ? { ...seg, kind: "fib" }
+          : mode === "fibext" ? { ...seg, kind: "fibext" }
+          : mode === "ray" ? { ...seg, kind: "ray" }
+          : mode === "rect" ? { ...seg, kind: "rect" }
+          : { ...seg, kind: "measure" },
+        );
+      }
       setPending([]);
       return;
     }
     // Cursor mode doubles as erase: clicking a drawing removes it. Tolerances
     // are computed in normalised space so time and price compare fairly.
+    // Cursor mode SELECTS. It used to erase on contact, which made every
+    // inspection of a drawing destructive and gave a reader no way to nudge one
+    // — they had to delete and redraw. Deleting is now an explicit act on
+    // something already selected, and undo makes it recoverable either way.
+    const hit = hitTest(drawings, t, price, normOf(), HIT_TOLERANCE);
+    setSelectedId(hit ? hit.id : null);
+  };
+
+  /**
+   * Normalised coordinates for hit-testing.
+   *
+   * Time and price differ by orders of magnitude, so both are mapped to 0..1
+   * over the visible window before any distance is measured — otherwise the
+   * time axis would dominate every comparison and nothing would ever be
+   * grabbed by price.
+   */
+  function normOf() {
     const tSpan = (view[view.length - 1].t - view[0].t) || 1;
     const pSpan = (priceGeom.yMax - priceGeom.yMin) || 1;
-    const nrm = { t: (v: number) => (v - view[0].t) / tSpan, p: (v: number) => (v - priceGeom.yMin) / pSpan };
-    const hit = drawings.find((d) => {
-      if (d.kind === "hline") return distanceToHLine(d, price) / pSpan < 0.012;
-      if (d.kind === "trend") return distanceToTrend(d, t, price, nrm) < 0.012;
-      if (d.kind === "channel") return distanceToChannel(d, t, price, nrm) < 0.012;
-      // A trade marker is grabbed by its entry level, like an hline.
-      if (d.kind === "trade") return Math.abs(d.price - price) / pSpan < 0.012;
-      return distanceToFib(d, t, price) / pSpan < 0.012;
-    });
-    if (hit) {
-      saveDrawings(drawings.filter((d) => d.id !== hit.id));
-      track("chart_drawing_deleted", { kind: hit.kind, symbol });
-    }
-  };
+    return {
+      t: (v: number) => (v - view[0].t) / tSpan,
+      p: (v: number) => (v - priceGeom.yMin) / pSpan,
+    };
+  }
 
   // A press is ambiguous until it moves: held still it is a click (draw or
   // erase), dragged it is a pan. Deciding on pointerUP means a drawing is never
   // dropped by a hand that shifted a few pixels.
   const onDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    // In cursor mode a press on a drawing starts an edit, not a pan. Decided
+    // here rather than on move, because by the time the pointer has travelled
+    // far enough to look like a drag the chart would already have panned.
+    if (mode === "cursor" && view.length) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const t = view[barAtX(e.clientX - rect.left)].t;
+      const price = priceAtY(e.clientY - rect.top);
+      const nrm = normOf();
+      const chosen = selectedId ? drawings.find((d) => d.id === selectedId) ?? null : null;
+      // An anchor of the ALREADY selected drawing wins over anything else: the
+      // handle a reader is aiming at may sit on top of another drawing.
+      const anchor = chosen ? hitAnchor(chosen, t, price, nrm, ANCHOR_TOLERANCE) : -1;
+      if (chosen && anchor >= 0) {
+        edit.current = { id: chosen.id, anchor, t, price, before: drawings, moved: false };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        return;
+      }
+      const hit = hitTest(drawings, t, price, nrm, HIT_TOLERANCE);
+      if (hit) {
+        setSelectedId(hit.id);
+        edit.current = { id: hit.id, anchor: -1, t, price, before: drawings, moved: false };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        return;
+      }
+    }
     drag.current = { x: e.clientX, offset, moved: false };
     if (canPan) e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
   const onUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    const ed = edit.current;
+    edit.current = null;
+    if (ed) {
+      // A press that never moved is a selection, already applied on down. Only
+      // an actual edit becomes an undo step, so tapping a drawing to look at it
+      // does not fill the stack.
+      if (ed.moved) {
+        const after = drawings.find((d) => d.id === ed.id);
+        if (after) track("chart_drawing_edited", { kind: after.kind, anchor: ed.anchor, symbol });
+        applyHist(histPush(hist.current, drawings,
+          (a, b) => serializeDrawings(a) === serializeDrawings(b)));
+      }
+      return;
+    }
     const d = drag.current;
     drag.current = null;
     // The drag is over, so any frame still queued for it is stale.
@@ -581,6 +741,28 @@ export function ChartPro({
   };
 
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const ed = edit.current;
+    if (ed && (e.buttons & 1) === 1 && view.length) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const t = view[barAtX(e.clientX - rect.left)].t;
+      const price = priceAtY(e.clientY - rect.top);
+      const next = drawings.map((d) => {
+        if (d.id !== ed.id) return d;
+        return ed.anchor >= 0
+          ? moveAnchor(d, ed.anchor, t, price)
+          : translate(d, t - ed.t, price - ed.price);
+      });
+      // Written without recording a step: one drag is one undo, pushed on
+      // release, not one per frame.
+      if (serializeDrawings(next) !== serializeDrawings(drawings)) {
+        ed.moved = true;
+        // Translation is relative, so the origin has to travel with the pointer
+        // or the drawing accelerates away from it.
+        if (ed.anchor < 0) { ed.t = t; ed.price = price; }
+        saveDrawings(next);
+      }
+      return;
+    }
     const d = drag.current;
     if (d && canPan && (e.buttons & 1) === 1) {
       const dx = e.clientX - d.x;
@@ -610,6 +792,30 @@ export function ChartPro({
     setCursorY((v) => (v === py ? v : py));
   };
   const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    // Undo/redo on the platform's own chord, so it works without being taught.
+    const chord = e.metaKey || e.ctrlKey;
+    if (chord && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      stepHistory(e.shiftKey ? "redo" : "undo");
+      return;
+    }
+    if (chord && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      stepHistory("redo");
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+      e.preventDefault();
+      deleteSelected();
+      return;
+    }
+    // Escape clears a selection and abandons a half-drawn tool — the one key a
+    // reader tries when a chart feels stuck.
+    if (e.key === "Escape") {
+      if (selectedId) setSelectedId(null);
+      if (pending.length) setPending([]);
+      return;
+    }
     // Shift+Arrow pans. A chart that can only be moved by dragging is a chart a
     // keyboard user cannot scroll back through.
     if (e.shiftKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
@@ -723,9 +929,17 @@ export function ChartPro({
               beside the canvas, not competing for the top bar. */}
           <div role="group" aria-label={dict.chart.draw}
             className="flex shrink-0 flex-col gap-1 rounded border border-line p-1">
-            {(["cursor", "hline", "trend", "fib", "fibext", "channel", "trade"] as const).map((m) => {
+            {(["cursor", "hline", "vline", "trend", "ray", "rect", "fib", "fibext", "channel", "trade", "measure", "text"] as const).map((m) => {
               const locked = !canDraw && m !== "cursor";
-              const label = dict.chart[m];
+              // The original five read their label straight off the tool name;
+              // the tools added later are namespaced, so the lookup is explicit
+              // rather than a computed key that would silently render blank.
+              const label = m === "ray" ? dict.chart.toolRay
+                : m === "vline" ? dict.chart.toolVline
+                : m === "rect" ? dict.chart.toolRect
+                : m === "text" ? dict.chart.toolText
+                : m === "measure" ? dict.chart.toolMeasure
+                : dict.chart[m];
               return (
                 <button
                   key={m}
@@ -752,8 +966,32 @@ export function ChartPro({
                 </button>
               );
             })}
+            {/* Undo makes the canvas safe to experiment on, which is the point
+                of opening drawings to the free tier at all. Kept beside the
+                tools rather than in the top bar: it belongs to this canvas. */}
+            {(histFlags.undo || histFlags.redo) && (
+              <div className="mt-1 flex flex-col gap-1 border-t border-line pt-1">
+                <button type="button" onClick={() => stepHistory("undo")} disabled={!histFlags.undo}
+                  aria-label={dict.chart.undo} title={dict.chart.undo}
+                  className="grid h-8 w-8 place-items-center rounded text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
+                  <span aria-hidden="true">↶</span>
+                </button>
+                <button type="button" onClick={() => stepHistory("redo")} disabled={!histFlags.redo}
+                  aria-label={dict.chart.redo} title={dict.chart.redo}
+                  className="grid h-8 w-8 place-items-center rounded text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
+                  <span aria-hidden="true">↷</span>
+                </button>
+              </div>
+            )}
+            {selectedId && (
+              <button type="button" onClick={deleteSelected}
+                aria-label={dict.chart.deleteSelected} title={dict.chart.deleteSelected}
+                className="grid h-8 w-8 place-items-center rounded text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-down">
+                <span aria-hidden="true">⌫</span>
+              </button>
+            )}
             {drawings.length > 0 && (
-              <button type="button" onClick={() => { saveDrawings([]); setPending([]); }}
+              <button type="button" onClick={() => { commitDrawings([]); setPending([]); setSelectedId(null); }}
                 aria-label={dict.chart.clearDrawings} title={dict.chart.clearDrawings}
                 className="grid h-8 w-8 place-items-center rounded text-[13px] text-ink-2 hover:bg-surface-2 hover:text-down">
                 <span aria-hidden="true">🗑</span>
@@ -766,7 +1004,7 @@ export function ChartPro({
             intraday={intraday}
             view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
             type={type} overlays={computed.price} hover={hover} idx={idx} H={priceH}
-            refLines={refLines} alerts={alertLines} compareView={compareView} events={events} scale={scale}
+            refLines={refLines} alerts={alertLines} compareView={compareView} events={events} scale={scale} selectedId={selectedId}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={drawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -1030,11 +1268,12 @@ function PeriodChip({
 function PricePane({
   view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, cursorY, events, scale,
+  refLines, alerts, compareView, cursorY, events, scale, selectedId,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
   refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[]; scale: ScaleId;
+  selectedId: string | null;
   compareView: { label: string; series: (number | null)[] }[];
   cursorY: number | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
@@ -1275,7 +1514,76 @@ function PricePane({
           // drawing on every frame of a pan.
           const iOf = (t: number) => nearestIndex(view, t);
           if (d.kind === "trade") return null; // drawn separately, below
+
+          // A moment worth marking, with no price of its own.
+          if (d.kind === "vline") {
+            return (
+              <line key={d.id} x1={x(iOf(d.t))} x2={x(iOf(d.t))} y1={8} y2={H - 8}
+                stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
+            );
+          }
+
+          // A note anchored to a bar and a price, so it travels with the data.
+          if (d.kind === "text") {
+            const tx = x(iOf(d.t)), ty = y(d.price);
+            return (
+              <g key={d.id}>
+                <circle cx={tx} cy={ty} r={2.5} fill="var(--accent)" />
+                <text x={tx + 5} y={ty - 4} fontSize={11} fill="var(--accent)">{d.text}</text>
+              </g>
+            );
+          }
+
           const i1 = iOf(d.t1), i2 = iOf(d.t2);
+
+          // A box over a region: a range, a consolidation, an event window.
+          if (d.kind === "rect") {
+            const x1 = Math.min(x(i1), x(i2)), x2 = Math.max(x(i1), x(i2));
+            const y1 = Math.min(y(d.p1), y(d.p2)), y2 = Math.max(y(d.p1), y(d.p2));
+            return (
+              <rect key={d.id} x={x1} y={y1} width={Math.max(1, x2 - x1)} height={Math.max(1, y2 - y1)}
+                fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={1} />
+            );
+          }
+
+          // A ray keeps going past its second point, which is the whole reason
+          // a reader picks one over a segment.
+          if (d.kind === "ray") {
+            const last = view.length - 1;
+            const endT = view[last].t;
+            // Extended along its own slope to the right edge rather than to the
+            // second point, so the line stays true as the window moves.
+            const endP = trendPriceAt(d, Math.max(endT, d.t2));
+            const xEnd = x(Math.max(i2, last));
+            return (
+              <g key={d.id}>
+                <line x1={x(i1)} y1={y(d.p1)} x2={xEnd} y2={y(endP)} stroke="var(--accent)" strokeWidth={1.5} />
+                <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
+              </g>
+            );
+          }
+
+          // A measurement states what it measured: price move, percent, and how
+          // many sessions it took — the three numbers the tool exists for.
+          if (d.kind === "measure") {
+            const dp = d.p2 - d.p1;
+            const pctMove = d.p1 ? (dp / d.p1) * 100 : 0;
+            const bars = Math.abs(i2 - i1);
+            const mx = (x(i1) + x(i2)) / 2;
+            const my = Math.min(y(d.p1), y(d.p2)) - 6;
+            return (
+              <g key={d.id}>
+                <rect x={Math.min(x(i1), x(i2))} y={Math.min(y(d.p1), y(d.p2))}
+                  width={Math.max(1, Math.abs(x(i2) - x(i1)))} height={Math.max(1, Math.abs(y(d.p2) - y(d.p1)))}
+                  fill={dp >= 0 ? "var(--up)" : "var(--down)"} fillOpacity={0.10} />
+                <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
+                  stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="3 2" />
+                <text x={mx} y={my} fontSize={10} textAnchor="middle" className="tnum" fill="var(--ink-2)">
+                  {dp >= 0 ? "▲" : "▼"} {dp >= 0 ? "+" : ""}{num(dp, locale, digits)} ({dp >= 0 ? "+" : ""}{num(pctMove, locale, 2)}%) · {bars}
+                </text>
+              </g>
+            );
+          }
 
           if (d.kind === "channel") {
             const par = channelParallel(d);
@@ -1402,6 +1710,26 @@ function PricePane({
               fill="var(--page)" className="tnum">{num(view[hover].c, locale, digits)}</text>
           </g>
         )}
+
+        {/* Handles for the selected drawing, drawn last so they sit above every
+            drawing they might overlap. A hollow ring, not a filled dot: the
+            filled circles already mean "anchor of a channel", and two meanings
+            for one shape is how a reader learns to distrust the chart. */}
+        {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
+          <g key={`sel-${d.id}`}>
+            {anchorsOf(d).map((a, i) => {
+              // An anchor without a time is drawn at the left edge, where the
+              // reader can always reach it whatever the window shows.
+              const hx = a.axis === "price" ? PAD.left + 10 : x(nearestIndex(view, a.t));
+              const hy = a.axis === "time" ? H / 2 : y(a.p);
+              if (!Number.isFinite(hx) || !Number.isFinite(hy)) return null;
+              return (
+                <circle key={i} cx={hx} cy={hy} r={4.5}
+                  fill="var(--page)" stroke="var(--accent)" strokeWidth={2} />
+              );
+            })}
+          </g>
+        ))}
       </svg>
 
       {/* A three-click tool that says nothing after two clicks reads as broken. */}

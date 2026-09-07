@@ -642,6 +642,77 @@ try {
     const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
     check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
+    // ── select, move, undo/redo, new tools (P2-12) ────────────────
+    {
+      const dr = () => s.evaluate(`localStorage.getItem('drawings:VNM') || '[]'`);
+      const count = async () => JSON.parse(await dr()).length;
+      await s.evaluate("localStorage.removeItem('drawings:VNM')");
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await sleep(300);
+
+      const box = JSON.parse(await s.evaluate(`(() => {
+        const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+        return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height });
+      })()`));
+      const clickAt = async (fx, fy) => {
+        const x = box.l + box.w * fx, y = box.t + box.h * fy;
+        await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        await sleep(300);
+      };
+
+      for (const label of ["Tia", "Đường dọc", "Hình chữ nhật", "Ghi chú", "Đo"]) {
+        check(`the rail offers "${label}"`,
+          (await s.evaluate(`!!document.querySelector('[aria-label=${JSON.stringify(label)}]')`)) === true);
+      }
+
+      // A ray, drawn with two clicks like a trendline.
+      await s.evaluate(`document.querySelector('[aria-label="Tia"]')?.click()`);
+      await sleep(150);
+      await clickAt(0.3, 0.7);
+      await clickAt(0.6, 0.4);
+      await sleep(400);
+      const madeRay = JSON.parse(await dr());
+      check("a ray is stored as its own kind", madeRay.length === 1 && madeRay[0].kind === "ray",
+        String(madeRay[0]?.kind));
+
+      // Cursor mode SELECTS rather than erasing: inspecting a drawing must not
+      // destroy it, which is what it used to do.
+      await s.evaluate(`document.querySelector('[aria-label="Chọn"]')?.click()`);
+      await sleep(150);
+      await clickAt(0.3, 0.7);
+      await sleep(350);
+      check("clicking a drawing selects it instead of deleting it", (await count()) === 1);
+      const handles = await s.evaluate(
+        `document.querySelectorAll('svg[role=img] circle[stroke-width="2"]').length`);
+      check("a selected drawing shows grab handles", handles >= 1, `${handles} handles`);
+
+      // Delete is now explicit, and undo brings it back — the property that
+      // makes a canvas safe to experiment on.
+      const beforeDelete = await dr();
+      await s.evaluate(`document.querySelector('[aria-label="Xoá hình đã chọn"]')?.click()`);
+      await sleep(350);
+      check("the selected drawing can be deleted", (await count()) === 0);
+      await s.evaluate(`(() => {
+        const svg = document.querySelector('svg[role=img]');
+        svg.focus();
+        svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+      })()`);
+      await sleep(400);
+      check("undo restores a deleted drawing", (await count()) === 1);
+      check("undo restores it unchanged", (await dr()) === beforeDelete);
+
+      await s.evaluate(`(() => {
+        const svg = document.querySelector('svg[role=img]');
+        svg.focus();
+        svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true }));
+      })()`);
+      await sleep(400);
+      check("redo takes it away again", (await count()) === 0);
+
+      await s.evaluate("localStorage.removeItem('drawings:VNM')");
+    }
+
     // ── price axis: linear, log, percent (P2-11) ──────────────────
     // The axis is asserted by its ARITHMETIC, not by a class name: a log axis
     // is one whose tick ratios are constant, and a linear axis one whose tick
