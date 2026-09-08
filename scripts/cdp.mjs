@@ -694,6 +694,22 @@ try {
       await s.evaluate("localStorage.removeItem('settings:chart')");
     }
 
+    // ── route-level authorization, decided before rendering ───────
+    // These 404s are decided in the proxy so the STATUS is real: once a route
+    // starts streaming, notFound() can only change the markup.
+    {
+      const status = async (path) =>
+        s.evaluate(`(async () => (await fetch(${JSON.stringify("")} + ${JSON.stringify(path)})).status)()`);
+      check("the other locale's spelling of a section is a 404",
+        (await status("/vi/gold")) === 404 && (await status("/en/vang")) === 404);
+      check("a mispaired chart URL is a 404, not a duplicate page",
+        (await status("/vi/chart/VNM")) === 404);
+      check("the canonical spellings still resolve",
+        (await status("/vi/vang")) === 200 && (await status("/vi/bieu-do/VNM")) === 200);
+      check("the owner-only view never admits it exists",
+        (await status("/vi/admin")) === 404);
+    }
+
     // ── namespaced symbols survive the URL ────────────────────────
     // Next hands the route segment percent-encoded, so `GOLD:SJC` arrives as
     // `GOLD%3ASJC`. Undecoded it looks like an equity, finds no bars and 404s —
