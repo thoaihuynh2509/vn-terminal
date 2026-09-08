@@ -476,6 +476,7 @@ const vi = {
     fSync: "Đồng bộ giữa các thiết bị",
     fAi: "Trợ lý AI",
     fWatchlist: "Danh mục theo dõi",
+    recommended: "Mở khoá tính năng bạn vừa dùng",
   },
   admin: {
     title: "Đối soát đơn hàng",
@@ -1013,6 +1014,7 @@ const en: typeof vi = {
     fSync: "Sync across devices",
     fAi: "AI assistant",
     fWatchlist: "Watchlist",
+    recommended: "Unlocks what you just tried",
   },
   admin: {
     title: "Order reconciliation",

@@ -1,9 +1,22 @@
 import { TerminalView } from "@/views/TerminalView";
 import { guard } from "@/views/guard";
+import { sectionMetadata } from "@/views/meta";
+import { getDict } from "@/lib/i18n";
 
-export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }) {
-  const { symbol } = await params;
-  return { title: `${symbol.toUpperCase()} — Chart` };
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string; symbol: string }>;
+}) {
+  const { locale: raw, symbol } = await params;
+  const locale = guard(raw, "terminal", "chart");
+  const sym = symbol.toUpperCase();
+  const d = getDict(locale).chart;
+  // These 60 VN30 URLs are the largest cohort in the sitemap, and until now
+  // every one of them inherited the layout's `/{locale}` canonical — telling
+  // Google each chart was a duplicate of the home page. The title was also
+  // hardcoded English on the Vietnamese route.
+  return sectionMetadata(locale, "terminal", { title: `${sym} — ${d.title}`, description: `${sym} · ${d.subtitle}` }, `/${sym}`);
 }
 
 export default async function Page({

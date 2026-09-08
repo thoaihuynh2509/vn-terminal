@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "@/components/ui";
 import { atLeast, type Tier } from "@/lib/auth/entitlement";
-import { annualSavingPct, priceFor, type Plan } from "@/lib/billing/plans";
+import { annualSavingPct, priceFor, type PaidTier, type Plan } from "@/lib/billing/plans";
 import type { Provider } from "@/lib/billing/providers";
 import { track } from "@/lib/analytics/posthog";
 import { vnd } from "@/lib/format";
@@ -31,6 +31,7 @@ export function PlanCards({
   signedIn,
   providers,
   referralCode,
+  highlight = null,
 }: {
   dict: Dict;
   locale: Locale;
@@ -38,6 +39,8 @@ export function PlanCards({
   signedIn: boolean;
   providers: Provider[];
   referralCode: string | null;
+  /** The tier the reader was sent here to buy, from `?plan=`. */
+  highlight?: PaidTier | null;
 }) {
   const router = useRouter();
   const [plan, setPlan] = useState<Plan>("annual");
@@ -247,10 +250,25 @@ export function PlanCards({
           const price = paid ? priceFor(c.key, plan) : { amount: 0 };
           const owned = atLeast(tier, c.key);
           const saving = paid && annual ? annualSavingPct(c.key) : 0;
+          // The card the reader was sent here for. Marked, not auto-purchased:
+          // arriving from a ceiling is a reason to look, not consent to pay.
+          const picked = c.key === highlight && !owned;
           return (
             <Card key={c.key} className="flex flex-col p-5">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted">{c.name}</h2>
+                {picked && (
+                  // Sits WITH the heading, not above it: readers navigating by
+                  // heading land on the h2, and a badge before it is skipped.
+                  // `.card` is unlayered CSS and outranks a Tailwind border
+                  // utility, so the marker is a badge rather than a card border.
+                  <span
+                    id={`rec-${c.key}`}
+                    className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-page"
+                  >
+                    {dict.pricing.recommended}
+                  </span>
+                )}
                 {saving > 0 && (
                   <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-up">
                     {dict.pricing.save.replace("{n}", String(saving))}
@@ -302,6 +320,9 @@ export function PlanCards({
                   type="button"
                   onClick={() => checkout(c.key)}
                   disabled={busy !== null}
+                  // Otherwise every card's CTA announces identically and the
+                  // recommendation is lost to anyone tabbing straight to it.
+                  aria-describedby={picked ? `rec-${c.key}` : undefined}
                   className="mt-5 rounded border border-accent bg-accent px-3 py-2 text-[13px] font-semibold text-page hover:opacity-90 disabled:opacity-60"
                 >
                   {busy === c.key ? dict.pricing.processing : dict.pricing.upgrade}

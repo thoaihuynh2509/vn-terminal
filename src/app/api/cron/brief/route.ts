@@ -7,6 +7,7 @@ import { buildBrief } from "@/lib/brief";
 import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBoard, getIndices } from "@/lib/providers/vnstock";
 import { getCoins } from "@/lib/providers/crypto";
+import { cryptoEnabled } from "@/lib/flags";
 import { cronAuthorized } from "@/lib/retention/cron-auth";
 import { levelsNearPrice } from "@/lib/retention/levels";
 import { parseDrawings } from "@/lib/chart/drawings";
@@ -46,7 +47,10 @@ export async function GET(req: Request) {
       getIndices(),
       getBoard(),
       getGold(),
-      getCoins(20),
+      // Must match BriefView: the emailed brief and /ban-tin are the same
+      // document, so a crypto paragraph in the mail for a section the site
+      // does not have would be the email contradicting the page it links to.
+      cryptoEnabled() ? getCoins(20) : Promise.resolve([]),
     ]);
     const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
     const board = boardR.status === "fulfilled" ? boardR.value : [];

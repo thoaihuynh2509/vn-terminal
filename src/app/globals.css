@@ -24,7 +24,14 @@
   --line: #e6e8eb;
   --up: #008300;
   --down: #e34948;
-  --accent: #2a78d6;
+  /* Accent carries text in BOTH directions — white on a filled control, and
+     accent-coloured text on a surface — so it must clear 4.5:1 both ways.
+     Light was #2a78d6: 4.41:1 filled (eight controls, incl. the upgrade CTA)
+     and 4.08:1 as text on surface-2. Both failed. #1f66bc is 5.70 / 5.27.
+     Dark was #3987e5: 5.34:1 filled but 4.43:1 as text, so it failed the text
+     direction too; #4a92e8 below is 6.08 / 5.05. Re-check both directions
+     before changing either value — filled alone is not the whole test. */
+  --accent: #1f66bc;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,7 +48,7 @@
     --line: #26282c;
     --up: #008300;
     --down: #e66767;
-    --accent: #3987e5;
+    --accent: #4a92e8;
   }
 }
 
@@ -58,7 +65,7 @@
   --line: #26282c;
   --up: #008300;
   --down: #e66767;
-  --accent: #3987e5;
+  --accent: #4a92e8;
 }
 
 @theme inline {

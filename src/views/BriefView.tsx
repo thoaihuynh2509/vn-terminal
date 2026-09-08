@@ -8,6 +8,7 @@ import { buildBrief } from "@/lib/brief";
 import { getDict } from "@/lib/i18n";
 import { ReadAloud } from "@/components/ReadAloud";
 import { getCoins } from "@/lib/providers/crypto";
+import { cryptoEnabled } from "@/lib/flags";
 import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBoard, getIndexSparks, getIndices } from "@/lib/providers/vnstock";
 import { dirOf } from "@/lib/format";
@@ -23,7 +24,9 @@ export async function BriefView({ locale }: { locale: Locale }) {
     getIndices(),
     getBoard(),
     getGold(),
-    getCoins(20),
+    // The home page guards this and the brief did not, so with crypto off the
+    // brief still paid for — and could be degraded by — a disabled feed.
+    cryptoEnabled() ? getCoins(20) : Promise.resolve([]),
   ]);
   const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
   const board = boardR.status === "fulfilled" ? boardR.value : [];
