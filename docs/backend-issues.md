@@ -75,7 +75,38 @@ Each entry: what · where · symptom · evidence · date · status.
   of instant-navigation VALIDATION, not out of streaming. Verified against a
   production build, not just dev.
 
-  **What it would take:** move route-level authorization into `src/proxy.ts`,
+  **UPDATE 2026-09-08 — the authorization blocker is now GONE, and a different
+  one took its place.** Route-level authorization moved into `src/proxy.ts`
+  (commit "Decide route-level authorization in the proxy"), so both 404s are now
+  decided before rendering and survive Cache Components: re-verified against a
+  production build with the flag ON — `/vi/admin` 404, `/vi/gold` 404,
+  `/vi/chart/VNM` 404, an allowlisted owner 200. Prerendered routes went 5 → 53
+  again and the build was green.
+
+  It was reverted anyway, for a worse reason: **suspended content renders but
+  never hydrates.** On `/vi/chung-khoan` the board's 30 rows appear, and the
+  Suspense fallback stays in the DOM beside them as a visible empty box, a
+  direct child of `<main>`, above the table. Sorting a column and starring a
+  symbol both do nothing — the client never takes over the subtree. Reproduced
+  in `next dev` AND in `next start` against a production build, with no
+  hydration error or warning in the console, and with a trivial `<p>…</p>`
+  fallback as well as the real one, so it is neither a dev artifact nor
+  something about the placeholder component.
+
+  That is a worse defect than the one being fixed: a dead board is not a
+  trade-off against a faster first paint. Something about how these boundaries
+  are structured here does not settle on the client, and finding it needs a
+  minimal reproduction rather than more edits to this app.
+
+  **What it would take next:** a small standalone reproduction of a
+  `cacheComponents` route with a client component inside a suspended server
+  component, to establish whether this is a framework issue or a mistake in how
+  the boundaries are placed. Everything else is ready and proven: the proxy
+  gates, the `connection()` marks, the `use cache` on the footer year, and the
+  page restructuring are all recorded in this session's history and rebuilt in
+  about an hour.
+
+  **Superseded — the original blocker:** move route-level authorization into `src/proxy.ts`,
   where it runs before rendering and can still answer 404. That means verifying
   the signed session in the proxy runtime — a real change to the auth surface,
   and not one to make in passing. Until then, dynamic rendering is the honest
