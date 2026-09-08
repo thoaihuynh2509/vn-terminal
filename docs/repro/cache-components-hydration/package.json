@@ -1,0 +1,1 @@
+{ "name": "repro", "private": true, "scripts": { "build": "next build", "start": "next start" } }

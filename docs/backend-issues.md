@@ -98,13 +98,32 @@ Each entry: what · where · symptom · evidence · date · status.
   are structured here does not settle on the client, and finding it needs a
   minimal reproduction rather than more edits to this app.
 
-  **What it would take next:** a small standalone reproduction of a
-  `cacheComponents` route with a client component inside a suspended server
-  component, to establish whether this is a framework issue or a mistake in how
-  the boundaries are placed. Everything else is ready and proven: the proxy
-  gates, the `connection()` marks, the `use cache` on the footer year, and the
-  page restructuring are all recorded in this session's history and rebuilt in
-  about an hour.
+  **RESOLVED as a framework issue 2026-09-08 — reproduction in
+  `docs/repro/cache-components-hydration/`.** It is not our boundary placement.
+
+  With `cacheComponents: true`, a Suspense boundary that ACTUALLY STREAMS — one
+  whose fallback is genuinely rendered because the child suspends — leaves the
+  fallback in the DOM and never hydrates the streamed subtree. Client components
+  inside it render and are inert. No hydration error or warning is logged.
+
+  Five routes isolate it, in ~40 lines with no application code. A client
+  component directly under Suspense hydrates. An async server child that awaits
+  a resolved promise hydrates — because a microtask settles before React needs
+  the fallback, so the boundary never actually streams. An async child that
+  awaits `connection()`, or merely a 50ms timer, does not. So the trigger is not
+  `connection()`, not Suspense, and not async server components: it is the
+  boundary streaming at all.
+
+  The control is a single flag on identical code:
+
+      cacheComponents: true   ->  fallback still in DOM, counter stuck at 0
+      cacheComponents: false  ->  fallback removed,      counter increments
+
+  This is exactly the shape the Cache Components docs recommend for request-time
+  data, so the migration cannot proceed until it is fixed upstream or a
+  different pattern is documented. Everything else needed is proven and rebuilt
+  in about an hour: the proxy gates (already shipped), the `connection()` marks,
+  the `use cache` on the footer year, and the page restructuring.
 
   **Superseded — the original blocker:** move route-level authorization into `src/proxy.ts`,
   where it runs before rendering and can still answer 404. That means verifying
