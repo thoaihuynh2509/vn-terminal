@@ -3,8 +3,6 @@ import { CryptoView } from "@/views/CryptoView";
 import { guard } from "@/views/guard";
 import { cryptoEnabled } from "@/lib/flags";
 
-export const revalidate = 90;
-
 export default async function Page({
   params,
   searchParams,

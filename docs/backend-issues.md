@@ -47,7 +47,43 @@ Each entry: what · where · symptom · evidence · date · status.
   async `<SessionChrome/>` (Header + WatchlistSync) wrapped in `<Suspense>`, so the shell prerenders
   and the session chrome streams — this changes first paint, so a human approves it. Alternative:
   accept dynamic rendering and delete the misleading `revalidate = 60` exports.
-- **Status:** OPEN, needs a human decision.
+- **Status:** PARTIALLY ADDRESSED 2026-09-08, and the full fix was ATTEMPTED AND REVERTED.
+
+  **Done:** the session read moved out of the layout body into a suspended
+  `<SessionChrome>`, and the 16 `revalidate` exports on `[locale]` pages were
+  deleted. They never applied — they claimed a caching policy the app does not
+  have — and deleting a lie is worth doing even when the truth is unchanged.
+  The page now streams instead of blocking on a cookie read.
+
+  **Attempted:** the real fix. In this Next version PPR is `cacheComponents`,
+  not `experimental.ppr` — the suggestion above was stale. Enabling it and
+  working through the migration DID work: prerendered routes went from 5 to 53,
+  every page gained a static shell, and the build was green. It took ~60 files:
+  removing `revalidate`/`dynamic`/`runtime` segment configs (incompatible),
+  `await connection()` on the components that read live feeds, `"use cache"` on
+  the footer's copyright year, and Suspense boundaries with `params`/
+  `searchParams` read INSIDE them on every dynamic route.
+
+  **Why it was reverted:** it silently turned two 404s into 200s.
+  `/vi/admin` — whose entire contract is "the page never admits it exists" —
+  and `/vi/chart/VNM`, the wrong locale/segment pairing that `guard()` 404s to
+  stop crawlers seeing a duplicate URL. Both are decided from request data, and
+  under Cache Components a request read "always sits behind a `<Suspense>`
+  boundary and streams" (Next's own authentication-with-cache-components
+  guide), so the shell has already gone out with a 200 by the time `notFound()`
+  runs. `export const instant = false` does not fix this: it opts a segment out
+  of instant-navigation VALIDATION, not out of streaming. Verified against a
+  production build, not just dev.
+
+  **What it would take:** move route-level authorization into `src/proxy.ts`,
+  where it runs before rendering and can still answer 404. That means verifying
+  the signed session in the proxy runtime — a real change to the auth surface,
+  and not one to make in passing. Until then, dynamic rendering is the honest
+  trade: no data leaked in the attempt (checked — the only admin-ish strings in
+  the anonymous response were the i18n dictionary blob that ships on every
+  page), but a 200 where a 404 belongs is a weakened security posture and an
+  SEO regression, and neither is worth a first-paint improvement on a site with
+  no traffic problem.
 
 ## 2026-09-05 — Login form placeholder is not localised
 

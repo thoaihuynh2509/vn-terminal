@@ -3,17 +3,13 @@ import { Inter } from "next/font/google";
 import { notFound } from "next/navigation";
 import "../globals.css";
 import { Footer } from "@/components/Footer";
-import { Header } from "@/components/Header";
+import { Suspense } from "react";
+import { SessionChrome, SessionChromeFallback } from "@/components/SessionChrome";
 import { ThemeScript } from "@/components/ThemeScript";
 import { TickerStrip } from "@/components/TickerStrip";
-import { WatchlistSync } from "@/components/WatchlistSync";
 import { Analytics } from "@/components/Analytics";
-import { Identify } from "@/components/Identify";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
-import { getSession } from "@/lib/auth/session";
-import { cryptoEnabled } from "@/lib/flags";
 import { siteUrl } from "@/lib/site";
-import { ALL_SYMBOLS } from "@/lib/universe";
 
 const SITE = siteUrl();
 
@@ -62,7 +58,6 @@ export default async function LocaleLayout({
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
   const dict = getDict(locale);
-  const session = await getSession();
 
   return (
     <html lang={locale === "vi" ? "vi-VN" : "en-US"} className={inter.variable} suppressHydrationWarning>
@@ -76,16 +71,13 @@ export default async function LocaleLayout({
         >
           {locale === "vi" ? "Tới nội dung chính" : "Skip to content"}
         </a>
-        <Header locale={locale} dict={dict} email={session?.email ?? null} tier={session?.tier ?? "anon"} symbols={ALL_SYMBOLS} cryptoEnabled={cryptoEnabled()} />
+        {/* The chrome that depends on WHO is asking, isolated and suspended so
+            the rest of the page is not held behind the session read. */}
+        <Suspense fallback={<SessionChromeFallback locale={locale} dict={dict} />}>
+          <SessionChrome locale={locale} dict={dict} />
+        </Suspense>
         <TickerStrip locale={locale} />
-        <WatchlistSync email={session?.email ?? null} />
         <Analytics />
-        <Identify
-          tier={session?.tier ?? "anon"}
-          locale={locale}
-          signedIn={!!session?.email}
-          expiresAt={session?.exp ?? null}
-        />
         <main id="main" className="mx-auto max-w-[1400px] px-4 py-6">
           {children}
         </main>

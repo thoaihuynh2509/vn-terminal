@@ -7,8 +7,6 @@ import { isLocale } from "@/lib/i18n";
 import type { Locale } from "@/lib/types";
 import type { OrderRecord } from "@/lib/db";
 
-export const revalidate = 0;
-
 /**
  * Owner-only reconciliation. A non-admin — signed out, or signed in without an
  * allowlisted email — gets a 404, not a 403: the page never admits it exists.

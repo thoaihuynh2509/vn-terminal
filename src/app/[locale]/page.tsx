@@ -26,8 +26,6 @@ import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBoard, getIndexSparks, getIndices } from "@/lib/providers/vnstock";
 import type { Locale, Quote } from "@/lib/types";
 
-export const revalidate = 60;
-
 const USD_VND = Number(process.env.NEXT_PUBLIC_USD_VND ?? 26_300);
 
 function topMovers(board: Quote[], n: number) {

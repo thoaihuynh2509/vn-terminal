@@ -1,8 +1,6 @@
 import { TerminalView } from "@/views/TerminalView";
 import { guard } from "@/views/guard";
 
-export const revalidate = 60;
-
 export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await params;
   return { title: `${symbol.toUpperCase()} — Chart` };
