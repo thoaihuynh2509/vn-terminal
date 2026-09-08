@@ -14,8 +14,25 @@
  */
 export const SERIES_PREFIX = "GOLD";
 
-/** Gold series we record, in the order the gold page lists them. */
-export const GOLD_SERIES = ["SJC", "BTSJC", "BT9999NTT", "DOJINHTV", "PNJ", "XAUUSD"] as const;
+/**
+ * Gold series offered as charts.
+ *
+ * These are the codes the upstream ACTUALLY publishes, verified against
+ * vang.today on 2026-09-08: XAUUSD, BTSJC, BT9999NTT, DOHNL, DOHCML,
+ * VIETTINMSJC, PQHNVM, PQHN24NTT, SJ9999, SJL1L10, DOJINHTV, VNGSJC.
+ *
+ * An earlier version of this list contained `SJC` and `PNJ`, taken from the
+ * display-name map in the gold provider rather than from the feed — neither
+ * exists, so both silently recorded nothing. `HEADLINE_PRIORITY` in that same
+ * provider had the real codes all along; this now agrees with it.
+ *
+ * This list decides what is LINKED as a chart. It does not decide what is
+ * recorded: see `recordGoldSeries`, which stores every code the feed returns,
+ * because a day of gold history missed is a day that cannot be recovered.
+ */
+export const GOLD_SERIES = [
+  "SJL1L10", "SJ9999", "BTSJC", "BT9999NTT", "DOHCML", "DOHNL", "DOJINHTV", "PQHNVM", "XAUUSD",
+] as const;
 export type GoldSeries = (typeof GOLD_SERIES)[number];
 
 /** Codes are upper-case alphanumerics; anything else is not one of ours. */

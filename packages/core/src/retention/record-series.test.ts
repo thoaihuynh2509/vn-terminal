@@ -39,17 +39,28 @@ test("a nonsense quote is not recorded", () => {
 
 test("recording writes one point per known series", async () => {
   const d = await db();
-  const r = await recordGoldSeries(d, snap([row("SJC", 100, 110), row("PNJ", 90, 100)]), Date.now());
+  const r = await recordGoldSeries(d, snap([row("BTSJC", 100, 110), row("DOHNL", 90, 100)]), Date.now());
   assert.equal(r.written, 2);
-  assert.equal((await d.series.range(seriesKey("SJC"), 10))[0].c, 105);
+  assert.equal((await d.series.range(seriesKey("BTSJC"), 10))[0].c, 105);
 });
 
-test("a series the snapshot omits is reported, not silently skipped", async () => {
-  // A shrinking upstream should be visible in the job's own output.
+test("a curated series the snapshot omits is reported, not silently skipped", async () => {
+  // A shrinking upstream should be visible in the job's own output — but only
+  // for the codes we actually link as charts.
   const d = await db();
-  const r = await recordGoldSeries(d, snap([row("SJC", 100, 110)]), Date.now());
-  assert.ok(r.missing.includes("PNJ"), r.missing.join(","));
+  const r = await recordGoldSeries(d, snap([row("BTSJC", 100, 110)]), Date.now());
+  assert.ok(r.missing.includes("SJL1L10"), r.missing.join(","));
+  assert.ok(!r.missing.includes("BTSJC"));
   assert.equal(r.written, 1);
+});
+
+test("every code the feed returns is recorded, curated or not", async () => {
+  // History cannot be backfilled, so an uncurated code is still kept: if it
+  // becomes interesting later its chart starts from today, not from that day.
+  const d = await db();
+  const r = await recordGoldSeries(d, snap([row("BTSJC", 100, 110), row("VNGSJC", 90, 100)]), Date.now());
+  assert.equal(r.written, 2);
+  assert.equal((await d.series.range(seriesKey("VNGSJC"), 10)).length, 1);
 });
 
 test("the world leg is recorded alongside the domestic rows", async () => {
@@ -62,9 +73,9 @@ test("running twice in one day updates that day rather than adding a bar", async
   // The property that makes the job safe to retry.
   const d = await db();
   const now = Date.UTC(2026, 8, 7, 10);
-  await recordGoldSeries(d, snap([row("SJC", 100, 110)]), now);
-  await recordGoldSeries(d, snap([row("SJC", 200, 210)]), now + 3600_000);
-  const points = await d.series.range(seriesKey("SJC"), 10);
+  await recordGoldSeries(d, snap([row("BTSJC", 100, 110)]), now);
+  await recordGoldSeries(d, snap([row("BTSJC", 200, 210)]), now + 3600_000);
+  const points = await d.series.range(seriesKey("BTSJC"), 10);
   assert.equal(points.length, 1);
   assert.equal(points[0].c, 205);
 });
@@ -72,9 +83,9 @@ test("running twice in one day updates that day rather than adding a bar", async
 test("two days produce two points", async () => {
   const d = await db();
   const day1 = Date.UTC(2026, 8, 7, 10);
-  await recordGoldSeries(d, snap([row("SJC", 100, 110)]), day1);
-  await recordGoldSeries(d, snap([row("SJC", 120, 130)]), day1 + 86_400_000);
-  const points = await d.series.range(seriesKey("SJC"), 10);
+  await recordGoldSeries(d, snap([row("BTSJC", 100, 110)]), day1);
+  await recordGoldSeries(d, snap([row("BTSJC", 120, 130)]), day1 + 86_400_000);
+  const points = await d.series.range(seriesKey("BTSJC"), 10);
   assert.equal(points.length, 2);
   assert.deepEqual(points.map((p) => p.c), [105, 125]);
 });
@@ -82,9 +93,9 @@ test("two days produce two points", async () => {
 test("the point is filed under the trading day, not the wall clock", async () => {
   const d = await db();
   const now = Date.UTC(2026, 8, 7, 10);
-  const r = await recordGoldSeries(d, snap([row("SJC", 100, 110)]), now);
+  const r = await recordGoldSeries(d, snap([row("BTSJC", 100, 110)]), now);
   assert.equal(r.t, dayBucket(now));
-  assert.equal((await d.series.range(seriesKey("SJC"), 10))[0].t, dayBucket(now));
+  assert.equal((await d.series.range(seriesKey("BTSJC"), 10))[0].t, dayBucket(now));
 });
 
 test("an empty snapshot records nothing and reports everything missing", async () => {

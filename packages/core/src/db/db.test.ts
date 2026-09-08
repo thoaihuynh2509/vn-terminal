@@ -6,8 +6,9 @@
  * TEST_DATABASE_URL is set. A guarantee proven on only one driver is a
  * guarantee the other driver is free to break.
  *
- * Fixtures are uniquely suffixed per test so the suite is safe against a shared
- * postgres database that is not truncated between tests.
+ * Fixtures are suffixed with the RUN and the test, so the suite is safe against
+ * a shared postgres database that is not truncated between tests — and safe to
+ * run twice in a row, which a per-test counter alone is not.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -28,7 +29,16 @@ const at = (ms: number) => new Date(T0.getTime() + ms);
 
 function contract(driver: string, makeDb: () => Promise<Db>) {
   let seq = 0;
-  const uniq = () => `${driver}${++seq}`;
+  // The RUN is part of the suffix, not just the test.
+  //
+  // A per-test counter restarts at 1 on every run, so a second run against a
+  // persistent database reuses every email and every token hash from the first
+  // — and postgres, which has a primary key on token_hash, then fails on a
+  // duplicate while the file driver, which has no such constraint, happily
+  // keeps both. The header above claimed this suite was safe against a database
+  // that is not truncated between tests; until now it was not.
+  const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const uniq = () => `${driver}${run}${++seq}`;
   const anEmail = () => `test-albert+${uniq()}@example.com`;
 
   // ── 1. single use, atomically ────────────────────────────────────────────
@@ -661,9 +671,15 @@ function contract(driver: string, makeDb: () => Promise<Db>) {
     await db.users.upsertByEmail(email);
     const older = `ord-${uniq()}`;
     const newer = `ord-${uniq()}`;
-    await db.orders.create({ id: older, email, tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, at(0));
-    await db.orders.create({ id: newer, email, tier: "pro", plan: "annual", amount: 1990000, provider: "momo" }, at(minutes(1)));
-    const rows = await db.orders.recent(10);
+    // Timestamped from NOW, not the fixed fixture clock. `recent` is global by
+    // design — it backs the owner's ledger — so orders left by earlier runs all
+    // share the fixture timestamp and crowd this run's two out of the window.
+    // Real times make this run's orders genuinely the most recent, which is
+    // what the assertion is actually about.
+    const base = Date.now();
+    await db.orders.create({ id: older, email, tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, new Date(base));
+    await db.orders.create({ id: newer, email, tier: "pro", plan: "annual", amount: 1990000, provider: "momo" }, new Date(base + 60_000));
+    const rows = await db.orders.recent(50);
     const mine = rows.filter((o) => o.id === older || o.id === newer);
     assert.deepEqual(mine.map((o) => o.id), [newer, older], "most recent first");
   });

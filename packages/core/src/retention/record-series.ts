@@ -48,14 +48,24 @@ export async function recordGoldSeries(
   const byCode = new Map(snapshot.rows.map((r) => [r.code, r]));
   if (snapshot.world) byCode.set(snapshot.world.code, snapshot.world);
 
+  // EVERY code the feed returns is recorded, not just the curated ones. A row
+  // costs a few bytes a day; a day of gold history missed cannot be recovered,
+  // and a code that becomes interesting later would then start from that day
+  // rather than from today. Curation belongs to what is LINKED, not to what is
+  // kept.
   let written = 0;
-  const missing: string[] = [];
-  for (const code of GOLD_SERIES) {
-    const row = byCode.get(code);
-    const point = row ? pointFor(row.buy, row.sell, t) : null;
-    if (!point) { missing.push(code); continue; }
+  for (const [code, row] of byCode) {
+    const point = pointFor(row.buy, row.sell, t);
+    if (!point) continue;
     await db.series.append(seriesKey(code), [point]);
     written++;
   }
+
+  // `missing` stays scoped to the curated list, because that is the set whose
+  // absence is worth noticing: it means a chart we link now has no data.
+  const missing = GOLD_SERIES.filter((code) => {
+    const row = byCode.get(code);
+    return !row || !pointFor(row.buy, row.sell, t);
+  });
   return { t, written, missing };
 }

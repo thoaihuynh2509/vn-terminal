@@ -358,7 +358,20 @@ Each entry: what · where · symptom · evidence · date · status.
   `DATABASE_URL` on `:6543` (transaction pooler, right for serverless request handling) and
   `MIGRATE_DATABASE_URL` on `:5432` (session mode). The same Supabase pooler host serves both
   ports; only the port differs.
-- **Status:** OPEN — needs the password, which only the owner has. Host, port, database and user
+- **RESOLVED 2026-09-08.** Connected, all 8 migrations applied, schema up to date. Running the
+  postgres half of the driver contract for the FIRST time — it had never been run against a real
+  database — found three defects that the file driver could not:
+  1. **jsonb came back as a STRING** from `docs.put/get/list`. `/api/docs` would have answered with
+     a JSON string where every caller expects an object, so `parseLayouts` and `parseDrawings`
+     would take it for a malformed document and return nothing: cross-device sync and saved
+     layouts restoring as empty, silently. Normalised in `toDoc`.
+  2. **The contract suite was not re-runnable.** Its own header claimed fixtures were safe against
+     a database that is not truncated; the suffix was per-test, not per-RUN, so a second run reused
+     every email and token hash. Postgres has a primary key on `token_hash` and failed; the file
+     driver has no such constraint and silently kept both. Now suffixed with the run.
+  3. **`orders.recent` is global by design** (it backs the owner's ledger), so accumulated rows
+     crowded a test's own out of its window. Its fixtures now use real timestamps.
+- **Status:** RESOLVED locally; Vercel still needs the same two values, and a redeploy. Host, port, database and user
   were supplied 2026-09-08 (`aws-0-ap-southeast-1.pooler.supabase.com`, user `postgres.<ref>`),
   and the host resolves with both ports open. Everything on the code side is shipped and tested
   against the file driver.

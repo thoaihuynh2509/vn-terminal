@@ -5,10 +5,16 @@
  *
  *   npm run db:migrate
  */
+import { loadEnvLocal } from "./load-env.mjs";
 // Migrations take a session advisory lock, which a TRANSACTION pooler (e.g.
 // Supabase Supavisor on :6543) does not hold across statements. Prefer a direct
 // / session connection here via MIGRATE_DATABASE_URL, falling back to
 // DATABASE_URL for local dev where they are the same.
+// Plain `node` reads no env file, so without this the script reports "not set"
+// on a correctly configured machine. On Vercel there is no file and the
+// platform's own variables are used, which is the intended no-op.
+loadEnvLocal();
+
 const raw = process.env.MIGRATE_DATABASE_URL || process.env.DATABASE_URL;
 const url = raw && raw.trim();
 if (!url) {
@@ -46,7 +52,11 @@ const POOLER_HINT =
   "DIRECT / session connection (:5432) — advisory locks do not hold on the pooler. " +
   "Set MIGRATE_DATABASE_URL to the :5432 string (Supabase → Connect → Session/Direct).";
 
-if (/:6543\b/.test(url) || /pooler/i.test(url)) {
+// The PORT decides, not the hostname. Supabase serves session mode on the same
+// `*.pooler.supabase.com` host at :5432, so matching the host warned about a
+// correct configuration — and a warning that fires when nothing is wrong is how
+// people learn to ignore warnings.
+if (/:6543\b/.test(url)) {
   console.warn(`db:migrate — warning: ${POOLER_HINT}`);
 }
 

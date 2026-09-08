@@ -13,7 +13,7 @@
  * `a`, digits as `9` — which is enough to spot every failure below and safe to
  * paste into a chat or an issue.
  */
-import { readFileSync } from "node:fs";
+import { loadEnvLocal } from "./load-env.mjs";
 import postgres from "postgres";
 import { MIGRATIONS } from "../packages/core/src/db/migrations.mjs";
 
@@ -29,25 +29,7 @@ import { MIGRATIONS } from "../packages/core/src/db/migrations.mjs";
  * another terminal, a fresh build, and the deploy all still fail. Saying the
  * source turns that into a visible fact instead of a mystery.
  */
-const SOURCE = {};
-const fromFile = {};
-try {
-  for (const line of readFileSync(".env.local", "utf8").split("\n")) {
-    const m = /^\s*([A-Z0-9_]+)\s*=(.*)$/.exec(line);
-    if (!m) continue;
-    fromFile[m[1]] = m[2];
-    if (process.env[m[1]] === undefined) {
-      process.env[m[1]] = m[2];
-      SOURCE[m[1]] = ".env.local";
-    } else {
-      // Present in both: the shell wins here and for `next dev` in this same
-      // shell, but NOT anywhere else.
-      SOURCE[m[1]] = "shell environment (also in .env.local)";
-    }
-  }
-} catch {
-  /* no .env.local: the environment is the only source, which is the CI case */
-}
+const { source: SOURCE, fromFile } = loadEnvLocal();
 for (const n of ["DATABASE_URL", "MIGRATE_DATABASE_URL"]) {
   if (process.env[n] !== undefined && !SOURCE[n]) SOURCE[n] = "shell environment";
 }
@@ -69,7 +51,7 @@ const shape = (v) => v.replace(/[A-Za-z]/g, "a").replace(/[0-9]/g, "9");
  * The mistakes that actually happen, in the order they are worth reporting.
  * Each returns a sentence, or null when that check passes.
  */
-function diagnose(raw) {
+function diagnose(raw, { forMigrations }) {
   const trimmed = raw.trim();
   if (!trimmed) return "empty.";
   if (/^["']|["']$/.test(trimmed)) {
@@ -89,7 +71,10 @@ function diagnose(raw) {
     if (!/^postgres(ql)?:$/.test(u.protocol)) {
       return `has scheme "${u.protocol}" — expected postgres:// or postgresql://.`;
     }
-    if (u.port === "6543") {
+    // Only a problem for the URL migrations run on. :6543 is the RIGHT choice for
+    // request handling — many short serverless connections is what a transaction
+    // pooler is for — so flagging it there reports a fault in a correct setup.
+    if (forMigrations && u.port === "6543") {
       return "points at the TRANSACTION pooler (:6543). Migrations take a session " +
         "advisory lock, which that pooler cannot hold, so the run stalls rather than " +
         "failing. Use the :5432 Session/Direct string from Supabase → Connect.";
@@ -128,7 +113,7 @@ for (const name of NAMES) {
     else { console.log(`${name}\n  not set — falls back to DATABASE_URL.`); }
     continue;
   }
-  const problem = diagnose(raw);
+  const problem = diagnose(raw, { forMigrations: name === "MIGRATE_DATABASE_URL" });
   console.log(name);
   console.log(`  source  ${SOURCE[name] ?? "shell environment"}`);
   console.log(`  shape   ${shape(raw.trim().replace(/^["']|["']$/g, "")).slice(0, 100)}`);

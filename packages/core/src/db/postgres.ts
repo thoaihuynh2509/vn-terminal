@@ -118,10 +118,38 @@ const toAlert = (r: AlertRow): PriceAlert => ({
   ...(r.period !== null ? { period: r.period } : {}),
 });
 
+/**
+ * A `jsonb` column does not always arrive parsed.
+ *
+ * The column IS jsonb and `pg_typeof` confirms it, but this driver hands the
+ * value back as a STRING — with `prepare` either way, so it is not the pooler
+ * setting. The file driver returns an object, so nothing caught it: every unit
+ * test runs on the file driver, and the postgres half of the contract suite had
+ * never been run against a real database.
+ *
+ * That divergence is not cosmetic. `/api/docs` would have answered with a JSON
+ * string where every caller expects an object, so `parseLayouts` and
+ * `parseDrawings` would take it for a malformed document and quietly return
+ * nothing — cross-device sync and saved layouts restoring as empty, with no
+ * error anywhere.
+ *
+ * Normalised here rather than by configuring the driver, so it is correct
+ * whichever way the library behaves and cannot regress if that changes.
+ */
+function parseDocData(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    // Not JSON at all: hand back what is stored rather than inventing a shape.
+    return v;
+  }
+}
+
 const toDoc = (r: DocRow): DocRecord => ({
   kind: r.kind,
   key: r.key,
-  data: r.data,
+  data: parseDocData(r.data),
   version: r.version,
   updatedAt: r.updated_at,
 });
