@@ -375,3 +375,29 @@ Each entry: what · where · symptom · evidence · date · status.
   were supplied 2026-09-08 (`aws-0-ap-southeast-1.pooler.supabase.com`, user `postgres.<ref>`),
   and the host resolves with both ports open. Everything on the code side is shipped and tested
   against the file driver.
+
+
+## 2026-09-08 — an empty NEXT_PUBLIC_SITE_URL had silently disabled three features
+
+- **Found while checking CRON_SECRET.** Every cron endpoint answered 401 (gated, secret present)
+  except `/api/cron/teaser`, which answered 501. That route additionally requires
+  `NEXT_PUBLIC_SITE_URL`, and it was empty in production.
+- **Blast radius.** Three features gate on that variable, and all three were off on the live site
+  while every page rendered normally: the weekly teaser (501), billing checkout (501), and
+  **sign-in** — `/vi/dang-nhap` showed "chua duoc kich hoat", because `deliverable()` requires
+  `linkOrigin() !== null`.
+- **Fixed by configuration**, not code: `NEXT_PUBLIC_SITE_URL` is now set to the live origin in
+  Production and Preview. The teaser cron went 501 to 401.
+- **A code fix was written and then REVERTED**, and the reason is worth keeping. Routing
+  `linkOrigin()` through `siteUrl()` — which falls back to the production origin — would have fixed
+  all three at once, and a test refused it: "A guessed default mails a live bearer token to
+  whichever deployment owns that domain, which a fork or a preview does not." That is right. A fork
+  with no site URL would email sign-in links pointing at production. The existing behaviour is
+  deliberate; the configuration was the fault.
+- **Sign-in is still off**, for a different reason. In production `activeAuthProvider()` returns
+  `disabled` unless `AUTH_PROVIDER` is exactly `magic`, and `activeMailDriver()` returns `none`
+  unless `MAIL_PROVIDER` is `resend` or `console`. Both variables exist but are Secret-typed, so
+  their values cannot be read back. Setting `MAIL_PROVIDER=resend` without a working
+  `RESEND_API_KEY` would turn an honest "not activated" into silent send failures, which is worse.
+- **Status:** OPEN — needs the owner to confirm `AUTH_PROVIDER=magic` and that the Resend key is
+  live, then set `MAIL_PROVIDER=resend`.
