@@ -43,9 +43,91 @@ function ask(question, { hidden = false } = {}) {
   });
 }
 
-const args = Object.fromEntries(
-  process.argv.slice(2).map((a) => a.replace(/^--/, "").split("=")),
-);
+/** Run a command, feeding `input` on stdin so a secret never becomes an argv entry. */
+function run(cmd, cmdArgs, input) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, cmdArgs, { stdio: ["pipe", "pipe", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (d) => { err += d; });
+    child.stdout.on("data", () => {});
+    child.on("close", (code) => resolve({ code, err }));
+    if (input !== undefined) child.stdin.write(input);
+    child.stdin.end();
+  });
+}
+
+/**
+ * Set both variables on Vercel, in both environments.
+ *
+ * `--force` overwrites in place: removing first would leave a window with no
+ * variable at all, and a deploy landing in it builds against a missing database
+ * rather than a stale one. `--sensitive` keeps the Secret type.
+ */
+async function pushToVercel(values, project) {
+  console.log(`\nSetting values on Vercel (${project})…`);
+  let failed = 0;
+  for (const [name, value] of Object.entries(values)) {
+    for (const env of ["production", "preview"]) {
+      const { code, err } = await run(
+        "npx",
+        ["vercel", "env", "add", name, env, "--force", "--sensitive", "--project", project],
+        value,
+      );
+      if (code !== 0) failed++;
+      console.log(`  ${name} (${env}) ${code === 0 ? "set" : `FAILED: ${err.trim().split("\n").pop() || code}`}`);
+    }
+  }
+  console.log(failed
+    ? "\nSome variables did not update — nothing was printed; check the messages above."
+    : "\nDone. Redeploy for these to take effect — env changes only apply to new builds.");
+  return failed;
+}
+
+/**
+ * `--flag` and `--key=value`.
+ *
+ * A bare `--flag` splits to `["flag"]`, so `Object.fromEntries` gave it the
+ * value `undefined` — and every `!== undefined` guard then read as "not
+ * passed". `--vercel` silently did nothing, which looks exactly like the
+ * command having worked. Bare flags are `true`.
+ */
+const args = (() => {
+  const out = {};
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    if (!argv[i].startsWith("--")) continue;
+    const [k, ...rest] = argv[i].slice(2).split("=");
+    if (rest.length) { out[k] = rest.join("="); continue; }
+    // `--key value` as well as `--key=value`: both are what people type, and
+    // guessing wrong turns a value into `true` and a flag into a filename.
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith("--")) { out[k] = next; i++; }
+    else out[k] = true;
+  }
+  return out;
+})();
+
+/**
+ * `--push` skips the prompt entirely and sends what `.env.local` already holds.
+ *
+ * For the case where the local side is set up and verified but Vercel is not:
+ * re-typing a password to copy a value that is already correct invites a typo
+ * in the one place that is hardest to check.
+ */
+if (args.push !== undefined) {
+  const { loadEnvLocal } = await import("./load-env.mjs");
+  loadEnvLocal();
+  const values = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    MIGRATE_DATABASE_URL: process.env.MIGRATE_DATABASE_URL,
+  };
+  for (const [name, v] of Object.entries(values)) {
+    if (!v) { console.error(`${name} is not set locally — nothing to push.`); process.exit(1); }
+    try { new URL(v); } catch { console.error(`${name} is not a valid URL — run db:url first.`); process.exit(1); }
+  }
+  await pushToVercel(values, args.project || "vn-terminal");
+  process.exit(0);
+}
 
 const host = args.host || (await ask("Pooler host (aws-0-<region>.pooler.supabase.com): "));
 const user = args.user || (await ask("User (postgres.<project-ref>): "));
@@ -74,38 +156,11 @@ writeFileSync(FILE, next, { mode: 0o600 });
 
 console.log(`\nWrote DATABASE_URL (:6543, transaction pooler) and MIGRATE_DATABASE_URL (:5432, session) to ${FILE}.`);
 
-/** Run a command, feeding `input` on stdin so a secret never becomes an argv entry. */
-function run(cmd, cmdArgs, input) {
-  return new Promise((resolve) => {
-    const child = spawn(cmd, cmdArgs, { stdio: ["pipe", "pipe", "pipe"] });
-    let err = "";
-    child.stderr.on("data", (d) => { err += d; });
-    child.stdout.on("data", () => {});
-    child.on("close", (code) => resolve({ code, err }));
-    if (input !== undefined) child.stdin.write(input);
-    child.stdin.end();
-  });
-}
-
 if (args.vercel !== undefined) {
-  const project = args.project || "vn-terminal";
-  const envs = ["production", "preview"];
-  console.log(`\nSetting the same values on Vercel (${project})…`);
-  for (const [name, port] of [["DATABASE_URL", 6543], ["MIGRATE_DATABASE_URL", 5432]]) {
-    for (const env of envs) {
-      // `--force` overwrites in place. Removing first and re-adding would leave
-      // a window where the variable does not exist at all, and a deploy landing
-      // in that window builds against a missing database rather than an old one.
-      // `--sensitive` keeps the Secret type these already have.
-      const { code, err } = await run(
-        "npx",
-        ["vercel", "env", "add", name, env, "--force", "--sensitive", "--project", project],
-        url(port),
-      );
-      console.log(`  ${name} (${env}) ${code === 0 ? "set" : `FAILED: ${err.trim().split("\n").pop() || code}`}`);
-    }
-  }
-  console.log("\nRedeploy for these to take effect — env changes only apply to new builds.");
+  await pushToVercel(
+    { DATABASE_URL: url(6543), MIGRATE_DATABASE_URL: url(5432) },
+    args.project || "vn-terminal",
+  );
 }
 
 console.log("\nNothing was printed. Verify locally with:  npm run db:check");
