@@ -8,6 +8,11 @@
  * the file. It is never printed, never passed as an argument (which would put it
  * in `ps` and shell history), and never returned to the caller.
  *
+ * With `--vercel` it also sets both variables on the Vercel project, piping the
+ * value through stdin for the same reason. That is the whole configuration in
+ * one prompt, which matters because doing it in two places by hand is exactly
+ * how one of them ends up updated and the other not.
+ *
  * Two strings, not one, and the difference is the whole point:
  *
  *   DATABASE_URL          :6543  transaction pooler — right for serverless
@@ -20,6 +25,7 @@
  */
 import { createInterface } from "node:readline";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 const FILE = ".env.local";
 
@@ -67,4 +73,39 @@ const next = [
 writeFileSync(FILE, next, { mode: 0o600 });
 
 console.log(`\nWrote DATABASE_URL (:6543, transaction pooler) and MIGRATE_DATABASE_URL (:5432, session) to ${FILE}.`);
-console.log("Nothing was printed. Verify with:  npm run db:check");
+
+/** Run a command, feeding `input` on stdin so a secret never becomes an argv entry. */
+function run(cmd, cmdArgs, input) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, cmdArgs, { stdio: ["pipe", "pipe", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (d) => { err += d; });
+    child.stdout.on("data", () => {});
+    child.on("close", (code) => resolve({ code, err }));
+    if (input !== undefined) child.stdin.write(input);
+    child.stdin.end();
+  });
+}
+
+if (args.vercel !== undefined) {
+  const project = args.project || "vn-terminal";
+  const envs = ["production", "preview"];
+  console.log(`\nSetting the same values on Vercel (${project})…`);
+  for (const [name, port] of [["DATABASE_URL", 6543], ["MIGRATE_DATABASE_URL", 5432]]) {
+    for (const env of envs) {
+      // `--force` overwrites in place. Removing first and re-adding would leave
+      // a window where the variable does not exist at all, and a deploy landing
+      // in that window builds against a missing database rather than an old one.
+      // `--sensitive` keeps the Secret type these already have.
+      const { code, err } = await run(
+        "npx",
+        ["vercel", "env", "add", name, env, "--force", "--sensitive", "--project", project],
+        url(port),
+      );
+      console.log(`  ${name} (${env}) ${code === 0 ? "set" : `FAILED: ${err.trim().split("\n").pop() || code}`}`);
+    }
+  }
+  console.log("\nRedeploy for these to take effect — env changes only apply to new builds.");
+}
+
+console.log("\nNothing was printed. Verify locally with:  npm run db:check");
