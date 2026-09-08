@@ -399,5 +399,16 @@ Each entry: what · where · symptom · evidence · date · status.
   unless `MAIL_PROVIDER` is `resend` or `console`. Both variables exist but are Secret-typed, so
   their values cannot be read back. Setting `MAIL_PROVIDER=resend` without a working
   `RESEND_API_KEY` would turn an honest "not activated" into silent send failures, which is worse.
-- **Status:** OPEN — needs the owner to confirm `AUTH_PROVIDER=magic` and that the Resend key is
-  live, then set `MAIL_PROVIDER=resend`.
+- **RESOLVED 2026-09-08.** Owner confirmed the Resend key is live. `AUTH_PROVIDER=magic` and
+  `MAIL_PROVIDER=resend` are set in Production and Preview, and the live sign-in page renders the
+  magic-link notice, which only appears when the provider resolves to `magic`.
+- **Set as Config, not Secret**, unlike the values they replaced. Neither is a credential — they
+  are mode flags — and their being Secret-typed is precisely why today's diagnosis took as long as
+  it did: `vercel env pull` returns `[encrypted]`, so a wrong mode flag cannot be seen, only
+  inferred from behaviour. Readable flags make the next such question a lookup instead of an
+  investigation. Say if you would rather they were Secret again.
+- **A reading error worth recording**, made twice today. Grepping a page's HTML for a Vietnamese
+  phrase matches the i18n dictionary that ships serialized on EVERY page, not the rendered text.
+  It produced "admin content leaked" and then "sign-in still disabled", both false. Assert on
+  rendered markup — a `role="status"` element, a form field — never on a phrase that also exists
+  in the dictionary blob.
