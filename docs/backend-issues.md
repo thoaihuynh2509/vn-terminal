@@ -348,5 +348,13 @@ Each entry: what · where · symptom · evidence · date · status.
   nastiest of them, because `new URL` splits on the LAST `@`, so it parses cleanly and then
   authenticates as the wrong user. When the format is good it connects for real and lists pending
   migrations, because a string that parses is not the same as credentials that work.
-- **Status:** OPEN — needs the real credentials, which only the Supabase dashboard has. Everything
-  on the code side is shipped and tested against the file driver.
+- **`npm run db:url`** (added 2026-09-08) writes both strings from a password read with echo off:
+  never printed, never passed as an argument (which would put it in `ps` and shell history), and
+  percent-encoded so an `@ # / : ?` in it cannot break the URL. It writes TWO strings on purpose —
+  `DATABASE_URL` on `:6543` (transaction pooler, right for serverless request handling) and
+  `MIGRATE_DATABASE_URL` on `:5432` (session mode). The same Supabase pooler host serves both
+  ports; only the port differs.
+- **Status:** OPEN — needs the password, which only the owner has. Host, port, database and user
+  were supplied 2026-09-08 (`aws-0-ap-southeast-1.pooler.supabase.com`, user `postgres.<ref>`),
+  and the host resolves with both ports open. Everything on the code side is shipped and tested
+  against the file driver.
