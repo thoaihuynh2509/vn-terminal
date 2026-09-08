@@ -335,5 +335,18 @@ Each entry: what · where · symptom · evidence · date · status.
   redeploy so `db:migrate` runs 006, 007 and 008.
 - **Verify afterwards:** `node -e 'new URL(process.env.DATABASE_URL)'` exits silently, and
   `/api/bars?symbol=GOLD:SJC` returns 200 instead of 501.
-- **Status:** OPEN — needs the real credentials. Everything on the code side is shipped and tested
-  against the file driver.
+- **Confirmed in production 2026-09-08**, from the deploy log rather than by inference:
+  `db:migrate — skipped: MIGRATE_DATABASE_URL is not a valid Postgres URL.` So the production
+  value is broken too, not only the local one.
+- **A note on how NOT to check this.** `vercel env pull` returns the literal string `[encrypted]`
+  for Secret-type variables. Validating what it writes reports "does not parse" for a connection
+  string that may be perfectly fine — a false positive that looks like evidence. The deploy log is
+  the reliable signal; the pulled file is not.
+- **`npm run db:check`** (added 2026-09-08) reports which of the usual mistakes was made, without
+  ever printing the value: unreplaced `<placeholder>` or `[YOUR-PASSWORD]`, surrounding quotes,
+  whitespace, the `:6543` transaction pooler, and an unencoded `@` in the password — which is the
+  nastiest of them, because `new URL` splits on the LAST `@`, so it parses cleanly and then
+  authenticates as the wrong user. When the format is good it connects for real and lists pending
+  migrations, because a string that parses is not the same as credentials that work.
+- **Status:** OPEN — needs the real credentials, which only the Supabase dashboard has. Everything
+  on the code side is shipped and tested against the file driver.

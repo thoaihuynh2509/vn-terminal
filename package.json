@@ -15,7 +15,8 @@
     "test:unit": "node --test packages/core/src/*.test.ts packages/core/src/ta/*.test.ts packages/core/src/chart/*.test.ts packages/core/src/alerts/*.test.ts packages/core/src/auth/*.test.ts packages/core/src/db/*.test.ts packages/core/src/billing/*.test.ts packages/core/src/retention/*.test.ts packages/core/src/analytics/*.test.ts packages/core/src/providers/*.test.ts",
     "test:paywall": "node scripts/test-paywall.mjs",
     "test:magic": "node scripts/test-magic.mjs",
-    "db:migrate": "node scripts/db-migrate.mjs"
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:check": "node scripts/db-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
