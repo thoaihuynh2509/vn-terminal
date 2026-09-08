@@ -48,6 +48,34 @@ cacheComponents: true   →  fallback still in DOM, "suspended: 0"  (dead)
 cacheComponents: false  →  fallback removed,      "suspended: 1"  (works)
 ```
 
+## What the DOM looks like
+
+After the page has fully loaded on `/e`, `<main>` contains:
+
+```html
+<div id="control"><button data-counter="shell">shell: 1</button></div>
+<!--$~--><template id="B:0"></template><p id="fallback">loading…</p><!--/$
+```
+
+The boundary comment is `$~`, its `<template id="B:0">` is still in place, and the
+fallback is still rendered — while the streamed `#streamed` content is also in
+the document. The shell counter increments on click; the suspended one never
+does.
+
+This is **not** the duplicate-`S:N` problem from #96551 / #97310: the served
+HTML contains exactly one `id="S:0"`, one `id="B:0"` and one `$RC("B:0")`
+completion call. The replacement script is emitted correctly and the boundary
+still never completes on the client.
+
+## Environment
+
+```
+next 16.3.4, react 19.2.8, react-dom 19.2.8
+Node 24.4.0, darwin arm64
+```
+
+Reproduced with `next build` + `next start`, and in `next dev`.
+
 ## Why it matters
 
 This is the standard shape the Cache Components docs recommend: a component that
