@@ -22,15 +22,43 @@ import { MIGRATIONS } from "../packages/core/src/db/migrations.mjs";
  * would report "not set" on a machine where the app is perfectly configured,
  * which is the one answer guaranteed to mislead. Values already in the
  * environment win, matching Next's own precedence.
+ *
+ * WHERE each value came from is reported, because the precedence itself is a
+ * trap: `export DATABASE_URL=...` in one terminal makes this check pass while
+ * `.env.local` stays broken and nothing is persisted. The check goes green, and
+ * another terminal, a fresh build, and the deploy all still fail. Saying the
+ * source turns that into a visible fact instead of a mystery.
  */
+const SOURCE = {};
+const fromFile = {};
 try {
   for (const line of readFileSync(".env.local", "utf8").split("\n")) {
     const m = /^\s*([A-Z0-9_]+)\s*=(.*)$/.exec(line);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+    if (!m) continue;
+    fromFile[m[1]] = m[2];
+    if (process.env[m[1]] === undefined) {
+      process.env[m[1]] = m[2];
+      SOURCE[m[1]] = ".env.local";
+    } else {
+      // Present in both: the shell wins here and for `next dev` in this same
+      // shell, but NOT anywhere else.
+      SOURCE[m[1]] = "shell environment (also in .env.local)";
+    }
   }
 } catch {
   /* no .env.local: the environment is the only source, which is the CI case */
 }
+for (const n of ["DATABASE_URL", "MIGRATE_DATABASE_URL"]) {
+  if (process.env[n] !== undefined && !SOURCE[n]) SOURCE[n] = "shell environment";
+}
+
+/** A value exported in this shell only, which nothing outside it will see. */
+const shellOnly = (name) => SOURCE[name] === "shell environment";
+/** Exported here AND present in the file with a DIFFERENT value. */
+const shadowed = (name) =>
+  SOURCE[name] === "shell environment (also in .env.local)" &&
+  fromFile[name] !== undefined &&
+  fromFile[name].trim().replace(/^["\']|["\']$/g, "") !== process.env[name].trim().replace(/^["\']|["\']$/g, "");
 
 const NAMES = ["DATABASE_URL", "MIGRATE_DATABASE_URL"];
 
@@ -102,6 +130,7 @@ for (const name of NAMES) {
   }
   const problem = diagnose(raw);
   console.log(name);
+  console.log(`  source  ${SOURCE[name] ?? "shell environment"}`);
   console.log(`  shape   ${shape(raw.trim().replace(/^["']|["']$/g, "")).slice(0, 100)}`);
   if (problem) {
     console.log(`  PROBLEM ${problem}`);
@@ -109,6 +138,15 @@ for (const name of NAMES) {
   } else {
     console.log("  format  ok");
     usable[name] = raw.trim();
+  }
+
+  // Green here is not green anywhere else if the value lives only in this shell.
+  if (shellOnly(name)) {
+    console.log("  NOTE    set in this shell only — not in .env.local, so another");
+    console.log("          terminal, a fresh build, and Vercel will not see it.");
+  } else if (shadowed(name)) {
+    console.log("  NOTE    this shell's export DIFFERS from the .env.local value and");
+    console.log("          wins here. The file's value is what a fresh terminal uses.");
   }
 }
 

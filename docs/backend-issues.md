@@ -347,7 +347,11 @@ Each entry: what · where · symptom · evidence · date · status.
   whitespace, the `:6543` transaction pooler, and an unencoded `@` in the password — which is the
   nastiest of them, because `new URL` splits on the LAST `@`, so it parses cleanly and then
   authenticates as the wrong user. When the format is good it connects for real and lists pending
-  migrations, because a string that parses is not the same as credentials that work.
+  migrations, because a string that parses is not the same as credentials that work. It also names
+  the SOURCE of each value, because the precedence is itself a trap: an `export` in one terminal
+  makes the check pass while `.env.local` stays broken and nothing persists, so the check goes
+  green and another terminal, a fresh build and the deploy all still fail. That exact confusion
+  happened on 2026-09-08 and cost a round trip.
 - **`npm run db:url`** (added 2026-09-08) writes both strings from a password read with echo off:
   never printed, never passed as an argument (which would put it in `ps` and shell history), and
   percent-encoded so an `@ # / : ?` in it cannot break the URL. It writes TWO strings on purpose —
