@@ -497,14 +497,48 @@ try {
         .reduce((n, p) => n + ((p.getAttribute('d').match(/M/g) || []).length), 0);
     })()`);
     check("candles drawn", candles > 20, `${candles} candles`);
+    // The OHLC readout is what actually tracks the hovered bar, so it is what
+    // gets asserted. This used to test `!!document.querySelector('[role=status]')`
+    // — which the chart now always has, because the upgrade hint mounts its live
+    // region empty on every load. That check passed before the key was pressed.
+    const readoutBefore = await s.evaluate(`document.querySelector('dl')?.textContent ?? ""`);
     await s.evaluate(`(()=>{const s=document.querySelector('svg[role=img]');s.focus();s.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));})()`);
     await sleep(300);
-    const crosshair = await s.evaluate(`!!document.querySelector('[role=status]')`);
-    check("keyboard arrow moves the crosshair", crosshair === true);
+    const readoutAfter = await s.evaluate(`document.querySelector('dl')?.textContent ?? ""`);
+    check("keyboard arrow moves the crosshair", readoutBefore !== "" && readoutBefore !== readoutAfter,
+      `${readoutBefore.slice(0, 28)} → ${readoutAfter.slice(0, 28)}`);
     await s.evaluate(`[...document.querySelectorAll('button')].find(b=>/dạng bảng/.test(b.textContent)).click()`);
     await sleep(300);
     const tableRows = await s.evaluate("document.querySelectorAll('table tbody tr').length");
     check("chart table view renders rows", tableRows > 10, `${tableRows} rows`);
+
+    // ── hover a bar, then zoom past it ────────────────────────────
+    // Shipped crash: the hover is an INDEX into the visible window, and zooming
+    // re-slices that window without reconciling it. Hovering bar ~200 of a wide
+    // window and then zooming to ~60 left the index addressing a bar that was
+    // gone, and `view[idx - 1].c` threw through the error boundary. Reported by
+    // a reader, caught by nothing here — the suite hovers, and it zooms, but it
+    // never did both in that order.
+    await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
+    const zb = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height }); })()`));
+    const zy = Math.round(zb.t + zb.h * 0.5);
+    // Hover the far right: the highest bar index the widest window offers.
+    await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(zb.l + zb.w * 0.94), y: zy });
+    await sleep(300);
+    // Zoom in at the LEFT edge, so the window shrinks away from that bar.
+    for (let i = 0; i < 12; i++) {
+      await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: Math.round(zb.l + zb.w * 0.1), y: zy, deltaX: 0, deltaY: -240 });
+      await sleep(100);
+    }
+    await sleep(500);
+    const zoomState = JSON.parse(await s.evaluate(`(() => JSON.stringify({
+      svg: !!document.querySelector('svg[role=img]'),
+      crashed: /Đã xảy ra lỗi|Something went wrong/.test(document.body.innerText),
+    }))()`));
+    check("hovering a bar then zooming past it keeps the chart alive",
+      zoomState.svg === true && zoomState.crashed === false,
+      zoomState.crashed ? "error boundary caught a throw" : "chart intact");
 
     // ── line mode ─────────────────────────────────────────────────
     await s.goto(BASE + "/vi/chung-khoan/VNM", { scheme: "light" });
