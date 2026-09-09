@@ -18,6 +18,21 @@ export function clampOffset(offset: number, total: number, range: number): numbe
 }
 
 /**
+ * A hovered bar index brought inside the window that is actually on screen.
+ *
+ * The hover is picked against one window and read against another: zooming and
+ * pinching re-slice the view without touching it, so an index chosen in a
+ * 300-bar window outlives the window that made it valid and addresses a bar
+ * that is no longer there. Clamping at the point of USE rather than at each
+ * zoom handler is what makes that safe — there are four ways to change the
+ * range today, and the fifth one should not be able to reintroduce this.
+ */
+export function clampHover(hover: number | null, length: number): number | null {
+  if (hover === null || !Number.isFinite(hover) || length <= 0) return null;
+  return Math.max(0, Math.min(length - 1, Math.floor(hover)));
+}
+
+/**
  * Index bounds of the visible slice, as [start, end).
  *
  * Callers need the BOUNDS and not just the bars, because indicators are computed

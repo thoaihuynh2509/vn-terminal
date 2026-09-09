@@ -15,7 +15,7 @@ import {
   newId, parseDrawings, serializeDrawings, storageKey, translate, trendPriceAt,
   type Drawing, type DrawingKind,
 } from "@/lib/chart/drawings";
-import { maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
+import { clampHover, maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
 import {
   canRedo as histCanRedo, canUndo as histCanUndo, current as histCurrent,
@@ -871,7 +871,11 @@ export function ChartPro({
    * when this symbol has no bar there — a companion that did not trade at that
    * moment shows no crosshair rather than one parked on the nearest day.
    */
-  const shownHover = hover ?? linked;
+  // Clamped, because the hover was picked against a window that a zoom may
+  // since have re-sliced: four handlers change `range` and none of them own the
+  // hover. Reading `view[idx - 1].c` for a bar that is no longer there is the
+  // crash a reader sees on an ordinary zoom.
+  const shownHover = clampHover(hover ?? linked, view.length);
   const idx = shownHover ?? view.length - 1;
   const activeBar = view[idx];
   const prevClose = idx > 0 ? view[idx - 1].c : activeBar.o;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MIN_RANGE, clampOffset, maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf, windowBounds, windowOf, zoomAt,
+  MIN_RANGE, clampHover, clampOffset, maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf,
+  windowBounds, windowOf, zoomAt,
 } from "./pan.ts";
 
 const bars = Array.from({ length: 100 }, (_, i) => i);
@@ -260,4 +261,38 @@ test("the window never runs off the loaded history", () => {
     const [a, b] = windowBounds(400, out.range, out.offset);
     assert.ok(a >= 0 && b <= 400 && a < b, `bounds ${a}..${b}`);
   }
+});
+
+/**
+ * Zooming re-slices the window but leaves the hovered index alone, so an index
+ * picked in a wide window can outlive the window that made it valid. The chart
+ * then reads `view[idx - 1].c` for a bar that is no longer there and throws
+ * "Cannot read properties of undefined (reading 'c')" — a crash on an ordinary
+ * zoom, reported from production.
+ */
+test("a hover picked in a wide window survives a zoom without going out of bounds", () => {
+  // Hovering bar 200 of 300, then zooming in to a 60-bar window.
+  assert.equal(clampHover(200, 60), 59);
+  // The read that actually threw was one bar BEHIND the hover.
+  const idx = clampHover(200, 60)!;
+  assert.ok(idx - 1 < 60 && idx - 1 >= 0, "idx - 1 must also be addressable");
+});
+
+test("clampHover keeps a valid index untouched", () => {
+  assert.equal(clampHover(0, 60), 0);
+  assert.equal(clampHover(30, 60), 30);
+  assert.equal(clampHover(59, 60), 59);
+});
+
+test("no hover, or nothing to hover, is null rather than an index", () => {
+  assert.equal(clampHover(null, 60), null);
+  assert.equal(clampHover(5, 0), null, "an empty window has no hoverable bar");
+  assert.equal(clampHover(0, 0), null);
+});
+
+test("a nonsense hover never becomes an index", () => {
+  assert.equal(clampHover(Number.NaN, 60), null);
+  assert.equal(clampHover(Number.POSITIVE_INFINITY, 60), null);
+  assert.equal(clampHover(-4, 60), 0, "a negative index clamps to the first bar");
+  assert.equal(clampHover(12.7, 60), 12, "a fractional index floors onto a real bar");
 });
