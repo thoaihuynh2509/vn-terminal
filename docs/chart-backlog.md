@@ -57,30 +57,33 @@ counts unnamed buttons, not unreachable ones.
 
 ---
 
-## C3 — Foreign net buy/sell (khối ngoại) is built and dark
-**Owner: You (SSI keys) → Build · M · differentiation**
+## C3 — Foreign net buy/sell (khối ngoại) ships the day the SSI keys land
+**Owner: You (SSI keys) · S once keyed · differentiation**
 
 > As a VN equity holder, I want to see foreign net buying under the price, so that I
 > can read the one flow signal that moves HOSE and that global tools do not show.
 
-**Evidence.** `packages/core/src/providers/ssi.ts` implements the official SSI FCData
-client, `parseForeign` computes net = buy − sell, and `ssi.test.ts` covers it. It has
-**zero consumers** — no API route, no chart pane, nothing under `src/` imports it. The
-roadmap lists this as a P1 differentiator marked "pending: confirm a data source
-exists"; the source exists and the parser is written. It fails closed with no
-credentials, so the only blocker is `SSI_CONSUMER_ID` / `SSI_CONSUMER_SECRET`.
+**Correction.** An earlier draft of this file said the SSI provider had "zero
+consumers". That was wrong — the grep behind it failed and returned nothing. The
+feature is fully wired: `src/views/TerminalView.tsx:21` imports `getForeignFlow` and
+`foreignFlowAvailable`, line 390 renders the toggle, line 405 passes the series into
+`ChartPro`, and it is already gated at `chart:compare` (Plus and above).
+
+**What is actually blocking it.** `foreignFlowAvailable()` is `ssiConfig() !== null`,
+and `ssiConfig()` reads `SSI_CONSUMER_ID` / `SSI_CONSUMER_SECRET`. Without them the
+toggle never renders, so today every reader — paid included — sees a Plus feature
+that is invisible rather than locked. `.env.example` already lists both keys.
 
 **Acceptance**
-- `/api/foreign?symbol=` returns the parsed daily series; absent keys ⇒ 501, never a fake zero.
-- A signed histogram pane below volume, reusing `signedBarPaths` from `chart/paths.ts`.
-- Verified against one live SSI response before shipping — the field names in that file
-  are from the published schema, not from a real call (the file says so).
-- Gated at `plus` and named on the pricing page, or free and named as the VN edge — **your call**.
+- Keys provisioned; the toggle appears for a Plus/Pro session on a daily timeframe.
+- On the FIRST call with real keys, confirm SSI's field names against an actual
+  response — `packages/core/src/providers/ssi.ts:11-15` says the schema was written
+  from published docs, never from a live call, and `parseForeign` may need adjusting.
+- No fake zero: with keys absent or the call failing, the overlay stays absent.
 
-**Why.** This is the roadmap's own answer to "why not TradingView", and most of it is
-already paid for.
-
----
+**Why it still ranks high.** It is the roadmap's own answer to "why not TradingView",
+it is already paid-tier, and the engineering is done. This is a credentials task
+wearing a feature's clothes.
 
 ## C4 — Hydration mismatch on the chart's pane divider ✅ SHIPPED
 **Owner: Build · S · quality**
