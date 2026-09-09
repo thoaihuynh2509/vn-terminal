@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { ask } from "@/lib/ask/provider";
 import { fail } from "@/lib/api";
 import { getSession, encodeSession, cookieOptions, sessionsAvailable, SESSION_COOKIE } from "@/lib/auth/session";
-import { can } from "@/lib/auth/entitlement";
+import { FREE_ASK_LIMIT, freeAsksLeft } from "@/lib/ask/meter";
 import { clientIp } from "@/lib/rate-limit";
-
-/** Free assistant tries a non-entitled reader gets before the paywall. */
-const FREE_ASK_LIMIT = 2;
 
 export const revalidate = 0;
 // The Anthropic SDK and the market providers both need Node APIs.
@@ -49,12 +46,11 @@ export async function POST(req: Request) {
   // feed, and long before a token is spent with the model.
   const session = await getSession();
   const tier = session?.tier ?? "anon";
-  const entitled = can(tier, "use:ai-assistant");
-  // A non-entitled reader gets a taste — a couple of free asks metered in the
-  // signed cookie — then the paywall. The meter is tamper-proof (signed) and
-  // needs a signing secret to persist; without one, fall back to a hard gate.
-  const used = session?.asks ?? 0;
-  const teaser = !entitled && sessionsAvailable() && used < FREE_ASK_LIMIT;
+  // One arithmetic for the count the reader is shown and the count enforced
+  // here; see `ask/meter.ts` for why those must not be two implementations.
+  const left = freeAsksLeft(tier, session?.asks, sessionsAvailable());
+  const entitled = left === null;
+  const teaser = left !== null && left > 0;
   if (!entitled && !teaser) {
     return NextResponse.json(
       { ok: false as const, error: "upgrade_required", tier },
@@ -83,7 +79,7 @@ export async function POST(req: Request) {
   try {
     const focus = typeof symbol === "string" ? symbol.toUpperCase().slice(0, 8) : undefined;
     const result = await ask(question.trim(), loc, focus);
-    const remaining = teaser ? FREE_ASK_LIMIT - (used + 1) : undefined;
+    const remaining = teaser ? left - 1 : undefined;
     const res = NextResponse.json({ ok: true as const, data: { ...result, ...(remaining !== undefined ? { freeRemaining: remaining } : {}) } });
     if (teaser) {
       // Spend one free ask. Reuse the reader's session (or mint an anon meter
@@ -93,7 +89,9 @@ export async function POST(req: Request) {
         tier: session?.tier ?? ("anon" as const),
         read: session?.read ?? [],
         iat: session?.iat ?? Math.floor(Date.now() / 1000),
-        asks: used + 1,
+        // Derived from the clamped remainder rather than from the stored count,
+        // so a corrupt `asks` is healed by the next ask instead of persisted.
+        asks: FREE_ASK_LIMIT - (left - 1),
         ...(session?.exp !== undefined ? { exp: session.exp } : {}),
       };
       res.cookies.set(SESSION_COOKIE, await encodeSession(next), cookieOptions());

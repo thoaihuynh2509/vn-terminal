@@ -1,9 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { getDict } from "@/lib/i18n";
-import type { Locale } from "@/lib/types";
+import { useEffect, useId, useRef, useState } from "react";
+import { getDict, PATHS } from "@/lib/i18n";
+import type { Locale, Tier } from "@/lib/types";
 import { track } from "@/lib/analytics/posthog";
+import { priceFor } from "@/lib/billing/plans";
+import { vnd } from "@/lib/format";
 
 interface Turn {
   question: string;
@@ -16,25 +18,65 @@ const SUGGESTIONS: Record<Locale, string[]> = {
   en: ["Which stocks gained most this session?", "What is the SJC gold price?", "Where is the VNINDEX?", "What is Bitcoin trading at?"],
 };
 
+/** Impressions already counted this page-load, so arrival is not an event storm. */
+const SEEN = new Set<string>();
+
 const SYMBOL_SUGGESTIONS: Record<Locale, string[]> = {
   vi: ["{sym} đóng cửa ở đâu so với hôm qua?", "Khối lượng {sym} phiên này?", "{sym} đã đi thế nào trong tháng qua?"],
   en: ["Where did {sym} close versus yesterday?", "What was {sym}'s volume today?", "How has {sym} moved over the past month?"],
 };
 
-export function AskBox({ locale, isMock, symbol, compact = false }: {
+export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact = false }: {
   locale: Locale; isMock: boolean;
+  /** Decides whether the upsell asks for an account or for money. */
+  tier: Tier;
   /** Symbol on screen — attached to the snapshot the model answers from. */
   symbol?: string;
+  /**
+   * Free asks left, counted on the server, `null` for a subscriber.
+   *
+   * Passed in rather than fetched because the count has to be readable BEFORE
+   * the first question: a trial nobody is told about is not a trial, it is a
+   * wall that arrives without warning.
+   */
+  freeAsks?: number | null;
   compact?: boolean;
 }) {
   const dict = getDict(locale);
+  const anon = tier === "anon";
+  const titleId = useId();
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [locked, setLocked] = useState(false);
-  const [freeLeft, setFreeLeft] = useState<number | null>(null);
+  // A reader with nothing left cannot ask, so the upgrade state is where they
+  // already are — not one wasted round-trip and a 402 away.
+  const [locked, setLocked] = useState(freeAsks === 0);
+  const [freeLeft, setFreeLeft] = useState<number | null>(freeAsks);
   const logRef = useRef<HTMLDivElement>(null);
+  const lockRef = useRef<HTMLDivElement>(null);
+  const wasLocked = useRef(locked);
+
+  /**
+   * Spending the last ask unmounts the form the reader was standing in, so
+   * focus has to be caught — otherwise it falls to `<body>` and their next Tab
+   * restarts at the top of the page, with the offer they were just shown the
+   * furthest thing away. Only on the false→true transition: a reader who
+   * arrives already spent has not moved focus anywhere to lose it.
+   */
+  useEffect(() => {
+    if (locked && !wasLocked.current) lockRef.current?.focus();
+    wasLocked.current = locked;
+  }, [locked]);
+
+  // Counted once per page, not once per render: this gate is shown on arrival
+  // rather than on an action, so re-firing would inflate its impressions
+  // against every other gate's.
+  useEffect(() => {
+    if (!locked || SEEN.has("ai")) return;
+    SEEN.add("ai");
+    track("upgrade_prompt_shown", { gate: "ai", tier, surface: "askbox" });
+  }, [locked, tier]);
 
   async function submit(text: string) {
     const q = text.trim();
@@ -60,7 +102,10 @@ export function AskBox({ locale, isMock, symbol, compact = false }: {
       setTurns((t) => [...t, { question: q, answer: json.data.answer, capturedAt: json.data.capturedAt }]);
       setQuestion("");
       // The server returns this only while the free teaser is being spent.
-      if (typeof json.data.freeRemaining === "number") setFreeLeft(json.data.freeRemaining);
+      if (typeof json.data.freeRemaining === "number") {
+        setFreeLeft(json.data.freeRemaining);
+        if (json.data.freeRemaining === 0) setLocked(true);
+      }
       track("ai_asked", { teaser: typeof json.data.freeRemaining === "number" });
     } catch {
       setError(dict.ask.error);
@@ -82,6 +127,7 @@ export function AskBox({ locale, isMock, symbol, compact = false }: {
         </p>
       )}
 
+      {!locked && (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -117,14 +163,15 @@ export function AskBox({ locale, isMock, symbol, compact = false }: {
           </button>
         )}
       </form>
+      )}
 
-      {freeLeft !== null && !locked && (
-        <p role="status" className="mt-2.5 text-[12px] text-muted">
-          {freeLeft > 0 ? dict.ask.freeLeft.replace("{n}", String(freeLeft)) : dict.ask.freeNone}
+      {freeLeft !== null && freeLeft > 0 && !locked && (
+        <p className="mt-2.5 text-[12px] text-ink-2">
+          {dict.ask.freeLeft.replace("{n}", String(freeLeft))}
         </p>
       )}
 
-      {turns.length === 0 && (
+      {turns.length === 0 && !locked && (
         <div className="mt-4">
           <p className="text-[12px] font-medium uppercase tracking-wide text-muted">{dict.ask.suggestions}</p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -144,14 +191,31 @@ export function AskBox({ locale, isMock, symbol, compact = false }: {
       )}
 
       {locked && (
-        <div role="status" className="mt-4 card p-4 text-center">
-          <p className="text-[13px] font-medium">{dict.paywall.aiLocked}</p>
-          <div className="mt-3 flex flex-wrap justify-center gap-2">
-            <a href={`/${locale}/${locale === "vi" ? "dang-nhap" : "login"}`} className="rounded border border-line bg-surface-2 px-3 py-1.5 text-[13px] font-medium">
-              {dict.paywall.signIn}
+        // Focused rather than announced through a live region: a `role="status"`
+        // inserted already full is routinely dropped by NVDA and VoiceOver, and
+        // it would race the answer log's own polite region in the same commit.
+        // Moving focus to a labelled container announces deterministically.
+        <div ref={lockRef} tabIndex={-1} aria-labelledby={titleId} className="mt-4 card p-4">
+          <h3 id={titleId} className="text-[13px] font-medium">{dict.ask.upgradeTitle}</h3>
+          {/* What the money buys, stated as capabilities rather than as a
+              slogan — and the price comes from `plans.ts`, so this box and the
+              pricing page cannot drift into disagreeing about what Plus costs. */}
+          <ul className="mt-2 space-y-1 text-[12px] leading-relaxed text-ink-2">
+            <li>{dict.ask.upgradeUnlimited}</li>
+            <li>{dict.ask.upgradeIncludes}</li>
+          </ul>
+          <p className="mt-3 text-[12px] text-ink-2">
+            {dict.ask.upgradePrice.replace("{price}", vnd(priceFor("plus", "monthly").amount, locale))}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a href={anon ? `/${locale}/${PATHS.login[locale]}` : `/${locale}/${PATHS.pricing[locale]}?plan=plus`}
+              onClick={() => track("upgrade_prompt_clicked", { gate: "ai", tier, surface: "askbox" })}
+              className="rounded border border-line bg-surface-2 px-3 py-1.5 text-[13px] font-medium text-accent">
+              {anon ? dict.paywall.signIn : dict.paywall.seePlans}
             </a>
-            <a href={`/${locale}/${locale === "vi" ? "goi-dich-vu" : "pricing"}`} className="rounded border border-line px-3 py-1.5 text-[13px] font-medium text-accent">
-              {dict.paywall.seePlans}
+            <a href={anon ? `/${locale}/${PATHS.pricing[locale]}?plan=plus` : `/${locale}/${PATHS.login[locale]}`}
+              className="rounded border border-line px-3 py-1.5 text-[13px] font-medium text-ink-2">
+              {anon ? dict.paywall.seePlans : dict.paywall.signIn}
             </a>
           </div>
         </div>

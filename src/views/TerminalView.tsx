@@ -10,9 +10,10 @@ import { LiveStamp } from "@/components/LiveStamp";
 import { SymbolSearchButton } from "@/components/SymbolSearch";
 import { WatchButton } from "@/components/WatchButton";
 import { Delta } from "@/components/Delta";
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionsAvailable } from "@/lib/auth/session";
 import { can } from "@/lib/auth/entitlement";
 import { activeProvider } from "@/lib/ask/provider";
+import { freeAsksToShow } from "@/lib/ask/meter";
 import { dateOnly, equityPrice } from "@/lib/format";
 import { rsi } from "@/lib/ta/indicators";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
@@ -329,6 +330,7 @@ export async function TerminalView({
           locale={locale} dict={dict} symbol={sym} board={board}
           current={last.c} previous={prev.c} tier={tier} isMock={activeProvider() === "mock"}
           initialTab={rail} indicators={rsi14}
+          freeAsks={freeAsksToShow(tier, session?.asks, sessionsAvailable())}
         />
       }
     >

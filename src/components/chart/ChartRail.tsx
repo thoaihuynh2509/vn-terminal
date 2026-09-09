@@ -12,7 +12,6 @@ import { STREAK_KEY, bumpStreak, parseStreak } from "@/lib/retention/streak";
 import { isEditable } from "@/lib/chart/tf-keys";
 import { track } from "@/lib/analytics/posthog";
 import { useRouter } from "next/navigation";
-import { can } from "@/lib/auth/entitlement";
 import { dirOf, equityPrice, pct } from "@/lib/format";
 import { PATHS, type Dict } from "@/lib/i18n";
 import { useDismiss } from "@/lib/ui/use-dismiss";
@@ -33,7 +32,7 @@ const asTab = (v: string | null | undefined): Tab | null => (TABS.includes(v as 
  * rail is one tap away instead of a scroll below the fold.
  */
 export function ChartRail({
-  locale, dict, symbol, board, current, previous, tier, isMock, initialTab, indicators,
+  locale, dict, symbol, board, current, previous, tier, isMock, initialTab, indicators, freeAsks,
 }: {
   locale: Locale; dict: Dict; symbol: string; board: Quote[];
   current: number; previous: number; tier: Tier; isMock: boolean;
@@ -41,6 +40,8 @@ export function ChartRail({
   initialTab?: string;
   /** Indicator readings for alerts that watch one, keyed by `indicatorKey`. */
   indicators?: Record<string, { current: number; previous?: number }>;
+  /** Free assistant asks left, `null` for a subscriber. Read on the server. */
+  freeAsks?: number | null;
 }) {
   const stored = useStored(TAB_KEY);
   // The URL's choice is held in state, not written to storage: a shared link
@@ -146,18 +147,13 @@ export function ChartRail({
         {tab === "layouts" && (
           <LayoutsTab locale={locale} dict={dict} tier={tier} symbol={symbol} />
         )}
+        {/* No second paywall here. The rail used to refuse every non-entitled
+            reader outright, while the home page offered the same person two
+            free asks — one product telling one reader two different things
+            about one feature. AskBox owns the whole ladder now: the taste, the
+            count, and the priced card when it runs out. */}
         {tab === "ask" && (
-          can(tier, "use:ai-assistant") ? (
-            <AskBox locale={locale} isMock={isMock} symbol={symbol} compact />
-          ) : (
-            <div>
-              <p className="text-[12px] leading-relaxed text-ink-2">{dict.paywall.aiLocked}</p>
-              <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`}
-                className="mt-3 inline-block rounded border border-line bg-surface-2 px-3 py-1.5 text-[12px] font-medium hover:bg-surface">
-                {dict.paywall.seePlans}
-              </Link>
-            </div>
-          )
+          <AskBox locale={locale} isMock={isMock} tier={tier} symbol={symbol} freeAsks={freeAsks} compact />
         )}
       </div>
     </section>

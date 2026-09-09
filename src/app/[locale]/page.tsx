@@ -14,9 +14,10 @@ import { Sparkline } from "@/components/Sparkline";
 import { SectionHead } from "@/components/chrome";
 import { PageHeader } from "@/components/editorial";
 import { Card } from "@/components/ui";
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionsAvailable } from "@/lib/auth/session";
 import { dbAvailable, getDb } from "@/lib/db";
 import { activeProvider } from "@/lib/ask/provider";
+import { freeAsksToShow } from "@/lib/ask/meter";
 import { buildBrief } from "@/lib/brief";
 import { dirOf, equityPrice, num, pct } from "@/lib/format";
 import { getDict, href, isLocale, PATHS } from "@/lib/i18n";
@@ -184,7 +185,8 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
             <SectionHead title={dict.home.askTitle} />
             <Card className="p-3.5">
               <p className="mb-2.5 text-[12px] leading-relaxed text-muted">{dict.home.askSub}</p>
-              <AskBox locale={locale} isMock={activeProvider() === "mock"} compact />
+              <AskBox locale={locale} isMock={activeProvider() === "mock"} tier={session?.tier ?? "anon"}
+                freeAsks={freeAsksToShow(session?.tier ?? "anon", session?.asks, sessionsAvailable())} compact />
             </Card>
           </section>
 

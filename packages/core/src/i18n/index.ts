@@ -411,7 +411,6 @@ const vi = {
     signIn: "Đăng nhập",
     seePlans: "Xem gói dịch vụ",
     continueReading: "Đọc tiếp",
-    aiLocked: "Trợ lý AI dành cho gói Plus trở lên.",
   },
 
   heatmap: {
@@ -552,7 +551,10 @@ const vi = {
     suggestions: "Gợi ý câu hỏi",
     answeredAt: "Số liệu tại",
     freeLeft: "Còn {n} câu hỏi AI miễn phí — nâng cấp để hỏi không giới hạn.",
-    freeNone: "Bạn đã dùng hết lượt hỏi miễn phí. Nâng cấp để tiếp tục.",
+    upgradeTitle: "Bạn đã dùng hết câu hỏi AI miễn phí.",
+    upgradeUnlimited: "Hỏi không giới hạn.",
+    upgradeIncludes: "Gói Plus còn mở khung thời gian trong phiên, toàn bộ thư viện chỉ báo và cảnh báo gửi qua email.",
+    upgradePrice: "Gói Plus từ {price}/tháng.",
   },
 
   brief: {
@@ -950,7 +952,6 @@ const en: typeof vi = {
     signIn: "Sign in",
     seePlans: "See plans",
     continueReading: "Keep reading",
-    aiLocked: "The AI assistant is available on Plus and above.",
   },
 
   heatmap: {
@@ -1091,7 +1092,10 @@ const en: typeof vi = {
     suggestions: "Try asking",
     answeredAt: "Figures as of",
     freeLeft: "{n} free AI question(s) left — upgrade to ask without limits.",
-    freeNone: "You've used your free questions. Upgrade to continue.",
+    upgradeTitle: "You have used your free AI questions.",
+    upgradeUnlimited: "Ask as many questions as you like.",
+    upgradeIncludes: "Plus also unlocks intraday intervals, the full indicator library and alerts delivered by email.",
+    upgradePrice: "Plus from {price}/month.",
   },
 
   brief: {
