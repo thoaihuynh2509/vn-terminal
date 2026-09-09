@@ -7,6 +7,9 @@ import { LiveStamp } from "@/components/LiveStamp";
 import { OnboardingWatchlist } from "@/components/OnboardingWatchlist";
 import { FeedBanner } from "@/components/FeedBanner";
 import { Heatmap, HeatmapLegend } from "@/components/Heatmap";
+import { JsonLd } from "@/components/JsonLd";
+import { organizationLd, websiteLd } from "@/lib/seo";
+import { siteUrl } from "@/lib/site";
 import { QuoteTable } from "@/components/QuoteTable";
 import { ReadAloud } from "@/components/ReadAloud";
 import { SectorBars } from "@/components/SectorBars";
@@ -98,6 +101,12 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
 
   return (
     <>
+      {/* The home page carried no structured data at all — the one page where a
+          publisher graph is worth having. No SearchAction: symbol search is a
+          client-side palette, and a search endpoint that cannot be called is a
+          rich result that fails on click. */}
+      <JsonLd data={organizationLd(siteUrl(), dict.brand, dict.home.subtitle)} />
+      <JsonLd data={websiteLd(siteUrl(), dict.brand, locale)} />
       <PageHeader title={dict.home.today} meta={dateLabel} />
 
       {/* The verdict + a live stamp, then the mood bar: what today is, at a glance. */}

@@ -5,7 +5,10 @@ import { ChartRail } from "@/components/chart/ChartRail";
 import { ChartViewed } from "@/components/chart/ChartViewed";
 import { PageHeader } from "@/components/editorial";
 import { FeedBanner } from "@/components/FeedBanner";
+import { JsonLd } from "@/components/JsonLd";
 import { PageShell } from "@/components/layout";
+import { breadcrumbLd, symbolTrail } from "@/lib/seo";
+import { siteUrl } from "@/lib/site";
 import { LiveStamp } from "@/components/LiveStamp";
 import { SymbolSearchButton } from "@/components/SymbolSearch";
 import { WatchButton } from "@/components/WatchButton";
@@ -334,6 +337,10 @@ export async function TerminalView({
         />
       }
     >
+      {/* The 60 VN30 chart URLs are the biggest cohort in the sitemap and had no
+          structured data at all. A trail, not a quote: the graph stays true
+          whatever the market did, and the feed may lag. */}
+      <JsonLd data={breadcrumbLd(siteUrl(), symbolTrail(locale, sym, dict.nav.home, dict.nav.stocks))} />
       <ChartViewed
         symbol={sym} tf={view.id} intraday={!!view.intraday} layout={cells}
         tier={tier} hasCmp={compare.length > 0} hasFr={!!foreign}
