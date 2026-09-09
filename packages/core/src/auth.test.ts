@@ -155,3 +155,19 @@ test("malformed tokens are rejected rather than thrown", async () => {
     assert.equal(await decodeSession(t as string | undefined), null);
   }
 });
+
+/**
+ * Pins the premise of the chart rail's lock copy.
+ *
+ * The rail told anonymous readers that drawing was "a Pro feature" while `free`
+ * has held `chart:drawings` all along — a paywall quoted in front of a free
+ * feature. The copy now says "sign in, it is free", which is only true while
+ * `anon` is the single tier without the capability. If that ever changes, this
+ * test fails and `dict.chart.drawLocked` has to change with it.
+ */
+test("drawings are free, and anon is the only tier locked out of them", () => {
+  assert.equal(can("anon", "chart:drawings"), false, "the rail's lock must have someone to show to");
+  for (const t of ["free", "plus", "pro"] as const) {
+    assert.equal(can(t, "chart:drawings"), true, `${t} must not be told to pay for drawings`);
+  }
+});

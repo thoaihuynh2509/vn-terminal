@@ -156,6 +156,7 @@ const vi = {
     upgrade: "Nâng cấp",
     dismiss: "Đóng",
     drawing: "Bạn đã dùng hết {n} nét vẽ cho mã này.",
+    drawingAnon: "Công cụ vẽ có sẵn trong tài khoản miễn phí.",
     indicator: "Bạn đang dùng {n} chỉ báo cùng lúc — mức tối đa của gói hiện tại.",
     layout: "Bạn đã lưu {n} bố cục — mức tối đa của gói hiện tại.",
     alert: "Bạn đã tạo {n} cảnh báo — mức tối đa của gói hiện tại.",
@@ -192,7 +193,7 @@ const vi = {
     tradeHint: "Bấm lên biểu đồ tại giá bạn đã mua",
     drawNeed: "Bấm thêm {n} điểm",
     clearDrawings: "Xoá hình vẽ",
-    drawLocked: "Công cụ vẽ thuộc gói Pro",
+    drawLocked: "Đăng nhập để dùng công cụ vẽ — miễn phí",
     help: "Phím tắt",
     keys: {
       pan: "Kéo biểu đồ hoặc Shift + ← → để xem quá khứ",
@@ -697,6 +698,7 @@ const en: typeof vi = {
     upgrade: "Upgrade",
     dismiss: "Dismiss",
     drawing: "You have used all {n} drawings for this symbol.",
+    drawingAnon: "Drawing tools come with a free account.",
     indicator: "You are running {n} indicators at once — the most your plan allows.",
     layout: "You have saved {n} layouts — the most your plan allows.",
     alert: "You have {n} alerts — the most your plan allows.",
@@ -733,7 +735,7 @@ const en: typeof vi = {
     tradeHint: "Click the chart at the price you bought",
     drawNeed: "{n} more point(s)",
     clearDrawings: "Clear drawings",
-    drawLocked: "Drawing tools are a Pro feature",
+    drawLocked: "Sign in to use the drawing tools — free",
     help: "Keyboard shortcuts",
     keys: {
       pan: "Drag the chart or Shift + ← → to look back",

@@ -1153,9 +1153,14 @@ try {
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
       await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
 
+      // A locked tool is no longer `disabled` — it is a button that explains the
+      // lock — so `!b.disabled` was true for every tier and could not fail. What
+      // separates the two states is `aria-pressed`: only a usable tool is a
+      // toggle, and only an unlocked tool answers to its bare name (a locked one
+      // has the reason appended).
       const drawEnabled = await s.evaluate(`(() => {
         const b = document.querySelector('[aria-label="Mức giá"]');
-        return b ? !b.disabled : null;
+        return b ? b.getAttribute('aria-pressed') !== null : null;
       })()`);
       check("pro can reach the drawing tools", drawEnabled === true, String(drawEnabled));
 

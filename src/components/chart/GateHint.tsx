@@ -29,7 +29,7 @@ export type Gate = "drawing" | "indicator" | "layout" | "alert" | "compare" | "i
 const DISMISSED = new Set<Gate>();
 
 export function GateHint({
-  gate, locale, dict, tier, limit, onClose,
+  gate, locale, dict, tier, limit, asked, onClose,
 }: {
   gate: Gate;
   locale: Locale;
@@ -37,9 +37,16 @@ export function GateHint({
   tier: Tier;
   /** The ceiling that refused, so the copy can state the actual number. */
   limit?: number;
+  /**
+   * The reader ASKED why something is locked, rather than tripping over a
+   * ceiling mid-task. Dismissal suppresses the nag, never an answer someone
+   * requested: a control that stays silent on the second press is the broken
+   * tool this component was written to stop being.
+   */
+  asked?: boolean;
   onClose?: () => void;
 }) {
-  const [open, setOpen] = useState(() => !DISMISSED.has(gate));
+  const [open, setOpen] = useState(() => asked || !DISMISSED.has(gate));
 
   useEffect(() => {
     if (open) track("upgrade_prompt_shown", { gate, tier, limit });
@@ -53,17 +60,20 @@ export function GateHint({
 
   if (!open) return null;
 
-  const body = (dict.gate[gate] ?? "").replace("{n}", String(limit ?? ""));
   // Anonymous readers are asked to sign in, not to pay: the next step for
   // someone with no account is an account, and a price is a strange first ask.
   const anon = tier === "anon";
+  // `anon` is the only tier without `chart:drawings`, so its drawing gate is
+  // not a ceiling it reached — the count-based copy would read "you have used
+  // all 0 drawings". It gets the reason it is actually stopped instead.
+  const body = (anon && gate === "drawing" ? dict.gate.drawingAnon : dict.gate[gate] ?? "")
+    .replace("{n}", String(limit ?? ""));
   const href = anon
     ? `/${locale}/${PATHS.login[locale]}`
     : `/${locale}/${PATHS.pricing[locale]}?plan=plus`;
 
   return (
-    <div role="status"
-      className="mt-2 flex items-start justify-between gap-3 rounded border border-line bg-surface-2 px-3 py-2 text-[12px]">
+    <div className="mt-2 flex items-start justify-between gap-3 rounded border border-line bg-surface-2 px-3 py-2 text-[12px]">
       <p className="min-w-0 text-ink-2">
         {body}{" "}
         <Link href={href} onClick={() => track("upgrade_prompt_clicked", { gate, tier })}

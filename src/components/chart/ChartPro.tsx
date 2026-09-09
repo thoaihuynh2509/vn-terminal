@@ -206,7 +206,18 @@ export function ChartPro({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** The ceiling the reader just hit, so it can be explained where they hit it. */
-  const [gate, setGate] = useState<{ gate: Gate; limit?: number } | null>(null);
+  const [gate, setGate] = useState<{ gate: Gate; limit?: number; asked?: boolean; n: number } | null>(null);
+  /**
+   * Raising a gate carries a sequence number so the hint REMOUNTS every time,
+   * even when the same gate fires twice. Without it a hint that has been
+   * dismissed once stays dismissed for the session, and the second refusal
+   * renders nothing at all — the silent no-op the hint exists to replace.
+   */
+  const gateSeq = useRef(0);
+  const raiseGate = useCallback((g: { gate: Gate; limit?: number; asked?: boolean }) => {
+    gateSeq.current += 1;
+    setGate({ ...g, n: gateSeq.current });
+  }, []);
 
   /**
    * Undo history for this symbol's drawings.
@@ -311,14 +322,14 @@ export function ChartPro({
         track("chart_limit_hit", { gate: "drawing", tier, limit: drawLimit, symbol });
         // Refusing silently reads as a bug; the fourth line simply not appearing
         // is indistinguishable from a broken tool.
-        setGate({ gate: "drawing", limit: drawLimit });
+        raiseGate({ gate: "drawing", limit: drawLimit });
         return false;
       }
       commitDrawings([...drawings, d]);
       track("chart_drawing_created", { kind: d.kind, count: drawings.length + 1, symbol });
       return true;
     },
-    [drawings, drawLimit, commitDrawings, tier, symbol],
+    [drawings, drawLimit, commitDrawings, tier, symbol, raiseGate],
   );
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -371,6 +382,33 @@ export function ChartPro({
 
   const [width, setWidth] = useState(900);
   const [priceH, setPriceH] = useState(340);
+  /**
+   * The price pane's share of the viewport as a WHOLE PERCENT, or `null` before
+   * anything has been measured.
+   *
+   * `null` on the server AND on the hydration render, because there is no
+   * window to divide by until the first effect runs. Substituting a nominal
+   * viewport height there — which the divider's `aria-valuenow` used to do —
+   * makes the server say 34 and the client say 43 about the same divider, and
+   * React reports that as a hydration mismatch on every chart load.
+   *
+   * Stored pre-rounded because a whole percent is all `aria-valuenow` consumes:
+   * where `paneHeight` clamps, the raw ratio changes on every pixel of a window
+   * resize while the pane height does not, so keeping it raw would re-render
+   * every pane ~60x a second for a value nothing can observe.
+   */
+  const [ratioPct, setRatioPct] = useState<number | null>(null);
+  /**
+   * The exact ratio behind that percent.
+   *
+   * Kept in a ref and advanced BEFORE the state update, the same way the
+   * indicator toggle does it. Reading it from render state instead makes a HELD
+   * arrow key — which repeats far faster than React re-renders — compute every
+   * step from the same stale height, so ten presses move the divider once. It
+   * is exact rather than rounded so a nudge never quantises to the reported
+   * whole percent.
+   */
+  const ratioRef = useRef<number | null>(null);
   const hintSeen = useStored(HINT_KEY);
   const firstChart = useStored(FIRST_CHART_KEY);
 
@@ -452,7 +490,16 @@ export function ChartPro({
   const paneRatio = ratioChoice ?? saved?.paneRatio ?? DEFAULT_SETTINGS.paneRatio;
 
   useEffect(() => {
-    const measure = () => setPriceH(paneHeight(full, paneRatio));
+    const measure = () => {
+      const h = paneHeight(full, paneRatio);
+      const r = paneRatio ?? h / window.innerHeight;
+      setPriceH(h);
+      // Seeded here rather than mirrored through an effect, so the ref is never
+      // null for the commit between the measurement and that effect running —
+      // an arrow key landing in that window nudged from a 0.5 fallback.
+      ratioRef.current = r;
+      setRatioPct(Math.round(r * 100));
+    };
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
@@ -524,20 +571,7 @@ export function ChartPro({
     });
   }, [persistSettings]);
 
-  /**
-   * Keyboard equivalent: a divider only a mouse can move is not operable.
-   *
-   * The current ratio is advanced through a ref before the state update, the
-   * same way the indicator toggle does it. Reading it from render state instead
-   * makes a HELD arrow key — which repeats far faster than React re-renders —
-   * compute every step from the same stale height, so ten presses move the
-   * divider once.
-   */
-  const ratioRef = useRef<number | null>(null);
-  useEffect(() => {
-    ratioRef.current = paneRatio ?? (typeof window === "undefined" ? null : priceH / window.innerHeight);
-  }, [paneRatio, priceH]);
-
+  /** Keyboard equivalent: a divider only a mouse can move is not operable. */
   const nudgeDivider = useCallback((dir: -1 | 1) => {
     const base = ratioRef.current ?? 0.5;
     const next = clampPaneRatio(base + (dir * 24) / window.innerHeight);
@@ -701,7 +735,7 @@ export function ChartPro({
   const toggle = useCallback((def: IndicatorDef) => {
     if (!def.free && !unlocked) {
       track("chart_limit_hit", { gate: "indicator", reason: "locked", id: def.id, tier, limit });
-      setGate({ gate: "indicator", limit });
+      raiseGate({ gate: "indicator", limit });
       return;
     }
     const prev = activeRef.current;
@@ -710,7 +744,7 @@ export function ChartPro({
     const on = prev.some((t) => sameIndicator(t, def.id));
     if (!on && prev.length >= limit) {
       track("chart_limit_hit", { gate: "indicator", reason: "limit", id: def.id, tier, limit });
-      setGate({ gate: "indicator", limit });
+      raiseGate({ gate: "indicator", limit });
       return; // at the tier's ceiling
     }
     const next = on ? prev.filter((t) => !sameIndicator(t, def.id)) : [...prev, def.id];
@@ -718,7 +752,7 @@ export function ChartPro({
     setActiveChoice(next);
     persistSettings({ indicators: next });
     track("chart_indicator_toggled", { id: def.id, on: !on, active_count: next.length, limit, tier });
-  }, [limit, unlocked, tier, persistSettings]);
+  }, [limit, unlocked, tier, persistSettings, raiseGate]);
 
   /**
    * Retune an active indicator.
@@ -1176,10 +1210,15 @@ export function ChartPro({
         </p>
       )}
 
-      {gate && (
-        <GateHint gate={gate.gate} limit={gate.limit} locale={locale} dict={dict} tier={tier}
-          onClose={() => setGate(null)} />
-      )}
+      {/* The live region is always in the tree, so a hint that appears later is
+          a CONTENT change inside it rather than a region arriving already
+          populated — which NVDA and JAWS routinely fail to announce. */}
+      <div role="status" aria-live="polite">
+        {gate && (
+          <GateHint key={gate.n} gate={gate.gate} limit={gate.limit} asked={gate.asked}
+            locale={locale} dict={dict} tier={tier} onClose={() => setGate(null)} />
+        )}
+      </div>
 
       {/* Status line: symbol + OHLC + indicator values, the way a terminal
           reports the bar under the cursor. */}
@@ -1260,25 +1299,49 @@ export function ChartPro({
                 <button
                   key={m}
                   type="button"
-                  onClick={() => { setMode(m); setPending([]); }}
-                  disabled={locked}
-                  aria-pressed={mode === m}
+                  // Neither `disabled` nor `aria-disabled`. A disabled button
+                  // cannot be focused, which put the lock's reason and the link
+                  // out of it behind a pointer; `aria-disabled` would announce
+                  // "unavailable" about a button that does something, and some
+                  // voice-control drivers refuse such a target outright. What
+                  // this actually is, once locked, is an ordinary button that
+                  // explains the lock — so it is marked as one, and the reason
+                  // travels in the accessible name.
+                  onClick={() => {
+                    if (locked) {
+                      track("chart_limit_hit", { gate: "drawing", reason: "locked", tool: m, tier, symbol });
+                      raiseGate({ gate: "drawing", asked: true });
+                      return;
+                    }
+                    setMode(m);
+                    setPending([]);
+                  }}
+                  // Only a usable tool is a toggle. A locked one never becomes
+                  // the active mode, so claiming "not pressed" would describe a
+                  // state it cannot enter.
+                  aria-pressed={locked ? undefined : mode === m}
                   aria-label={locked ? `${label} — ${dict.chart.drawLocked}` : label}
                   title={locked ? dict.chart.drawLocked : label}
-                  className={`grid h-10 w-10 shrink-0 place-items-center rounded text-[13px] leading-none lg:h-8 lg:w-8 ${
+                  className={`relative grid h-10 w-10 shrink-0 place-items-center rounded text-[13px] leading-none lg:h-8 lg:w-8 ${
                     mode === m ? "bg-surface-2 text-ink"
-                      : locked ? "text-muted opacity-50"
+                      : locked ? "cursor-not-allowed text-ink-2"
                       : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                   }`}
                 >
+                  {/* The tool keeps its own glyph when locked and the padlock
+                      becomes a badge: twelve identical padlocks made the thing
+                      being sold impossible to tell apart. */}
                   <span aria-hidden="true">
-                    {locked ? "🔒" : m === "channel" ? (
+                    {m === "channel" ? (
                       <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth={1.3}>
                         <line x1="1.5" y1="10" x2="8.5" y2="2" />
                         <line x1="6.5" y1="13" x2="13.5" y2="5" />
                       </svg>
                     ) : TOOL_GLYPH[m]}
                   </span>
+                  {locked && (
+                    <span aria-hidden="true" className="absolute bottom-0 right-0 text-[10px] leading-none">🔒</span>
+                  )}
                 </button>
               );
             })}
@@ -1334,10 +1397,10 @@ export function ChartPro({
             role="separator"
             aria-orientation="horizontal"
             aria-label={dict.chart.resizePane}
-            aria-valuenow={Math.round((paneRatio ?? priceH / (typeof window === "undefined" ? 1000 : window.innerHeight)) * 100)}
+            aria-valuenow={ratioPct ?? undefined}
             aria-valuemin={Math.round(MIN_PANE_RATIO * 100)}
             aria-valuemax={Math.round(MAX_PANE_RATIO * 100)}
-            tabIndex={0}
+            tabIndex={ratioPct === null ? -1 : 0}
             onPointerDown={onDividerDown}
             onPointerMove={onDividerMove}
             onPointerUp={onDividerUp}
