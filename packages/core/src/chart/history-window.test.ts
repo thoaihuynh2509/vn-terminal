@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  DAILY_FLOOR_ISO, INTRADAY_FLOOR_DAYS, atLeftEdge, grew, mergeBars, olderWindow,
-} from "./history-window.ts";
+import { DAILY_FLOOR_ISO, INTRADAY_FLOOR_DAYS, atLeftEdge, grew, historyFailure, mergeBars, olderWindow } from "./history-window.ts";
 import type { Bar } from "../types.ts";
 
 const DAY = 86_400;
@@ -104,4 +102,20 @@ test("the probed feed limits are recorded, not guessed", () => {
   // should be able to re-probe and compare.
   assert.equal(DAILY_FLOOR_ISO, "2012-03-20");
   assert.equal(INTRADAY_FLOOR_DAYS, 90);
+});
+
+test("a rate limit or a server wobble is retried, never latched", () => {
+  // The bug this pins: /api/bars allows 120 requests a minute, a pan used to
+  // burst past that, and the 429 that came back stopped the chart from ever
+  // loading older bars for that symbol again.
+  assert.equal(historyFailure(429), "retry");
+  assert.equal(historyFailure(500), "retry");
+  assert.equal(historyFailure(502), "retry");
+  assert.equal(historyFailure(503), "retry");
+});
+
+test("a refusal that will repeat forever stops the asking", () => {
+  assert.equal(historyFailure(400), "stop"); // malformed range
+  assert.equal(historyFailure(402), "stop"); // intraday needs a paid tier
+  assert.equal(historyFailure(404), "stop");
 });

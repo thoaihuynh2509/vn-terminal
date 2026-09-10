@@ -26,7 +26,7 @@ import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { FIRST_CHART_KEY } from "@/components/OnboardingWatchlist";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { linkedIndex } from "@/lib/chart/sync";
-import { atLeftEdge, grew, mergeBars, olderWindow } from "@/lib/chart/history-window";
+import { atLeftEdge, grew, historyFailure, mergeBars, olderWindow } from "@/lib/chart/history-window";
 import { POLL_INTERVAL_MS, applyUpdate } from "@/lib/chart/stream";
 import { isSessionOpen } from "@/lib/chart/session";
 import { useChartSync } from "./ChartSync";
@@ -59,6 +59,14 @@ const TOOL_GLYPH: Record<"cursor" | DrawingKind, string> = {
   cursor: "⌖", hline: "─", trend: "╱", fib: "≣", fibext: "⇗", channel: "", trade: "▮",
   ray: "↗", vline: "│", rect: "▭", text: "T", measure: "↔",
 };
+
+/**
+ * How long to wait before re-asking for older history after a refusal that
+ * might not repeat. Longer than a moment on purpose: the refusal we expect is
+ * `/api/bars` rate-limiting a burst over its 60-second window, and an eager
+ * retry would spend the next token on the same "no".
+ */
+const HISTORY_RETRY_MS = 8_000;
 
 /** How many clicks each tool needs before it becomes a drawing. */
 const TOOL_POINTS: Record<DrawingKind, number> = {
@@ -358,6 +366,35 @@ export function ChartPro({
   const history = pulled.key === seriesKey ? pulled : { key: seriesKey, bars: [], done: false };
   const exhausted = history.done;
   const loading = useRef(false);
+  /**
+   * Bumped when a history fetch fails for a reason that could succeed later.
+   * The effect below no longer re-runs on every frame of a pan, which is what
+   * made it usable — but it also means a refusal would otherwise sit there
+   * until the reader happened to change something. One scheduled retry heals
+   * it without reintroducing a request per frame.
+   */
+  const [retry, setRetry] = useState(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (retryTimer.current) clearTimeout(retryTimer.current); }, []);
+
+  /**
+   * The abort scope for history requests: one per SERIES, not one per run of
+   * the effect below.
+   *
+   * A request is only worth cancelling when its answer has become worthless —
+   * the reader moved to another symbol or interval, or left. Cancelling because
+   * a dependency happened to re-run is not that, and it silently lost pages:
+   * the chart syncs its own view state into the URL, that navigation hands the
+   * effect a fresh `bars` prop, and the cleanup then aborted a request whose
+   * bytes had already arrived. The network showed 30KB of older bars received
+   * and the chart drew none of them.
+   */
+  const histAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const ctl = new AbortController();
+    histAbort.current = ctl;
+    return () => ctl.abort();
+  }, [seriesKey]);
 
   /**
    * The last bar, kept fresh while the market is open.
@@ -591,6 +628,21 @@ export function ChartPro({
     track("chart_scale_changed", { scale: sc, tier });
   }, [persistSettings, tier]);
   /**
+   * Whether the window has reached the left edge of what is loaded.
+   *
+   * Derived here, and depended on as a BOOLEAN, because `offset` itself changes
+   * sixty times a second during a drag. With `offset` in the effect's
+   * dependencies below, React tore the effect down and rebuilt it on every
+   * frame — and its cleanup aborts the request in flight, so a reader dragging
+   * steadily into the past aborted their own history fetch before it could
+   * land, over and over, while every one of those attempts still reached the
+   * route. `/api/bars` allows 120 requests a minute; a burst like that spends
+   * them, and the 429 that followed used to be permanent (see below). This
+   * flips once, when the reader arrives, and then holds still.
+   */
+  const nearEdge = atLeftEdge(bars.length, range, offset);
+
+  /**
    * Pull in older history when the window reaches the left edge.
    *
    * Guarded three ways, because this is the one place in the chart that can
@@ -601,19 +653,34 @@ export function ChartPro({
    */
   useEffect(() => {
     if (exhausted || loading.current || !barsProp.length) return;
-    if (!atLeftEdge(bars.length, range, offset)) return;
+    if (!nearEdge) return;
 
     loading.current = true;
     const oldest = bars[0].t;
     const bucket = Math.max(60, (bars[1]?.t ?? oldest + 86400) - oldest);
     const { to } = olderWindow(oldest, bucket, range || 120);
-    const ctl = new AbortController();
+    const signal = histAbort.current?.signal;
 
     (async () => {
       try {
         const url = `/api/bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&before=${to}`;
-        const res = await fetch(url, { signal: ctl.signal, headers: { accept: "application/json" } });
-        if (!res.ok) { setPulled({ key: seriesKey, bars: history.bars, done: true }); return; }
+        const res = await fetch(url, { signal, headers: { accept: "application/json" } });
+        if (!res.ok) {
+          // A failed REQUEST is not evidence that the feed has nothing older.
+          // 429 — our own limiter — and any 5xx will answer differently in a
+          // moment, exactly like the thrown network error the catch below
+          // already forgives, so they schedule a retry and leave the latch
+          // alone. Latching on these is what made one rate-limited burst kill
+          // panning for a symbol until the reader changed timeframe. A 4xx
+          // that is not 429 (a malformed range, 402 for a gated interval) will
+          // refuse identically forever, so that one still stops the asking.
+          if (historyFailure(res.status) === "retry") {
+            retryTimer.current = setTimeout(() => setRetry((n) => n + 1), HISTORY_RETRY_MS);
+          } else {
+            setPulled({ key: seriesKey, bars: history.bars, done: true });
+          }
+          return;
+        }
         // The route answers through `ok()`, which wraps the payload — reading
         // the body as a bare array made every page look empty, which latched
         // `exhausted` on the first fetch and disabled the feature silently.
@@ -636,9 +703,10 @@ export function ChartPro({
         loading.current = false;
       }
     })();
-
-    return () => ctl.abort();
-  }, [bars, barsProp, range, offset, symbol, tf, exhausted, seriesKey, history.bars]);
+    // Deliberately no cleanup: `loading` already keeps this to one flight, and
+    // the series-scoped controller above owns cancellation. A cleanup here
+    // would abort on every dependency change instead.
+  }, [bars, barsProp, range, nearEdge, symbol, tf, exhausted, seriesKey, history.bars, retry]);
 
   // Polling, only while the session is open, and only for the primary chart's
   // own symbol. A companion cell in a grid polls too — each is its own chart —
@@ -1733,6 +1801,15 @@ function PricePane({
     ? seriesPath(view.map((b) => b.c), x, y, maxCols)
     : "";
 
+  /**
+   * Marker placements, held across renders.
+   *
+   * This was computed inline in the markup, so it re-derived a day key for
+   * every visible bar on every render — and a pan renders on every frame. The
+   * placements only change when the window or the event list does.
+   */
+  const placedEvents = useMemo(() => placeEvents(view, events), [view, events]);
+
   return (
     <div className="relative">
       <svg
@@ -1850,7 +1927,7 @@ function PricePane({
             there is no gap here for a dividend to explain — the marker answers
             "was I holding when this paid, and how much", and the label says the
             amount without implying it caused anything. */}
-        {placeEvents(view, events).map((ev) => {
+        {placedEvents.map((ev) => {
           const cx = x(ev.i);
           const label = ev.kind === "cash" ? dict.chart.eventCash
             : ev.kind === "stock" ? dict.chart.eventStock : dict.chart.eventRights;

@@ -83,3 +83,21 @@ export function atLeftEdge(total: number, range: number, offset: number, margin 
   if (range <= 0 || range >= total) return true;
   return total - range - offset <= margin;
 }
+
+/**
+ * What a failed history request means.
+ *
+ * The distinction the chart has to make is between "the feed has nothing older
+ * than this" and "this one request did not get through". Only the first is a
+ * reason to stop asking; treating the second that way is what turned a single
+ * rate-limited burst into a chart that could never be panned into the past
+ * again until the reader changed symbol or timeframe.
+ *
+ * 429 is our own limiter and 5xx is the upstream having a moment — both answer
+ * differently a few seconds later. Any other 4xx (a malformed range, or 402 for
+ * an interval the reader's tier does not include) will refuse identically on
+ * every retry, so there is nothing to wait for.
+ */
+export function historyFailure(status: number): "retry" | "stop" {
+  return status === 429 || status >= 500 ? "retry" : "stop";
+}
