@@ -25,8 +25,6 @@ import { getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
 import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import { getCorpEvents } from "@/lib/providers/events";
-import { getCoinBars } from "@/lib/providers/crypto";
-import { cryptoEnabled } from "@/lib/flags";
 import { ChartSyncProvider } from "@/components/chart/ChartSync";
 import { SavedLayoutBar } from "@/components/chart/SavedLayoutBar";
 import { decodeTemplate } from "@/lib/chart/layouts";
@@ -57,28 +55,12 @@ import type { Locale } from "@/lib/types";
  * a gold chart with no history yet and a gold chart we cannot reach look the
  * same to the reader, and both are "no history to show" rather than an error.
  */
-/**
- * Coin bars, already `Bar`-shaped by the provider.
- *
- * Daily only: the upstream's `market_chart` is a daily close series, so the
- * intraday intervals a reader can pick for an equity have nothing to serve here
- * and the chart stays on the one interval that exists.
- */
 /** A malformed escape is not a reason to fail the page; use it as typed. */
 function safeDecode(v: string): string {
   try {
     return decodeURIComponent(v);
   } catch {
     return v;
-  }
-}
-
-async function cryptoBars(id: string): Promise<Bar[]> {
-  if (!cryptoEnabled()) return [];
-  try {
-    return await getCoinBars(id, 365);
-  } catch {
-    return [];
   }
 }
 
@@ -165,7 +147,6 @@ export async function TerminalView({
   const recorded = source.kind === "recorded" ? source.code : null;
   const [barsR, boardR] = await Promise.allSettled([
     source.kind === "recorded" ? recordedBars(source.code)
-      : source.kind === "crypto" ? cryptoBars(source.id)
       : getTimeframeBars(sym, view),
     getBoard(),
   ]);

@@ -59,18 +59,6 @@ export function BriefArticle({
         </div>
       );
     }
-    if (id === "crypto" && visuals.btcSpark && visuals.btcSpark.length > 2) {
-      return (
-        <div className="mt-3">
-          <Sparkline
-            points={visuals.btcSpark}
-            dir={dirOf(visuals.btcChangePct24h ?? 0, 2)}
-            width={260}
-            height={44}
-          />
-        </div>
-      );
-    }
     return null;
   }
 

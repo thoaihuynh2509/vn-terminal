@@ -33,7 +33,7 @@ export default async function Image({
 
   let bars: { t: number; c: number }[] = [];
   try {
-    // Only equities have a feed to draw from here; a recorded series or a coin
+    // Only equities have a feed to draw from here; a recorded series
     // gets the plain card rather than a wrong one.
     if (chartSource(sym).kind === "equity") {
       bars = (await getTimeframeBars(sym, "1D")).slice(-90);

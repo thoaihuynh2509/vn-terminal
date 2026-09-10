@@ -1,6 +1,6 @@
 # Cổ Phiếu Việt
 
-Vietnamese market terminal: **HOSE equities · gold · crypto** on one screen, in
+Vietnamese market terminal: **HOSE equities · gold** on one screen, in
 Vietnamese and English. Next.js 16 App Router, Tailwind v4, deploys to Vercel.
 
 Built as a data-first counterpart to magazine-style sites like tapchiphowall.com:
@@ -55,11 +55,10 @@ URL). Verify locally any time with `npm run verify`.
 
 | Route | What it is |
 |---|---|
-| `/vi`, `/en` | Overview: indices, gold + crypto highlights, top movers |
+| `/vi`, `/en` | Overview: indices, gold highlights, top movers |
 | `/vi/chung-khoan`, `/en/stocks` | Sortable VN30 board with ceiling/floor flags |
 | `/vi/chung-khoan/[symbol]` | Quote, candlestick chart, 90-session range |
 | `/vi/vang`, `/en/gold` | SJC/DOJI/PNJ/Bảo Tín board + domestic-vs-world premium |
-| `/vi/crypto`, `/en/crypto` | Top 50 by market cap with 7-day sparklines |
 | `/vi/ban-tin`, `/en/market-brief` | Dated market brief, auto-composed from the day's figures |
 | `/vi/hoi-ai`, `/en/ask` | Grounded market Q&A assistant |
 | `/vi/ban-do-nhiet`, `/en/market-heatmap` | Treemap of the board — area by traded value, colour by change |

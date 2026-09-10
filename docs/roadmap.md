@@ -11,8 +11,8 @@ calls) or **Build** (engineering, doable in-repo).
 > outranks every other item on this page).
 
 ## Positioning (the one-liner that decides scope)
-The best **Vietnam-focused** cross-asset terminal — HOSE equities · gold · crypto
-on one screen — with an **AI read** no other VN site has. We win by being deepest
+The best **Vietnam-focused** cross-asset terminal — HOSE equities · gold on one
+screen — with an **AI read** no other VN site has. We win by being deepest
 on VN, not by out-featuring global tools. **We will not clone TradingView's
 expression, Pine Script, or scrape licensed data** — charting *functionality* is
 built from first principles; a competitor's *expression* is theirs.

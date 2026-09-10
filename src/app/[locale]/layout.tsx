@@ -29,11 +29,11 @@ export async function generateMetadata({
   const d = getDict(locale);
   const verification = (process.env.GOOGLE_SITE_VERIFICATION || "").trim();
   const title = locale === "vi"
-    ? `${d.brand} — Chứng khoán, Vàng, Crypto`
-    : `${d.brand} — Vietnam Stocks, Gold, Crypto`;
+    ? `${d.brand} — Chứng khoán và Vàng`
+    : `${d.brand} — Vietnam Stocks and Gold`;
   const description = locale === "vi"
-    ? "Bảng giá chứng khoán Việt Nam, giá vàng SJC/DOJI/PNJ và thị trường crypto trên một màn hình. Dữ liệu cập nhật liên tục, miễn phí."
-    : "Vietnam stock board, SJC/DOJI/PNJ gold prices and the crypto market on one screen. Continuously updated, free.";
+    ? "Bảng giá chứng khoán Việt Nam và giá vàng SJC/DOJI/PNJ trên một màn hình. Dữ liệu cập nhật liên tục, miễn phí."
+    : "The Vietnam stock board and SJC/DOJI/PNJ gold prices on one screen. Continuously updated, free.";
 
   return {
     metadataBase: new URL(SITE),

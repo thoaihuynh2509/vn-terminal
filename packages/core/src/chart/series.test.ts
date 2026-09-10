@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  GOLD_SERIES, chartSource, cryptoId, cryptoSymbol, dayBucket, isSeriesSymbol, seriesCode, seriesKey, seriesSymbol,
+  GOLD_SERIES, chartSource, dayBucket, isSeriesSymbol, seriesCode, seriesKey, seriesSymbol,
 } from "./series.ts";
 
 test("a recorded series is addressed as a chart symbol", () => {
@@ -63,29 +63,14 @@ test("late evening ICT still belongs to that day, not the next", () => {
   assert.equal(dayBucket(late), dayBucket(morning));
 });
 
-// ── P2-18: crypto shares the namespace ──────────────────────────────
-test("a coin is addressed like any other chart symbol", () => {
-  assert.equal(cryptoSymbol("Bitcoin"), "CRYPTO:bitcoin");
-  assert.equal(cryptoId("CRYPTO:bitcoin"), "bitcoin");
-  assert.equal(cryptoId("CRYPTO:binance-coin"), "binance-coin");
-});
-
-test("a malformed coin id is refused", () => {
-  for (const bad of ["CRYPTO:", "CRYPTO:-bad", "CRYPTO:has space", "CRYPTO:../x", "VNM"]) {
-    assert.equal(cryptoId(bad), null, bad);
-  }
-});
-
 test("one decision point says where a symbol's bars come from", () => {
   // A separate `kind` parameter would be a second source of truth a hand-typed
   // URL could put out of step with the symbol.
   assert.deepEqual(chartSource("GOLD:SJC"), { kind: "recorded", code: "SJC" });
-  assert.deepEqual(chartSource("CRYPTO:bitcoin"), { kind: "crypto", id: "bitcoin" });
   assert.deepEqual(chartSource("vnm"), { kind: "equity", symbol: "VNM" });
 });
 
-test("the three namespaces cannot collide", () => {
+test("the two namespaces cannot collide", () => {
   assert.equal(chartSource("GOLD:SJC").kind, "recorded");
-  assert.equal(chartSource("CRYPTO:gold").kind, "crypto");
   assert.equal(chartSource("GOLDMINE").kind, "equity");
 });

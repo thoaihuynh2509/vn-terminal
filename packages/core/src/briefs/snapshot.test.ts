@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { composeSnapshot, parseSnapshot, SNAPSHOT_VERSION } from "./snapshot.ts";
 import type { BriefInputs } from "./snapshot.ts";
-import type { Coin, Quote } from "../types.ts";
+import type { Quote } from "../types.ts";
 
 const AT = Date.UTC(2026, 8, 10, 8, 15);
 
@@ -10,19 +10,11 @@ function quote(symbol: string, changePct: number, spark?: number[]): Quote {
   return { symbol, price: 100 + changePct, change: changePct, changePct, volume: 1_000_000, ...(spark ? { spark } : {}) };
 }
 
-function coin(symbol: string, sparkline?: number[]): Coin {
-  return {
-    id: symbol.toLowerCase(), symbol, name: symbol, price: 60000, changePct24h: 1.5,
-    marketCap: 1e12, volume24h: 1e10, rank: 1, ...(sparkline ? { sparkline } : {}),
-  };
-}
-
 function inputs(over: Partial<BriefInputs> = {}): BriefInputs {
   return {
     indices: [quote("VNINDEX", 0.8, [1, 2, 3, 4, 5])],
     board: [quote("VNM", 1.2, [1, 2, 3]), quote("HPG", -0.6, [3, 2, 1]), quote("FPT", 0, [2, 2, 2])],
     gold: null,
-    coins: [coin("BTC", [10, 11, 12, 13])],
     ...over,
   };
 }
@@ -44,8 +36,6 @@ test("the visuals the archived page redraws are kept", () => {
   assert.equal(snap.visuals.board.length, 3);
   assert.deepEqual(snap.visuals.vnindexSpark, [1, 2, 3, 4, 5]);
   assert.equal(snap.visuals.vnindexChangePct, 0.8);
-  assert.deepEqual(snap.visuals.btcSpark, [10, 11, 12, 13]);
-  assert.equal(snap.visuals.btcChangePct24h, 1.5);
 });
 
 test("an explicit spark series wins over the row's own", () => {
@@ -65,10 +55,8 @@ test("per-row sparklines are dropped, because nothing archived draws them", () =
 test("a series too short to plot is left out rather than stored as a stub", () => {
   const snap = composeSnapshot("2026-09-10", inputs({
     indices: [quote("VNINDEX", 0.8, [1, 2])],
-    coins: [coin("BTC", [1, 2])],
   }), AT);
   assert.equal(snap.visuals.vnindexSpark, undefined);
-  assert.equal(snap.visuals.btcSpark, undefined);
 });
 
 test("a snapshot round-trips through JSON, which is how it is stored", () => {
@@ -106,11 +94,10 @@ test("a document written by an older deploy still renders", () => {
 test("a corrupt visuals block is dropped without dropping the brief", () => {
   const snap = composeSnapshot("2026-09-10", inputs(), AT);
   const bent = JSON.parse(JSON.stringify(snap));
-  bent.visuals = { board: [{ nope: 1 }, "x", null], vnindexSpark: ["a", "b"], btcSpark: [1, null] };
+  bent.visuals = { board: [{ nope: 1 }, "x", null], vnindexSpark: ["a", "b"] };
   const back = parseSnapshot(bent);
   assert.ok(back);
   assert.deepEqual(back.visuals.board, []);
   assert.equal(back.visuals.vnindexSpark, undefined);
-  assert.equal(back.visuals.btcSpark, undefined);
   assert.ok(back.vi.paragraphs.length > 0);
 });

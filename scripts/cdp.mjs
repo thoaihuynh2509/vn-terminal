@@ -139,7 +139,6 @@ try {
       ["terminal", "/vi/bieu-do/VNM", 1440, 1300],
       ["stocks", "/vi/chung-khoan", 1440, 1200],
       ["gold", "/vi/vang", 1440, 1300],
-      ["crypto", "/vi/crypto", 1440, 1300],
       ["heatmap", "/vi/ban-do-nhiet", 1440, 900],
       ["brief", "/vi/ban-tin", 1440, 1200],
       ["pricing", "/vi/goi-dich-vu", 1440, 1100],
@@ -370,7 +369,7 @@ try {
   audit: if (mode === "audit") {
     const rows = [];
     const PAGES = ["/vi", "/vi/bieu-do/VNM", "/vi/chung-khoan", "/vi/chung-khoan/VNM", "/vi/vang",
-      "/vi/crypto", "/vi/ban-do-nhiet", "/vi/ban-tin", "/vi/goi-dich-vu", "/vi/hoi-ai",
+      "/vi/ban-do-nhiet", "/vi/ban-tin", "/vi/goi-dich-vu", "/vi/hoi-ai",
       "/vi/theo-doi", "/vi/dang-nhap", "/en", "/en/chart/VNM", "/en/pricing"];
     // A dev server that is not running does not fail the audit — Chrome serves
     // its own error page, which is valid HTML with one h1 and a `lang`, so the
@@ -487,8 +486,8 @@ try {
     check("price chart renders", hasSvg === true);
     // This route permanently redirects to the terminal, so the chart here is
     // ChartPro, which batches candle bodies into paths. The old `rect` count was
-    // written for PriceChart (still rect-based, but only used by the crypto
-    // detail page) and could not pass once the two symbol pages were merged.
+    // written for PriceChart and could not pass once the two symbol pages were
+    // merged.
     const candles = await s.evaluate(`(() => {
       const pane = document.querySelector('svg[role=img]');
       if (!pane) return 0;
@@ -749,7 +748,7 @@ try {
     // `GOLD%3ASJC`. Undecoded it looks like an equity, finds no bars and 404s —
     // which is what shipped, because every equity symbol is plain letters and
     // so survives either way. Only a real request catches this.
-    for (const [sym, label] of [["GOLD:SJC", "gold"], ["CRYPTO:bitcoin", "crypto"]]) {
+    for (const [sym, label] of [["GOLD:SJC", "gold"]]) {
       const code = await s.evaluate(`(async () => {
         const r = await fetch(${JSON.stringify("/vi/bieu-do/")} + encodeURIComponent(${JSON.stringify(sym)}));
         return r.status;

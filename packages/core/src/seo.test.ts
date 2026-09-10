@@ -6,7 +6,7 @@ import { LOCALES } from "./i18n/index.ts";
 const SITE = "https://example.test";
 
 test("the organization graph names a publisher and one absolute origin", () => {
-  const ld = organizationLd(SITE, "VN TERMINAL", "Chứng khoán, vàng, crypto");
+  const ld = organizationLd(SITE, "VN TERMINAL", "Chứng khoán và vàng");
   assert.equal(ld["@type"], "Organization");
   assert.equal(ld.url, SITE);
   assert.equal(ld.name, "VN TERMINAL");

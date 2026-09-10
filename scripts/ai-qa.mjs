@@ -22,7 +22,7 @@ const PORT = 9334;
 const BASE = process.env.BASE ?? "http://localhost:3210";
 const OUT = process.env.OUT ?? "/tmp/ai-qa";
 
-const PAGES = (process.env.PAGES ?? "/vi,/vi/chung-khoan,/vi/vang,/vi/crypto,/vi/tin-tuc,/vi/chuyen-gia,/vi/hoi-ai,/vi/ban-tin")
+const PAGES = (process.env.PAGES ?? "/vi,/vi/chung-khoan,/vi/vang,/vi/tin-tuc,/vi/chuyen-gia,/vi/hoi-ai,/vi/ban-tin")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -54,7 +54,7 @@ const FINDINGS_SCHEMA = {
   },
 };
 
-const SYSTEM = `You review rendered pages of a Vietnamese markets website (stocks, gold, crypto) for defects.
+const SYSTEM = `You review rendered pages of a Vietnamese markets website (stocks, gold) for defects.
 
 Report ONLY defects you can actually see in the screenshot or the extracted text. Prioritise:
 - data-correctness: a figure that contradicts another figure on the same page; a direction glyph (▲/▼) that disagrees with the sign of its number; an implausible magnitude (e.g. a domestic-vs-world gold premium of 50%+ when ~5% is normal); a unit that is stated wrongly.

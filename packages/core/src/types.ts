@@ -45,18 +45,6 @@ export interface GoldSnapshot {
   date: string;
 }
 
-export interface Coin {
-  id: string;
-  symbol: string;
-  name: string;
-  price: number;
-  changePct24h: number;
-  marketCap: number;
-  volume24h: number;
-  rank: number;
-  sparkline?: number[];
-}
-
 /** A provider failure that the UI must render as a degraded state, never as zeros. */
 export class FeedError extends Error {
   constructor(

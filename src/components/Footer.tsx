@@ -1,5 +1,4 @@
 import { PATHS, type Dict } from "@/lib/i18n";
-import { cryptoEnabled } from "@/lib/flags";
 
 const SOURCES = [
   { label: "DNSE", href: "https://services.entrade.com.vn" },
@@ -8,14 +7,7 @@ const SOURCES = [
   { label: "vang.today", href: "https://www.vang.today" },
 ];
 
-/** Only cited when the section that reads it is actually on. */
-const CRYPTO_SOURCE = { label: "CoinGecko", href: "https://www.coingecko.com" };
-
 export function Footer({ dict, locale = "vi" }: { dict: Dict; locale?: "vi" | "en" }) {
-  // The footer linked crypto unconditionally while `/crypto` 404s with the flag
-  // off — a dead link on every page of the site.
-  const crypto = cryptoEnabled();
-  const sources = crypto ? [...SOURCES, CRYPTO_SOURCE] : SOURCES;
   return (
     <footer className="mt-12 border-t border-line bg-surface">
       <div className="mx-auto max-w-[1400px] px-4 py-8">
@@ -30,7 +22,6 @@ export function Footer({ dict, locale = "vi" }: { dict: Dict; locale?: "vi" | "e
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
           {([
             ["stocks", dict.nav.stocks], ["gold", dict.nav.gold],
-            ...(crypto ? [["crypto", dict.nav.crypto] as const] : []),
             ["heatmap", dict.nav.heatmap], ["terminal", dict.nav.terminal], ["brief", dict.nav.brief], ["pricing", dict.nav.pricing],
           ] as const).map(([key, label]) => (
             <li key={key}>
@@ -45,7 +36,7 @@ export function Footer({ dict, locale = "vi" }: { dict: Dict; locale?: "vi" | "e
           {dict.footer.sources}
         </h2>
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-          {sources.map((s) => (
+          {SOURCES.map((s) => (
             <li key={s.label}>
               <a
                 href={s.href}

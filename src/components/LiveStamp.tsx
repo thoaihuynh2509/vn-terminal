@@ -18,7 +18,7 @@ import type { Locale } from "@/lib/types";
  * session the price cannot change, so refreshing spends the reader's battery and
  * our upstream quota to re-fetch an identical number — and a pulsing "live" dot
  * over a frozen close is simply untrue. The board pages leave it off because
- * their gold and crypto rows do keep moving after the equity close.
+ * their gold rows do keep moving after the equity close.
  */
 export function LiveStamp({
   locale,

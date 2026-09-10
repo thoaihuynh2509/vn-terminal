@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { arrow, dirClass, dirOf, num, pct, usd } from "@/lib/format";
 import { PATHS } from "@/lib/i18n";
-import type { Coin, GoldSnapshot, Locale, Quote } from "@/lib/types";
+import type { GoldSnapshot, Locale, Quote } from "@/lib/types";
 
 /**
  * The market strip under the header.
  *
  * The reference site's most recognisable element: one dense row of live
  * quotes spanning every asset class the publication covers. Here that is VN
- * indices, domestic and world gold, and the two largest coins — the whole
- * product in a single line.
+ * indices and domestic and world gold — the whole product in a single line.
  *
  * It scrolls horizontally rather than wrapping; a ticker that reflows onto three
  * rows on a phone stops reading as a ticker.
@@ -17,12 +16,10 @@ import type { Coin, GoldSnapshot, Locale, Quote } from "@/lib/types";
 export function Ticker({
   indices,
   gold,
-  coins,
   locale,
 }: {
   indices: Quote[];
   gold: GoldSnapshot | null;
-  coins: Coin[];
   locale: Locale;
 }) {
   const items: { label: string; value: string; change: number; pct?: number; href: string }[] = [];
@@ -54,19 +51,6 @@ export function Ticker({
       href: `/${locale}/${PATHS.gold[locale]}`,
     });
   }
-  for (const sym of ["BTC", "ETH"]) {
-    const c = coins.find((x) => x.symbol === sym);
-    if (c) {
-      items.push({
-        label: sym,
-        value: usd(c.price, locale),
-        change: c.changePct24h,
-        pct: c.changePct24h,
-        href: `/${locale}/${PATHS.crypto[locale]}`,
-      });
-    }
-  }
-
   if (!items.length) return null;
 
   return (

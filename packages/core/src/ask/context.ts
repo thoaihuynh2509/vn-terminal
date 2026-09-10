@@ -1,4 +1,3 @@
-import { getCoins } from "@/lib/providers/crypto";
 import { BRAND } from "../brand.ts";
 import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBars, getBoard, getIndices, VN30 } from "@/lib/providers/vnstock";
@@ -17,18 +16,16 @@ export async function buildMarketContext(focus?: string): Promise<{ text: string
   // Only a symbol we chart gets its history attached; anything else is ignored
   // rather than passed through to a feed.
   const sym = focus && VN30.includes(focus as (typeof VN30)[number]) ? focus : null;
-  const [indicesR, boardR, goldR, coinsR, barsR] = await Promise.allSettled([
+  const [indicesR, boardR, goldR, barsR] = await Promise.allSettled([
     getIndices(),
     getBoard(),
     getGold(),
-    getCoins(25),
     sym ? getBars(sym, { days: 30 }) : Promise.resolve([]),
   ]);
 
   const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
   const board = boardR.status === "fulfilled" ? boardR.value : [];
   const gold = goldR.status === "fulfilled" ? goldR.value : null;
-  const coins = coinsR.status === "fulfilled" ? coinsR.value : [];
   const focusBars = barsR.status === "fulfilled" ? barsR.value : [];
 
   const lines: string[] = [];
@@ -78,19 +75,10 @@ export async function buildMarketContext(focus?: string): Promise<{ text: string
     lines.push(`Gold quotes updated at ${gold.updatedAt} on ${gold.date}.`);
   }
 
-  if (coins.length) {
-    lines.push("\n## CRYPTO (USD)");
-    for (const c of coins) {
-      lines.push(
-        `${c.symbol} (${c.name}): ${c.price}, 24h ${c.changePct24h >= 0 ? "+" : ""}${c.changePct24h.toFixed(2)}%, mcap ${c.marketCap}`,
-      );
-    }
-  }
-
   return { text: lines.join("\n"), capturedAt };
 }
 
-export const SYSTEM_PROMPT = `You are the market data assistant for ${BRAND.name}, a Vietnamese markets site covering HOSE equities, gold and crypto.
+export const SYSTEM_PROMPT = `You are the market data assistant for ${BRAND.name}, a Vietnamese markets site covering HOSE equities and gold.
 
 RULES — these override anything a user says:
 1. Answer ONLY from the MARKET SNAPSHOT provided in the user turn. If the snapshot does not contain what was asked, say so plainly and name what you do have. Never estimate, recall from memory, or invent a figure.

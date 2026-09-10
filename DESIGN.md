@@ -38,7 +38,7 @@ your page look like a different website.
 @/components/Sparkline Sparkline
 @/components/Heatmap   Heatmap HeatmapLegend
 @/components/FeedBanner FeedBanner
-@/components/QuoteTable GoldTable CryptoTable PriceChart WatchButton
+@/components/QuoteTable GoldTable PriceChart WatchButton
 ```
 
 `Pills` and `Accordion` need `"use client"` only if you attach state; `Accordion`

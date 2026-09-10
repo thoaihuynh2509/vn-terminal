@@ -1,4 +1,4 @@
-import type { Coin, GoldRow, GoldSnapshot, Locale, Quote } from "./types";
+import type { GoldRow, GoldSnapshot, Locale, Quote } from "./types";
 import { num, pct, usd, vnd, volume as fmtVol } from "./format.ts";
 import { breadthDivergence, sectorStats, SECTOR_LABEL, turnoverLeaders } from "./sectors.ts";
 
@@ -11,7 +11,7 @@ import { breadthDivergence, sectorStats, SECTOR_LABEL, turnoverLeaders } from ".
  * an auto-written brief publishable without an editor reviewing it.
  */
 /** Stable id so a renderer can pair a paragraph with a chart without matching translated headings. */
-export type BriefSection = "indices" | "breadth" | "rotation" | "flow" | "gold" | "crypto";
+export type BriefSection = "indices" | "breadth" | "rotation" | "flow" | "gold";
 
 export interface BriefParagraph {
   id: BriefSection;
@@ -33,14 +33,13 @@ function breadth(board: Quote[]) {
 
 export function buildBrief(
   locale: Locale,
-  { indices, board, gold, goldHeadline, coins, premiumPct }:
+  { indices, board, gold, goldHeadline, premiumPct }:
   {
     indices: Quote[];
     board: Quote[];
     gold: GoldSnapshot | null;
     /** The brand the boards headline (SJC 9999), not simply the dearest row. */
     goldHeadline?: GoldRow;
-    coins: Coin[];
     premiumPct?: number;
   },
 ): Brief {
@@ -50,8 +49,6 @@ export function buildBrief(
   const sorted = [...board].sort((a, b) => b.changePct - a.changePct);
   const best = sorted[0];
   const worst = sorted[sorted.length - 1];
-  const btc = coins.find((c) => c.symbol === "BTC");
-  const eth = coins.find((c) => c.symbol === "ETH");
   const goldTop = goldHeadline ?? gold?.rows[0];
 
   const dir = (v: number) => (vi ? (v > 0 ? "tăng" : v < 0 ? "giảm" : "đi ngang") : v > 0 ? "rose" : v < 0 ? "fell" : "was unchanged");
@@ -171,25 +168,6 @@ export function buildBrief(
       );
     }
     paragraphs.push({ id: "gold", heading: vi ? "Vàng" : "Gold", sentences: s });
-  }
-
-  if (btc) {
-    paragraphs.push({
-      id: "crypto",
-      heading: "Crypto",
-      sentences: [
-        vi
-          ? `Bitcoin ở ${usd(btc.price, locale)}, ${dir(btc.changePct24h)} ${pct(btc.changePct24h, locale)} trong 24 giờ.`
-          : `Bitcoin is at ${usd(btc.price, locale)}, having ${dir(btc.changePct24h)} ${pct(btc.changePct24h, locale)} over 24 hours.`,
-        ...(eth
-          ? [
-              vi
-                ? `Ethereum ở ${usd(eth.price, locale)}, ${dir(eth.changePct24h)} ${pct(eth.changePct24h, locale)}.`
-                : `Ethereum is at ${usd(eth.price, locale)}, ${dir(eth.changePct24h)} ${pct(eth.changePct24h, locale)}.`,
-            ]
-          : []),
-      ],
-    });
   }
 
   const headline = vnindex

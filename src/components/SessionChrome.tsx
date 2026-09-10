@@ -5,7 +5,6 @@ import { Identify } from "@/components/Identify";
 import { WatchlistSync } from "@/components/WatchlistSync";
 import { personId } from "@/lib/analytics/server";
 import { getSession } from "@/lib/auth/session";
-import { cryptoEnabled } from "@/lib/flags";
 import { ALL_SYMBOLS } from "@/lib/universe";
 import type { Dict } from "@/lib/i18n";
 import type { Locale } from "@/lib/types";
@@ -42,7 +41,6 @@ export async function SessionChrome({ locale, dict }: { locale: Locale; dict: Di
         email={session?.email ?? null}
         tier={session?.tier ?? "anon"}
         symbols={ALL_SYMBOLS}
-        cryptoEnabled={cryptoEnabled()}
       />
       <WatchlistSync email={session?.email ?? null} />
       <Identify
@@ -67,7 +65,6 @@ export function SessionChromeFallback({ locale, dict }: { locale: Locale; dict: 
       locale={locale} dict={dict}
       email={null} tier="anon"
       symbols={ALL_SYMBOLS}
-      cryptoEnabled={cryptoEnabled()}
     />
     </Suspense>
   );

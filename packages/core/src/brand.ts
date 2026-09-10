@@ -18,8 +18,8 @@ export const BRAND = {
   /** ASCII form, for a sender local-part or a file name. */
   slug: "cophieuviet",
   tagline: {
-    vi: "Chứng khoán · Vàng · Crypto",
-    en: "Stocks · Gold · Crypto",
+    vi: "Chứng khoán · Vàng",
+    en: "Stocks · Gold",
   },
   /**
    * Fallback origin when NEXT_PUBLIC_SITE_URL is unset.

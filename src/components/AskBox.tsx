@@ -14,8 +14,8 @@ interface Turn {
 }
 
 const SUGGESTIONS: Record<Locale, string[]> = {
-  vi: ["Mã nào tăng mạnh nhất phiên này?", "Giá vàng SJC hôm nay bao nhiêu?", "VNINDEX đang ở mức nào?", "Giá Bitcoin hiện tại?"],
-  en: ["Which stocks gained most this session?", "What is the SJC gold price?", "Where is the VNINDEX?", "What is Bitcoin trading at?"],
+  vi: ["Mã nào tăng mạnh nhất phiên này?", "Giá vàng SJC hôm nay bao nhiêu?", "VNINDEX đang ở mức nào?", "Vàng SJC chênh bao nhiêu so với thế giới?"],
+  en: ["Which stocks gained most this session?", "What is the SJC gold price?", "Where is the VNINDEX?", "How far is SJC gold above world parity?"],
 };
 
 /** Impressions already counted this page-load, so arrival is not an event storm. */

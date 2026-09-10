@@ -5,8 +5,8 @@ const tag = (l: Locale) => (l === "vi" ? "vi-VN" : "en-US");
 /**
  * Direction of a change, at the precision it will actually be DISPLAYED.
  *
- * CoinGecko reports stablecoin moves like +0.0004%, which rounds to "0,00%" —
- * painting a green ▲ next to a zero is simply wrong. Anything that rounds to
+ * A feed can report a move like +0.0004%, which rounds to "0,00%" — painting a
+ * green ▲ next to a zero is simply wrong. Anything that rounds to
  * zero at `digits` is flat, so the glyph always agrees with the number beside it.
  */
 export function dirOf(change: number, digits = 2): Dir {

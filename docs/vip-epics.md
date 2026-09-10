@@ -17,8 +17,6 @@ I counted tier/entitlement references per page view:
 |---|---|---|
 | `TerminalView` (chart) | 19 | **All of it** |
 | `PricingView` | 13 | It *is* the checkout |
-| `CoinDetail` | 2 | Inherits the chart |
-| `CryptoView` | 1 | A comment, not a gate |
 | `StocksBoard` | **0** | none |
 | `GoldView` | **0** | none |
 | `HeatmapView` | **0** | none |
@@ -189,16 +187,18 @@ is `GateHint`, never a modal (the component's own docstring explains why).
 
 ---
 
-## E8 — Crypto (`/vi/crypto`): keep it free, invest nothing
-**Owner: Build · XS · a deliberate no**
+## E8 — Crypto: ~~keep it free, invest nothing~~ **SUPERSEDED — removed entirely**
+**Owner: — · closed**
 
-`CryptoView` is 80 lines; `CoinDetail` inherits the gated chart, which is enough. Crypto
-is the least VN-specific surface we have, and the positioning doc is explicit: *we win by
-being deepest on VN, not by out-featuring global tools.* Binance and TradingView own this.
+Crypto was the least VN-specific surface we had, and the positioning doc is explicit:
+*we win by being deepest on VN, not by out-featuring global tools.* Binance and
+TradingView own it.
 
-**Recommendation** — keep crypto as a free cross-asset breadth play, because "chứng khoán
-· vàng · crypto on one screen" is a real landing differentiator. Build no paid crypto
-features. This epic exists to record the decision so it does not get re-litigated.
+The original call was to keep a free crypto board as a landing differentiator. That was
+reversed: the whole section — routes, views, the CoinGecko provider, the `CRYPTO:` chart
+namespace and the brief's crypto paragraph — has been deleted. The product is HOSE
+equities and gold. This epic stays only to record that the question was asked and
+answered twice, so it does not get re-litigated a third time.
 
 ---
 
@@ -251,7 +251,7 @@ on a date. The renewals cron exists.
 | 7 | E2 Chart C5/C6/C8 | Build | M | Deepens a page that already converts |
 | 8 | E10 Renewal & receipts | Build | M | Matters once there are subscribers to keep |
 | 9 | E5 Heatmap workspace | Build | M | Engagement, furthest from revenue |
-| — | E8 Crypto | — | — | Deliberate no |
+| — | E8 Crypto | — | — | Removed from the product |
 
 **Cross-cutting:** every epic ships with its funnel events. PostHog is wired
 (`analytics/posthog.ts`) and conversion instrumentation is mid-flight on this branch.
@@ -259,6 +259,7 @@ An epic without events is an epic you cannot judge.
 
 ## Won't do
 Auto-renewing card subscriptions (MoMo does not support them; time-boxed is honest) ·
-paid crypto features (E8) · personalised investment advice (not licensed) · gating the
+crypto in any form (E8 — the section was removed) · personalised investment advice
+(not licensed) · gating the
 basic price board behind a wall — free reach is the top of this funnel and starving it
 to sell one more seat is a bad trade.

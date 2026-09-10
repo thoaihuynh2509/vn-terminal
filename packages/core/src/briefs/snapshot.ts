@@ -14,7 +14,7 @@
  * Pure. The instant and every figure are passed in.
  */
 import { buildBrief, type Brief } from "../brief.ts";
-import type { Coin, GoldRow, GoldSnapshot, Quote } from "../types.ts";
+import type { GoldRow, GoldSnapshot, Quote } from "../types.ts";
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -23,7 +23,6 @@ export interface BriefInputs {
   board: Quote[];
   gold: GoldSnapshot | null;
   goldHeadline?: GoldRow;
-  coins: Coin[];
   premiumPct?: number;
   /** Index sparklines, by symbol, as the live view fetches them. */
   sparks?: Record<string, number[]>;
@@ -40,8 +39,6 @@ export interface BriefVisuals {
   board: Quote[];
   vnindexSpark?: number[];
   vnindexChangePct?: number;
-  btcSpark?: number[];
-  btcChangePct24h?: number;
 }
 
 export interface BriefSnapshot {
@@ -75,11 +72,10 @@ function slimBoard(board: Quote[]): Quote[] {
 }
 
 export function composeSnapshot(day: string, inputs: BriefInputs, atMs: number): BriefSnapshot {
-  const { indices, board, gold, goldHeadline, coins, premiumPct, sparks } = inputs;
-  const args = { indices, board, gold, goldHeadline, coins, premiumPct };
+  const { indices, board, gold, goldHeadline, premiumPct, sparks } = inputs;
+  const args = { indices, board, gold, goldHeadline, premiumPct };
 
   const vnindex = indices.find((i) => i.symbol === "VNINDEX");
-  const btc = coins.find((c) => c.symbol === "BTC");
   const vnindexSpark = vnindex ? sparks?.[vnindex.symbol] ?? vnindex.spark : undefined;
 
   return {
@@ -94,8 +90,6 @@ export function composeSnapshot(day: string, inputs: BriefInputs, atMs: number):
       board: slimBoard(board),
       ...(vnindexSpark && vnindexSpark.length > 2 ? { vnindexSpark } : {}),
       ...(vnindex ? { vnindexChangePct: vnindex.changePct } : {}),
-      ...(btc?.sparkline && btc.sparkline.length > 2 ? { btcSpark: btc.sparkline } : {}),
-      ...(btc ? { btcChangePct24h: btc.changePct24h } : {}),
     },
   };
 }
@@ -143,8 +137,6 @@ export function parseSnapshot(data: unknown): BriefSnapshot | null {
       board,
       ...(numbers(rawVisuals.vnindexSpark) ? { vnindexSpark: numbers(rawVisuals.vnindexSpark) } : {}),
       ...(typeof rawVisuals.vnindexChangePct === "number" ? { vnindexChangePct: rawVisuals.vnindexChangePct } : {}),
-      ...(numbers(rawVisuals.btcSpark) ? { btcSpark: numbers(rawVisuals.btcSpark) } : {}),
-      ...(typeof rawVisuals.btcChangePct24h === "number" ? { btcChangePct24h: rawVisuals.btcChangePct24h } : {}),
     },
   };
 }

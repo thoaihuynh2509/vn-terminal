@@ -175,78 +175,9 @@ const goldEn: Explainer = {
   ],
 };
 
-const cryptoVi: Explainer = {
-  title: "Đọc bảng thị trường crypto",
-  intro:
-    "Bảng phía trên xếp hạng tài sản số theo vốn hóa thị trường. Dưới đây là ý nghĩa của từng cột và những giới hạn khi diễn giải chúng.",
-  sections: [
-    {
-      heading: "Vốn hóa thị trường",
-      body: [
-        "Vốn hóa bằng giá hiện tại nhân với lượng cung đang lưu hành. Đây là thước đo quy mô, không phải số tiền đã được đầu tư vào tài sản đó.",
-        "Vì chỉ tính phần cung đang lưu hành, hai tài sản cùng mức giá có thể có vốn hóa rất khác nhau.",
-      ],
-    },
-    {
-      heading: "Khối lượng và thanh khoản",
-      body: [
-        "Khối lượng 24 giờ là tổng giá trị đã giao dịch trong một ngày, thường dùng để ước lượng mức độ thanh khoản.",
-        "Tỷ lệ khối lượng trên vốn hóa cao cho thấy tài sản được giao dịch sôi động so với quy mô của nó.",
-      ],
-    },
-    {
-      heading: "Stablecoin và đường xu hướng",
-      body: [
-        "Stablecoin được thiết kế để bám sát một tài sản tham chiếu, thường là đô la Mỹ, nên biến động của chúng gần như bằng không. Trên bảng này, mức thay đổi làm tròn về 0 được hiển thị trung tính thay vì tô màu tăng hoặc giảm.",
-        "Đường xu hướng 7 ngày chỉ thể hiện hình dạng của giá đóng cửa, không có trục giá trị; hãy đọc kèm cột phần trăm bên cạnh.",
-      ],
-    },
-  ],
-  faqs: [
-    { q: "Vốn hóa thị trường của một đồng crypto được tính thế nào?", a: "Bằng giá hiện tại nhân với lượng cung đang lưu hành." },
-    { q: "Khối lượng 24 giờ nghĩa là gì?", a: "Là tổng giá trị giao dịch của tài sản đó trong 24 giờ gần nhất, thường được dùng để ước lượng thanh khoản." },
-    { q: "Vì sao stablecoin hiển thị mức thay đổi bằng 0?", a: "Vì chúng bám theo một tài sản tham chiếu nên biến động rất nhỏ; khi làm tròn về 0 thì bảng hiển thị trung tính thay vì tô màu tăng giảm." },
-  ],
-};
-
-const cryptoEn: Explainer = {
-  title: "Reading the crypto market table",
-  intro:
-    "The table above ranks digital assets by market capitalisation. Here is what each column means and where the interpretation has limits.",
-  sections: [
-    {
-      heading: "Market capitalisation",
-      body: [
-        "Market cap is the current price multiplied by circulating supply. It measures scale, not the amount of money invested in an asset.",
-        "Because only circulating supply counts, two assets at the same price can have very different market caps.",
-      ],
-    },
-    {
-      heading: "Volume and liquidity",
-      body: [
-        "24-hour volume is the total value traded in a day and is commonly used as a rough liquidity proxy.",
-        "A high volume-to-market-cap ratio indicates an asset trading actively relative to its size.",
-      ],
-    },
-    {
-      heading: "Stablecoins and sparklines",
-      body: [
-        "Stablecoins are designed to track a reference asset, usually the US dollar, so their moves are near zero. This board renders a change that rounds to zero as neutral rather than tinting it up or down.",
-        "The 7-day sparkline shows only the shape of closing prices and carries no value axis; read it alongside the percentage column.",
-      ],
-    },
-  ],
-  faqs: [
-    { q: "How is a cryptocurrency's market cap calculated?", a: "Current price multiplied by circulating supply." },
-    { q: "What does 24-hour volume mean?", a: "The total value of that asset traded over the last 24 hours, commonly used as a liquidity proxy." },
-    { q: "Why do stablecoins show a zero change?", a: "They track a reference asset, so moves are tiny; when the change rounds to zero the board shows it neutrally instead of tinting it up or down." },
-  ],
-};
-
 const EXPLAINERS = {
   stocks: { vi: stocksVi, en: stocksEn },
   gold: { vi: goldVi, en: goldEn },
-  crypto: { vi: cryptoVi, en: cryptoEn },
 } as const;
 
 export function getExplainer(key: keyof typeof EXPLAINERS, locale: Locale): Explainer {

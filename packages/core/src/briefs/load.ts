@@ -10,8 +10,6 @@
  * Every feed is settled independently: a gold outage must degrade the gold
  * paragraph, not lose the whole brief.
  */
-import { cryptoEnabled } from "../flags.ts";
-import { getCoins } from "../providers/crypto.ts";
 import { getGold, headlineRow, premium } from "../providers/gold.ts";
 import { getBoard, getIndexSparks, getIndices } from "../providers/vnstock.ts";
 import type { BriefInputs } from "./snapshot.ts";
@@ -20,16 +18,14 @@ import type { BriefInputs } from "./snapshot.ts";
 const USD_VND = Number(process.env.NEXT_PUBLIC_USD_VND ?? 26_300);
 
 export async function loadBriefInputs(options: { sparks?: boolean } = {}): Promise<BriefInputs> {
-  const [indicesR, boardR, goldR, coinsR] = await Promise.allSettled([
+  const [indicesR, boardR, goldR] = await Promise.allSettled([
     getIndices(),
     getBoard(),
     getGold(),
-    cryptoEnabled() ? getCoins(20) : Promise.resolve([]),
   ]);
   const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
   const board = boardR.status === "fulfilled" ? boardR.value : [];
   const gold = goldR.status === "fulfilled" ? goldR.value : null;
-  const coins = coinsR.status === "fulfilled" ? coinsR.value : [];
 
   const goldHeadline = gold ? headlineRow(gold.rows) : undefined;
   const premiumPct = gold?.world && goldHeadline
@@ -41,5 +37,5 @@ export async function loadBriefInputs(options: { sparks?: boolean } = {}): Promi
     ? await getIndexSparks(indices.map((i) => i.symbol)).catch(() => ({} as Record<string, number[]>))
     : undefined;
 
-  return { indices, board, gold, goldHeadline, coins, premiumPct, ...(sparks ? { sparks } : {}) };
+  return { indices, board, gold, goldHeadline, premiumPct, ...(sparks ? { sparks } : {}) };
 }

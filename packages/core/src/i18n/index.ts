@@ -12,7 +12,6 @@ export function isLocale(v: string): v is Locale {
 export const PATHS = {
   stocks: { vi: "chung-khoan", en: "stocks" },
   gold: { vi: "vang", en: "gold" },
-  crypto: { vi: "crypto", en: "crypto" },
   watchlist: { vi: "theo-doi", en: "watchlist" },
   brief: { vi: "ban-tin", en: "market-brief" },
   news: { vi: "tin-tuc", en: "news" },
@@ -33,7 +32,7 @@ const vi = {
   brand: brandName(),
   tagline: brandTagline("vi"),
   nav: {
-    home: "Tổng Quan", stocks: "Chứng Khoán", gold: "Vàng", crypto: "Crypto",
+    home: "Tổng Quan", stocks: "Chứng Khoán", gold: "Vàng",
     brief: "Bản Tin", news: "Tin Tức", experts: "Chuyên Gia",
     ask: "Hỏi AI", markets: "Thị Trường", newsroom: "Tin Tức",
     heatmap: "Bản Đồ Nhiệt", pricing: "Gói Dịch Vụ", terminal: "Biểu Đồ",
@@ -73,15 +72,14 @@ const vi = {
 
   home: {
     title: "Tổng Quan Thị Trường",
-    subtitle: "Chỉ số, vàng và crypto trong một màn hình",
+    subtitle: "Chỉ số và giá vàng trong một màn hình",
     indices: "Chỉ Số Việt Nam",
     movers: "Biến Động Mạnh Nhất",
     gainers: "Tăng giá",
     losers: "Giảm giá",
     goldBoard: "Bảng Giá Vàng",
-    cryptoBoard: "Thị Trường Crypto",
     highlights: "Tiêu Điểm",
-    highlightsSub: "Vàng và crypto trong một liếc mắt",
+    highlightsSub: "Giá vàng trong một liếc mắt",
     today: "Sáng Nay",
     rotation: "Luân Chuyển Nhóm Ngành",
     rotationHint: "Thay đổi bình quân, trọng số theo giá trị giao dịch",
@@ -92,7 +90,6 @@ const vi = {
     pulseAdv: "mã tăng",
     pulseDec: "mã giảm",
     heroGold: "Vàng SJC",
-    heroBtc: "Bitcoin",
     askTitle: "Hỏi AI về thị trường",
     askSub: "Trợ lý đọc số liệu ngay trên trang và trả lời tức thì — thứ Vietstock hay CafeF không có.",
     saveTitle: "Giữ nhịp thị trường của riêng bạn",
@@ -145,15 +142,6 @@ const vi = {
     vsWorld: "so với thế giới",
   },
 
-  crypto: {
-    title: "Thị Trường Crypto",
-    subtitle: "Top tài sản số theo vốn hóa: giá Bitcoin, Ethereum và các đồng lớn, thay đổi 24 giờ, vốn hóa và khối lượng giao dịch, quy đổi sang VND.",
-    rank: "#",
-    price24h: "24 giờ",
-    volume24h: "KLGD 24h",
-    sparkline: "7 ngày",
-  },
-
   gate: {
     upgrade: "Nâng cấp",
     dismiss: "Đóng",
@@ -171,7 +159,7 @@ const vi = {
     aboutTitle: "Tổng quan giá {symbol}",
     faqTitle: "Câu hỏi thường gặp về {symbol}",
     aboutNote: "Các số liệu dưới đây được tính từ chính dữ liệu giá hiển thị trên trang, chỉ mang tính tham khảo.",
-    subtitle: "Biểu đồ nến chuyên sâu cho cổ phiếu HOSE, vàng và crypto: hơn 15 chỉ báo kỹ thuật, công cụ vẽ, nhiều khung thời gian và so sánh nhiều mã.",
+    subtitle: "Biểu đồ nến chuyên sâu cho cổ phiếu HOSE và giá vàng: hơn 15 chỉ báo kỹ thuật, công cụ vẽ, nhiều khung thời gian và so sánh nhiều mã cùng lúc.",
     type: "Kiểu biểu đồ",
     candle: "Nến",
     line: "Đường",
@@ -368,8 +356,6 @@ const vi = {
     fullTextOnly: "Chỉ tin toàn văn",
     allSources: "Tất cả nguồn",
     newItems: "Có tin mới — bấm để tải lại",
-    coins: "Theo đồng",
-    crypto: "Crypto",
     vietnam: "Việt Nam",
     autoNote: "Tin được cập nhật tự động 20 phút một lần.",
   },
@@ -569,9 +555,9 @@ const vi = {
 
   brief: {
     title: "Bản Tin Thị Trường",
-    subtitle: "Bản tin thị trường tổng hợp tự động từ số liệu trong ngày: chỉ số VNINDEX, độ rộng thị trường, giá vàng và crypto, cập nhật sau mỗi phiên.",
+    subtitle: "Bản tin thị trường tổng hợp tự động từ số liệu trong ngày: chỉ số VNINDEX, độ rộng thị trường và giá vàng, cập nhật sau mỗi phiên giao dịch.",
     method:
-      "Bản tin này do hệ thống tự động soạn từ chính các số liệu hiển thị trên trang: mức thay đổi của chỉ số, số mã tăng giảm, giá vàng niêm yết và giá crypto. Hệ thống chỉ mô tả số liệu đã ghi nhận, không giải thích nguyên nhân, không dự báo và không đưa ra khuyến nghị đầu tư.",
+      "Bản tin này do hệ thống tự động soạn từ chính các số liệu hiển thị trên trang: mức thay đổi của chỉ số, số mã tăng giảm, và giá vàng niêm yết. Hệ thống chỉ mô tả số liệu đã ghi nhận, không giải thích nguyên nhân, không dự báo và không đưa ra khuyến nghị đầu tư.",
     archive: "Bản tin các phiên trước",
     archiveEmpty: "Chưa có bản tin nào được lưu. Mỗi phiên giao dịch sẽ được lưu lại thành một trang riêng.",
     archiveOf: "Bản tin phiên {day}",
@@ -592,7 +578,7 @@ const en: typeof vi = {
   brand: brandName(),
   tagline: brandTagline("en"),
   nav: {
-    home: "Overview", stocks: "Stocks", gold: "Gold", crypto: "Crypto",
+    home: "Overview", stocks: "Stocks", gold: "Gold",
     brief: "Brief", news: "News", experts: "Experts",
     ask: "Ask AI", markets: "Markets", newsroom: "Newsroom",
     heatmap: "Heatmap", pricing: "Pricing", terminal: "Chart",
@@ -632,15 +618,14 @@ const en: typeof vi = {
 
   home: {
     title: "Market Overview",
-    subtitle: "Indices, gold and crypto on one screen",
+    subtitle: "Indices and gold on one screen",
     indices: "Vietnam Indices",
     movers: "Biggest Movers",
     gainers: "Gainers",
     losers: "Losers",
     goldBoard: "Gold Board",
-    cryptoBoard: "Crypto Market",
     highlights: "Highlights",
-    highlightsSub: "Gold and crypto at a glance",
+    highlightsSub: "Gold at a glance",
     today: "This Morning",
     rotation: "Sector Rotation",
     rotationHint: "Average change, weighted by traded value",
@@ -651,7 +636,6 @@ const en: typeof vi = {
     pulseAdv: "up",
     pulseDec: "down",
     heroGold: "SJC Gold",
-    heroBtc: "Bitcoin",
     askTitle: "Ask AI about the market",
     askSub: "The assistant reads the figures on this page and answers instantly — something Vietstock and CafeF don't offer.",
     saveTitle: "Make the market yours",
@@ -704,15 +688,6 @@ const en: typeof vi = {
     vsWorld: "vs world parity",
   },
 
-  crypto: {
-    title: "Crypto Market",
-    subtitle: "The top digital assets by market capitalisation: Bitcoin, Ethereum and the major coins, with 24-hour change, market cap and volume in VND.",
-    rank: "#",
-    price24h: "24h",
-    volume24h: "24h volume",
-    sparkline: "7 days",
-  },
-
   gate: {
     upgrade: "Upgrade",
     dismiss: "Dismiss",
@@ -730,7 +705,7 @@ const en: typeof vi = {
     aboutTitle: "{symbol} price overview",
     faqTitle: "Frequently asked questions about {symbol}",
     aboutNote: "The figures below are computed from the same price data shown on this page, for reference only.",
-    subtitle: "In-depth candle charts for HOSE equities, gold and crypto: over 15 technical indicators, drawing tools, multiple timeframes and multi-symbol compare.",
+    subtitle: "In-depth candle charts for HOSE equities and gold: over 15 technical indicators, drawing tools, multiple timeframes and multi-symbol compare on one screen.",
     type: "Chart type",
     candle: "Candles",
     line: "Line",
@@ -924,8 +899,6 @@ const en: typeof vi = {
     fullTextOnly: "Full-text only",
     allSources: "All sources",
     newItems: "New items — tap to refresh",
-    coins: "By coin",
-    crypto: "Crypto",
     vietnam: "Vietnam",
     autoNote: "The wire refreshes automatically every 20 minutes.",
   },
@@ -1125,9 +1098,9 @@ const en: typeof vi = {
 
   brief: {
     title: "Market Brief",
-    subtitle: "A market brief compiled automatically from the day's own figures: the VNINDEX, market breadth, gold and crypto, refreshed after every session.",
+    subtitle: "A market brief compiled automatically from the day's own figures: the VNINDEX, market breadth and gold prices, refreshed after every trading session.",
     method:
-      "This brief is composed automatically from the same figures shown across the site: index moves, advancing and declining counts, quoted gold prices and crypto prices. It describes recorded figures only — it does not explain causes, forecast, or offer investment advice.",
+      "This brief is composed automatically from the same figures shown across the site: index moves, advancing and declining counts, and quoted gold prices. It describes recorded figures only — it does not explain causes, forecast, or offer investment advice.",
     archive: "Briefs from previous sessions",
     archiveEmpty: "No briefs have been archived yet. Each trading session will be kept as its own page.",
     archiveOf: "Market brief for {day}",

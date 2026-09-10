@@ -55,7 +55,7 @@ test("no dictionary string is empty — a blank label reads as a broken page", (
  * ones these replaced.
  */
 test("every indexed section's subtitle is a usable meta description", () => {
-  const SECTIONS = ["stocks", "gold", "crypto", "chart", "heatmap", "pricing", "brief"] as const;
+  const SECTIONS = ["stocks", "gold", "chart", "heatmap", "pricing", "brief"] as const;
   for (const locale of ["vi", "en"] as const) {
     const dict = getDict(locale) as unknown as Record<string, { subtitle?: string }>;
     for (const section of SECTIONS) {

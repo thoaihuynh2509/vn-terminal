@@ -1,4 +1,3 @@
-import { getCoins } from "@/lib/providers/crypto";
 import { getGold, headlineRow } from "@/lib/providers/gold";
 import { getBoard, getIndices, VN30 } from "@/lib/providers/vnstock";
 
@@ -12,7 +11,7 @@ import { getBoard, getIndices, VN30 } from "@/lib/providers/vnstock";
  * says so plainly when it recognises none, which is what the real assistant is
  * also instructed to do rather than guess.
  */
-type Intent = "advice" | "gainers" | "losers" | "index" | "gold" | "crypto" | "symbol" | "unknown";
+type Intent = "advice" | "gainers" | "losers" | "index" | "gold" | "symbol" | "unknown";
 
 const ADVICE = /(nên mua|nên bán|có nên|khuyến nghị|dự báo|sẽ tăng|sẽ giảm|should i (buy|sell)|recommend|forecast|predict|price target|good buy)/i;
 
@@ -23,7 +22,6 @@ function classify(q: string): { intent: Intent; symbol?: string } {
   if (/(giảm mạnh|giảm sâu|loser|biggest (drop|fall|decline))/.test(s)) return { intent: "losers" };
   if (/(vn ?index|vn30|hnx|upcom|chỉ số|index)/.test(s)) return { intent: "index" };
   if (/(vàng|gold|sjc|doji|pnj|xau)/.test(s)) return { intent: "gold" };
-  if (/(bitcoin|btc|eth|ethereum|crypto|tiền số)/.test(s)) return { intent: "crypto" };
   // A ticker is either already uppercase in the question ("VNM", "ZZZ"), or it
   // matches a symbol we actually track. Uppercasing the whole question first
   // turned any three-letter Vietnamese word into a ticker — "hôm nay" was read
@@ -81,16 +79,6 @@ export async function answerFromSnapshot(question: string, locale: "vi" | "en"):
           (gold.world ? ` World gold is near ${n(gold.world.buy)} USD per ounce.` : "");
   }
 
-  if (intent === "crypto") {
-    const coins = await getCoins(25).catch(() => []);
-    const wanted = coins.filter((c) => ["BTC", "ETH"].includes(c.symbol));
-    if (!wanted.length) return vi ? "Hiện chưa lấy được giá crypto." : "Crypto prices are unavailable right now.";
-    const body = wanted
-      .map((c) => `${c.symbol} ${n(c.price, c.price >= 1000 ? 0 : 2)} USD (${sign(c.changePct24h)}${n(c.changePct24h)}% 24h)`)
-      .join(" · ");
-    return vi ? `Giá hiện tại: ${body}.` : `Current prices: ${body}.`;
-  }
-
   if (intent === "symbol" && symbol) {
     const board = await getBoard().catch(() => []);
     const hit = board.find((q) => q.symbol === symbol);
@@ -105,6 +93,6 @@ export async function answerFromSnapshot(question: string, locale: "vi" | "en"):
   }
 
   return vi
-    ? "Mình chưa hiểu câu hỏi. Mình có số liệu về chỉ số Việt Nam, rổ VN30, giá vàng trong nước và thế giới, cùng giá crypto. Ví dụ: “Mã nào tăng mạnh nhất?” hoặc “Giá vàng SJC hôm nay?”."
-    : "I didn't follow that. I have Vietnam index levels, the VN30 board, domestic and world gold, and crypto prices. Try: “Which stocks gained most?” or “What is the SJC gold price?”.";
+    ? "Mình chưa hiểu câu hỏi. Mình có số liệu về chỉ số Việt Nam, rổ VN30, cùng giá vàng trong nước và thế giới. Ví dụ: “Mã nào tăng mạnh nhất?” hoặc “Giá vàng SJC hôm nay?”."
+    : "I didn't follow that. I have Vietnam index levels, the VN30 board, and domestic and world gold. Try: “Which stocks gained most?” or “What is the SJC gold price?”.";
 }

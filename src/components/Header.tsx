@@ -32,7 +32,6 @@ export function Header({
   email = null,
   tier = "anon",
   symbols,
-  cryptoEnabled = false,
 }: {
   locale: Locale;
   dict: Dict;
@@ -40,8 +39,6 @@ export function Header({
   tier?: Tier;
   /** Everything the chart can show — the search dialog's universe. */
   symbols: string[];
-  /** Whether the crypto section is on (server flag, passed from the layout). */
-  cryptoEnabled?: boolean;
 }) {
   const pathname = usePathname() || `/${locale}`;
   const other: Locale = locale === "vi" ? "en" : "vi";
@@ -50,14 +47,13 @@ export function Header({
   const isActive = (href: string) =>
     href === `/${locale}` ? pathname === href : pathname.startsWith(href);
 
-  // Seven flat destinations. The chart is the product, so it sits second,
+  // Six flat destinations. The chart is the product, so it sits second,
   // not inside a "Markets" dropdown.
   const items: NavLink[] = [
     { href: `/${locale}`, label: dict.nav.home },
     { href: p("terminal"), label: dict.nav.terminal },
     { href: p("stocks"), label: dict.nav.stocks },
     { href: p("gold"), label: dict.nav.gold },
-    ...(cryptoEnabled ? [{ href: p("crypto"), label: dict.nav.crypto }] : []),
     { href: p("brief"), label: dict.nav.brief },
     { href: p("pricing"), label: dict.nav.pricing },
   ];

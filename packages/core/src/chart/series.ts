@@ -79,26 +79,8 @@ export function dayBucket(atMs: number): number {
   return Math.floor(Math.floor(shifted / 86_400_000) * 86_400_000 - ICT) / 1000;
 }
 
-/** Crypto is charted from the coin feed, addressed the same way gold is. */
-export const CRYPTO_PREFIX = "CRYPTO";
-
-/** CoinGecko ids are lowercase, hyphenated: `bitcoin`, `binance-coin`. */
-const COIN_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-
-export function cryptoSymbol(id: string): string {
-  return `${CRYPTO_PREFIX}:${id.toLowerCase()}`;
-}
-
-export function cryptoId(symbol: string): string | null {
-  const s = symbol.trim();
-  if (!s.toUpperCase().startsWith(`${CRYPTO_PREFIX}:`)) return null;
-  const id = s.slice(CRYPTO_PREFIX.length + 1).toLowerCase();
-  return COIN_RE.test(id) ? id : null;
-}
-
 export type ChartSource =
   | { kind: "recorded"; code: string }
-  | { kind: "crypto"; id: string }
   | { kind: "equity"; symbol: string };
 
 /**
@@ -112,7 +94,5 @@ export type ChartSource =
 export function chartSource(symbol: string): ChartSource {
   const code = seriesCode(symbol);
   if (code) return { kind: "recorded", code };
-  const id = cryptoId(symbol);
-  if (id) return { kind: "crypto", id };
   return { kind: "equity", symbol: symbol.trim().toUpperCase() };
 }

@@ -24,8 +24,6 @@ import { freeAsksToShow } from "@/lib/ask/meter";
 import { buildBrief } from "@/lib/brief";
 import { dirOf, equityPrice, num, pct } from "@/lib/format";
 import { getDict, href, isLocale, PATHS } from "@/lib/i18n";
-import { getCoins } from "@/lib/providers/crypto";
-import { cryptoEnabled } from "@/lib/flags";
 import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBoard, getIndexSparks, getIndices } from "@/lib/providers/vnstock";
 import type { Locale, Quote } from "@/lib/types";
@@ -41,8 +39,8 @@ function topMovers(board: Quote[], n: number) {
  * The landing.
  *
  * It opens on a market READ, not a menu: a one-line verdict, then one tile each
- * for the three asset classes the product is about — equities, gold, crypto —
- * so a visitor knows in a glance what today is. The AI box sits high because it
+ * for the two asset classes the product is about — equities and gold — so a
+ * visitor knows in a glance what today is. The AI box sits high because it
  * is the thing no other VN finance site has; the sign-in nudge turns a reader
  * into an account, which is what brings them back.
  */
@@ -53,13 +51,12 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const viewAll = dict.common.viewAll;
   const session = await getSession();
 
-  const [indicesR, boardR, goldR, coinsR] = await Promise.allSettled([
-    getIndices(), getBoard(), getGold(), cryptoEnabled() ? getCoins(20) : Promise.resolve([]),
+  const [indicesR, boardR, goldR] = await Promise.allSettled([
+    getIndices(), getBoard(), getGold(),
   ]);
   const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
   const board = boardR.status === "fulfilled" ? boardR.value : [];
   const gold = goldR.status === "fulfilled" ? goldR.value : null;
-  const coins = coinsR.status === "fulfilled" ? coinsR.value : [];
   const { gainers, losers } = topMovers(board, 5);
 
   const sparks = indices.length
@@ -68,10 +65,9 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
 
   const goldTop = gold ? headlineRow(gold.rows) : undefined;
   const prem = gold?.world && goldTop ? premium(gold.world.buy, goldTop.sell, USD_VND) : null;
-  const brief = buildBrief(locale, { indices, board, gold, goldHeadline: goldTop, coins, premiumPct: prem?.pct });
+  const brief = buildBrief(locale, { indices, board, gold, goldHeadline: goldTop, premiumPct: prem?.pct });
 
   const vnindex = indices.find((i) => i.symbol === "VNINDEX") ?? indices[0];
-  const btc = coins.find((c) => c.symbol === "BTC") ?? coins[0];
   const up = board.filter((q) => q.changePct > 0).length;
   const down = board.filter((q) => q.changePct < 0).length;
   const flat = Math.max(0, board.length - up - down);
@@ -120,9 +116,9 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         </div>
       )}
 
-      {/* Cross-asset hero — equities, gold, crypto in one glance. */}
-      {(vnindex || goldTop || btc) && (
-        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      {/* Cross-asset hero — equities and gold in one glance. */}
+      {(vnindex || goldTop) && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
           {vnindex && (
             <HeroTile
               label="VN-Index" href={`/${locale}/${PATHS.stocks[locale]}`}
@@ -137,14 +133,6 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
               value={equityPrice(goldTop.sell, locale)}
               delta={<Delta change={goldTop.changeSell} locale={locale} />}
               note={prem ? `${pct(prem.pct, locale)} ${dict.gold.vsWorld}` : undefined}
-            />
-          )}
-          {btc && (
-            <HeroTile
-              label={dict.home.heroBtc} href={`/${locale}/${PATHS.crypto[locale]}`}
-              value={`${num(btc.price, locale, 0)} $`}
-              delta={<Delta change={btc.changePct24h} changePct={btc.changePct24h} showAbsolute={false} locale={locale} />}
-              spark={btc.sparkline} sparkDir={dirOf(btc.changePct24h, 2)}
             />
           )}
         </div>

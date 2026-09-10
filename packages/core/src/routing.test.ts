@@ -21,8 +21,6 @@ test("the other locale's spelling is refused", () => {
 });
 
 test("a segment identical in both locales is never a mispairing", () => {
-  assert.ok(localeSegmentOk("/vi/crypto"));
-  assert.ok(localeSegmentOk("/en/crypto"));
   assert.ok(localeSegmentOk("/vi/admin"));
   assert.ok(localeSegmentOk("/en/admin"));
 });

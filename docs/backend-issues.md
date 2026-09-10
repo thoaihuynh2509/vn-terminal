@@ -33,7 +33,7 @@ Each entry: what · where · symptom · evidence · date · status.
 - **Symptom:** a dynamic API in a layout opts the whole segment subtree into dynamic rendering.
   `.next/prerender-manifest.json` holds only 5 routes (`/_global-error`, `/_not-found`,
   `/favicon.ico`, `/robots.txt`, `/sitemap.xml`) — **zero `[locale]` pages are prerendered**, so
-  `export const revalidate = 60` on the board/stocks/gold/crypto pages and `generateStaticParams()`
+  `export const revalidate = 60` on the board/stocks/gold pages and `generateStaticParams()`
   in the layout are dead letters. Every board and chart view is a full RSC render plus a serverless
   invocation instead of a 60s CDN hit; the board render does `topMovers`, `buildBrief`, heatmap and
   sector aggregation each time.
