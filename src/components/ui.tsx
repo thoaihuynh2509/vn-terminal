@@ -31,6 +31,38 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 }
 
 /**
+ * A placeholder standing in for a value that has not arrived yet.
+ *
+ * Filled with a non-breaking space rather than left empty: a real glyph gives
+ * the bar the same line box as the text it replaces, so the row does not jump
+ * height when the data lands. Width is in `ch` so it tracks the type around it.
+ *
+ * `tone="chrome"` is the same bar on the near-black ticker, where --line is
+ * invisible and --chrome-hover is the readable step up from the background.
+ */
+export function SkeletonBar({
+  ch,
+  tone = "default",
+  className = "",
+}: {
+  ch: number;
+  tone?: "default" | "chrome";
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`skeleton inline-block rounded-[3px] text-transparent ${
+        tone === "chrome" ? "bg-chrome-hover" : "bg-line"
+      } ${className}`}
+      style={{ width: `${ch}ch` }}
+    >
+      &nbsp;
+    </span>
+  );
+}
+
+/**
  * Eyebrow — the mono, uppercase, gold kicker that opens a section.
  *
  * `tone="chrome"` is the same label on a dark panel, where --accent is too

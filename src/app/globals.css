@@ -202,6 +202,11 @@ body {
 @keyframes pulse-dot { 50% { opacity: 0.4; } }
 .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 
+/* Placeholder blocks for data still in flight. Shares the dot's keyframes
+   rather than declaring a second identical one; the reduced-motion block
+   above already stills both. */
+.skeleton { animation: pulse-dot 2s ease-in-out infinite; }
+
 /* ─── Article prose ────────────────────────────────────────────
    Applied to markdown-rendered HTML. Measure is capped by the
    wrapper; these rules only handle rhythm and the elements that

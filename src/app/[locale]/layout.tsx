@@ -6,7 +6,7 @@ import { Footer } from "@/components/Footer";
 import { Suspense } from "react";
 import { SessionChrome, SessionChromeFallback } from "@/components/SessionChrome";
 import { ThemeScript } from "@/components/ThemeScript";
-import { TickerStrip } from "@/components/TickerStrip";
+import { TickerStrip, TickerStripFallback } from "@/components/TickerStrip";
 import { Analytics } from "@/components/Analytics";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { siteUrl } from "@/lib/site";
@@ -97,11 +97,18 @@ export default async function LocaleLayout({
         >
           {locale === "vi" ? "Tới nội dung chính" : "Skip to content"}
         </a>
-        {/* The chrome that depends on WHO is asking, isolated and suspended so
-            the rest of the page is not held behind the session read. */}
         {/* The dark index bar is the top edge of the page: it reads as the
             market itself, with the site chrome sitting underneath it. */}
-        <TickerStrip locale={locale} />
+        {/* Suspended for the same reason SessionChrome is, and for one more:
+            `loading.tsx` sits BELOW the layout, so it cannot show a fallback
+            for a layout that reads runtime data — without this boundary every
+            navigation blocks on the index and gold feeds before any page-level
+            loading state can appear. */}
+        <Suspense fallback={<TickerStripFallback locale={locale} />}>
+          <TickerStrip locale={locale} />
+        </Suspense>
+        {/* The chrome that depends on WHO is asking, isolated and suspended so
+            the rest of the page is not held behind the session read. */}
         <Suspense fallback={<SessionChromeFallback locale={locale} dict={dict} />}>
           <SessionChrome locale={locale} dict={dict} />
         </Suspense>
