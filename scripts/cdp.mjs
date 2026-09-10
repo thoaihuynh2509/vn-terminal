@@ -445,6 +445,17 @@ try {
       console.log(`  ⊘ ${name} — ${reason}`);
     };
     const NEEDS_SESSION = "needs AUTH_SECRET: a signed-out reader cannot draw";
+    /**
+     * Everything the page has announced, not the first region in document order.
+     *
+     * `querySelector('[aria-live=polite]')` cost three checks: the chart mounts
+     * its own polite region above the rail, so the layout ceiling and both
+     * assistant answers were read off an empty element and reported as silence
+     * from features that were in fact speaking. A page may hold several live
+     * regions; the question is always what it SAID, never which one said it.
+     */
+    const LIVE_TEXT =
+      `[...document.querySelectorAll('[aria-live=polite]')].map(e => e.innerText.trim()).filter(Boolean).join(' | ')`;
     const NEEDS_SLOT = "needs AUTH_SECRET: a signed-out reader gets one indicator slot";
 
     // Hermetic start — the Chrome profile dir persists between runs. The
@@ -626,7 +637,7 @@ try {
     await sleep(200);
     await s.evaluate(`document.querySelector('form button[type=submit]').click()`);
     const answered = (await s.waitFor(`(() => {
-      const t = document.querySelector('[aria-live=polite]')?.innerText ?? '';
+      const t = ${LIVE_TEXT};
       return /VNINDEX \\d/.test(t) ? t : null;
     })()`)) ?? "";
     check("ask returns a grounded answer", /VNINDEX/.test(answered), answered.slice(0, 60));
@@ -640,7 +651,7 @@ try {
     await sleep(200);
     await s.evaluate(`document.querySelector('form button[type=submit]').click()`);
     const refusal = (await s.waitFor(`(() => {
-      const t = document.querySelector('[aria-live=polite]')?.innerText ?? '';
+      const t = ${LIVE_TEXT};
       return /khuy\\u1ebfn ngh\\u1ecb/.test(t) ? t : null;
     })()`)) ?? "";
     check("assistant declines investment advice", /khuyến nghị/.test(refusal), refusal.slice(0, 60));
@@ -1145,7 +1156,10 @@ try {
       await type("Second");
       await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Lưu bố cục hiện tại')?.click()`);
       await sleep(400);
-      const capped = await s.evaluate(`document.querySelector('[aria-live=polite]')?.innerText ?? ''`);
+      // EVERY live region, not the first one in the document: the chart mounts
+      // its own polite region above the rail, so `querySelector` read an empty
+      // element and reported a silent ceiling that was in fact announced.
+      const capped = await s.evaluate(LIVE_TEXT);
       check("free hits the one-layout ceiling and is told why",
         /giới hạn/.test(capped), capped.slice(0, 60));
       check("the refused layout was not stored",
