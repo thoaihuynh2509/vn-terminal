@@ -47,12 +47,16 @@ export interface GoldSnapshot {
 
 /** A provider failure that the UI must render as a degraded state, never as zeros. */
 export class FeedError extends Error {
-  constructor(
-    public readonly feed: string,
-    message: string,
-  ) {
+  // Assigned in the body rather than declared as a constructor parameter
+  // property: that syntax needs a real compiler, and `node --test` runs these
+  // modules through type STRIPPING, which cannot rewrite it. A parameter
+  // property here makes every module that imports this file untestable.
+  readonly feed: string;
+
+  constructor(feed: string, message: string) {
     super(`[${feed}] ${message}`);
     this.name = "FeedError";
+    this.feed = feed;
   }
 }
 

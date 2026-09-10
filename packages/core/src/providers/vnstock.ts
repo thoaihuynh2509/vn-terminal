@@ -1,15 +1,16 @@
-import { cached, fetchJson } from "../cache";
-import { resample, resampleIntraday, resampleMonthly } from "../ta/resample";
-import { EXCHANGE_OFFSET, timeframe, type Timeframe } from "../chart/timeframes";
-import { FeedError, type Bar, type Quote } from "../types";
+import { cached, fetchJson } from "../cache.ts";
+import { resample, resampleIntraday, resampleMonthly } from "../ta/resample.ts";
+import { EXCHANGE_OFFSET, timeframe, type Timeframe } from "../chart/timeframes.ts";
+import { dayBucket } from "../chart/series.ts";
+import { FeedError, type Bar, type Quote } from "../types.ts";
 
 /**
  * Vietnamese equity data.
  *
- * Primary feed: DNSE (services.entrade.com.vn) — TradingView-shaped OHLC arrays.
+ * Board:        VPS bgapidatafeed — every requested symbol in ONE request.
+ * Bars:         DNSE (services.entrade.com.vn) — TradingView-shaped OHLC arrays.
  * Fallback:     VNDirect dchart — same shape, different host.
- * Indices:      CafeF msh-appdata — the only one of the three that publishes a
- *               whole-market snapshot in a single call.
+ * Indices:      CafeF msh-appdata — a whole-market snapshot in a single call.
  *
  * TCBS was evaluated and rejected: it sits behind a Cloudflare interstitial.
  */
@@ -17,6 +18,7 @@ import { FeedError, type Bar, type Quote } from "../types";
 const DNSE = "https://services.entrade.com.vn/chart-api/v2/ohlcs";
 const VNDIRECT = "https://dchart-api.vndirect.com.vn/dchart/history";
 const CAFEF = "https://msh-appdata.cafef.vn/rest-api/api/v1/StockMarket?centerId=1";
+const VPS = "https://bgapidatafeed.vps.com.vn/getliststockdata";
 
 /** What the chart opens on when a URL names no symbol. */
 export const DEFAULT_SYMBOL = "VNM";
@@ -168,13 +170,117 @@ export async function getIndexSparks(symbols: string[]): Promise<Record<string, 
 }
 
 /**
- * Board snapshot. Symbols are fetched with bounded concurrency: the upstream is
- * a free public endpoint and firing 30 parallel requests at it gets us throttled.
- * A symbol that fails is dropped rather than failing the whole board.
+ * One row of the VPS board feed. Only the fields we read are declared; the feed
+ * sends ~50 per symbol, most of them order-book depth we have no use for.
+ *
+ * Three of its conventions are traps, and all three are handled in `quoteFromRow`
+ * rather than at the call sites:
+ *   - `ot` and `changePc` are UNSIGNED. A stock down 0.20 reports "0.20", so the
+ *     direction has to come from `lastPrice` against `r`. Taking them at face
+ *     value renders every decliner as a gainer.
+ *   - `lot` is in board lots of ten, not shares.
+ *   - the numeric fields arrive as strings.
  */
-export async function getBoard(symbols: readonly string[] = VN30): Promise<Quote[]> {
-  return cached(`board:${symbols.join(",")}`, 60_000, async () => {
-    const out: Quote[] = [];
+export interface VpsRow {
+  sym: string;
+  /** Last matched price. Zero before the first match of the session. */
+  lastPrice: number;
+  /** Reference (previous close). */
+  r: number;
+  /** Session volume, in lots of ten shares. */
+  lot: number;
+  openPrice: string;
+  highPrice: string;
+  lowPrice: string;
+}
+
+/**
+ * A feed field as a number, or undefined when it is not one.
+ *
+ * The empty-string guard is load-bearing: `Number("")` is 0, not NaN, so an
+ * absent high would otherwise arrive as a high of zero — a real-looking price
+ * the board would render and the chart would scale to.
+ */
+const n = (v: string | number | undefined): number | undefined => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === "string" && v.trim() === "") return undefined;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : undefined;
+};
+
+export function quoteFromRow(row: VpsRow): Quote | null {
+  const prevClose = n(row.r);
+  // Before the first match the feed sends 0, which is "no trade yet", not a
+  // price of zero. Reference is the honest stand-in: the board then shows the
+  // symbol flat at yesterday's close rather than down 100%.
+  const price = n(row.lastPrice) || prevClose;
+  if (!row.sym || !price) return null;
+  const change = prevClose === undefined ? 0 : price - prevClose;
+  return {
+    symbol: row.sym.toUpperCase(),
+    price,
+    change,
+    changePct: prevClose ? (change / prevClose) * 100 : 0,
+    volume: n(row.lot) === undefined ? undefined : n(row.lot)! * 10,
+    high: n(row.highPrice),
+    low: n(row.lowPrice),
+    open: n(row.openPrice),
+    prevClose,
+  };
+}
+
+/** The whole board in one request. Symbols the feed does not carry are absent. */
+async function snapshotBoard(symbols: readonly string[]): Promise<Quote[]> {
+  const rows = await fetchJson<VpsRow[]>(`${VPS}/${symbols.join(",")}`, { feed: "vps" });
+  if (!Array.isArray(rows) || !rows.length) throw new FeedError("vps", "empty board");
+  return rows.map(quoteFromRow).filter((q): q is Quote => q !== null);
+}
+
+/**
+ * The old per-symbol path, kept as the fallback.
+ *
+ * Bounded concurrency because the upstream is a free public endpoint and firing
+ * 30 parallel requests at it gets us throttled. A symbol that fails is dropped
+ * rather than failing the whole board.
+ */
+async function fanOutBoard(symbols: readonly string[]): Promise<Quote[]> {
+  const out: Quote[] = [];
+  const queue = [...symbols];
+  const CONCURRENCY = 6;
+
+  await Promise.all(
+    Array.from({ length: CONCURRENCY }, async () => {
+      for (;;) {
+        const sym = queue.shift();
+        if (!sym) return;
+        try {
+          out.push(await getQuote(sym));
+        } catch {
+          // Drop this symbol; a partial board beats an empty page.
+        }
+      }
+    }),
+  );
+  return out;
+}
+
+/**
+ * The closes BEFORE today, for the board's trend glyph.
+ *
+ * Split from the quote because the two go stale on completely different clocks:
+ * a price moves every minute, a set of prior daily closes changes once, at the
+ * close. Fetching them together is what made the board thirty requests a minute
+ * instead of one. Today's point is not included — the caller appends the live
+ * price — so a cached set stays correct for the whole session.
+ *
+ * Keyed by trading day as well as TTL'd: a set cached late in one session must
+ * not survive into the next, where it would be missing yesterday's close and
+ * silently shift every point by a day.
+ */
+async function sparkHistory(symbols: readonly string[]): Promise<Map<string, number[]>> {
+  const day = dayBucket(Date.now());
+  return cached(`sparks:${day}:${symbols.join(",")}`, 6 * 60 * 60_000, async () => {
+    const out = new Map<string, number[]>();
     const queue = [...symbols];
     const CONCURRENCY = 6;
 
@@ -184,15 +290,55 @@ export async function getBoard(symbols: readonly string[] = VN30): Promise<Quote
           const sym = queue.shift();
           if (!sym) return;
           try {
-            out.push(await getQuote(sym));
+            const bars = await getBars(sym, { days: 30 });
+            // Drop the last bar: during a session it is today's unfinished one,
+            // and the live price replaces it.
+            const closes = bars.slice(-20, -1).map((b) => b.c);
+            if (closes.length > 1) out.set(sym.toUpperCase(), closes);
           } catch {
-            // Drop this symbol; a partial board beats an empty page.
+            // No history for this symbol; its row renders without a glyph.
           }
         }
       }),
     );
+    return out;
+  });
+}
 
+/**
+ * Board snapshot.
+ *
+ * One request for every symbol, with the per-symbol fan-out kept behind it: the
+ * snapshot feed is a free public endpoint with no SLA, and a board is the page.
+ *
+ * `spark` is opt-in because only the full board and the chart rail draw the
+ * trend glyph — every other caller (the movers, the heatmap, sector rotation,
+ * the alert cron, the brief) reads numbers and would otherwise pay for a
+ * history fetch it never renders.
+ */
+export async function getBoard(
+  symbols: readonly string[] = VN30,
+  { spark = false }: { spark?: boolean } = {},
+): Promise<Quote[]> {
+  return cached(`board:${spark ? "spark" : "plain"}:${symbols.join(",")}`, 60_000, async () => {
+    let out: Quote[];
+    try {
+      out = await snapshotBoard(symbols);
+      if (!out.length) throw new FeedError("vps", "no usable rows");
+    } catch {
+      out = await fanOutBoard(symbols);
+    }
     if (!out.length) throw new FeedError("vnstock", "board empty — all symbols failed");
+
+    if (spark) {
+      // Best-effort: a board with no glyphs beats no board.
+      const history = await sparkHistory(symbols).catch(() => new Map<string, number[]>());
+      out = out.map((q) => {
+        if (q.spark?.length) return q; // the fan-out already carries one
+        const prior = history.get(q.symbol);
+        return prior ? { ...q, spark: [...prior, q.price] } : q;
+      });
+    }
     return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
   });
 }

@@ -14,7 +14,7 @@ import { dirOf } from "@/lib/format";
 import { getDict, PATHS } from "@/lib/i18n";
 import { itemListLd } from "@/lib/seo";
 import { siteUrl } from "@/lib/site";
-import { BAND, getBoard } from "@/lib/providers/vnstock";
+import { BAND, getBoard, VN30 } from "@/lib/providers/vnstock";
 import type { Locale } from "@/lib/types";
 
 export async function StocksBoard({ locale }: { locale: Locale }) {
@@ -22,7 +22,8 @@ export async function StocksBoard({ locale }: { locale: Locale }) {
   let quotes = null;
   let error: string | undefined;
   try {
-    quotes = await getBoard();
+    // The full board draws the trend glyph, so it asks for the history too.
+    quotes = await getBoard(VN30, { spark: true });
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }

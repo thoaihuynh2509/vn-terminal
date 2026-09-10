@@ -148,7 +148,8 @@ export async function TerminalView({
   const [barsR, boardR] = await Promise.allSettled([
     source.kind === "recorded" ? recordedBars(source.code)
       : getTimeframeBars(sym, view),
-    getBoard(),
+    // The rail draws a glyph per row.
+    getBoard(VN30, { spark: true }),
   ]);
 
   // A recorded series with nothing in it yet is not an error — it is a feature

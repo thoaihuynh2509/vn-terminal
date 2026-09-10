@@ -20,7 +20,9 @@ export async function GET(req: Request) {
     const symbols = q
       ? q.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 40)
       : VN30;
-    return ok(await getBoard(symbols), 60);
+    // `spark` has always been in this response; keep it, so a public caller
+    // does not lose a field to an internal change of feed.
+    return ok(await getBoard(symbols, { spark: true }), 60);
   } catch (e) {
     return fail(e);
   }
