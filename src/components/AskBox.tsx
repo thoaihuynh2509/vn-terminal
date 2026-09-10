@@ -122,7 +122,7 @@ export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact 
   return (
     <div>
       {isMock && (
-        <p role="note" className="mb-4 rounded border border-line bg-surface px-3 py-2.5 text-[12px] text-ink-2">
+        <p role="note" className="mb-4 rounded-lg border border-line bg-surface px-3 py-2.5 text-[12px] text-ink-2">
           {dict.ask.mockNotice}
         </p>
       )}
@@ -144,12 +144,12 @@ export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact 
           placeholder={dict.ask.placeholder}
           maxLength={500}
           disabled={busy}
-          className="min-w-0 flex-1 rounded border border-line bg-surface px-3 py-2 text-[14px] text-ink placeholder:text-muted disabled:opacity-60"
+          className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-[14px] text-ink placeholder:text-muted disabled:opacity-60"
         />
         <button
           type="submit"
           disabled={busy || !question.trim()}
-          className="rounded border border-line bg-surface-2 px-4 py-2 text-[13px] font-medium text-ink disabled:opacity-50"
+          className="rounded-lg border border-line bg-page px-4 py-2 text-[13px] font-medium text-ink disabled:opacity-50"
         >
           {busy ? dict.ask.sending : dict.ask.send}
         </button>
@@ -157,7 +157,7 @@ export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact 
           <button
             type="button"
             onClick={() => { setTurns([]); setError(null); }}
-            className="rounded border border-line px-3 py-2 text-[13px] text-ink-2 hover:text-ink"
+            className="rounded-lg border border-line px-3 py-2 text-[13px] text-ink-2 hover:text-ink"
           >
             {dict.ask.clear}
           </button>
@@ -181,7 +181,7 @@ export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact 
                 type="button"
                 onClick={() => submit(s)}
                 disabled={busy}
-                className="rounded border border-line px-2.5 py-1.5 text-[12px] text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+                className="rounded-lg border border-line px-2.5 py-1.5 text-[12px] text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
               >
                 {s}
               </button>
@@ -210,11 +210,11 @@ export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact 
           <div className="mt-3 flex flex-wrap gap-2">
             <a href={anon ? `/${locale}/${PATHS.login[locale]}` : `/${locale}/${PATHS.pricing[locale]}?plan=plus`}
               onClick={() => track("upgrade_prompt_clicked", { gate: "ai", tier, surface: "askbox" })}
-              className="rounded border border-line bg-surface-2 px-3 py-1.5 text-[13px] font-medium text-accent">
+              className="rounded-lg border border-line bg-page px-3 py-1.5 text-[13px] font-medium text-accent">
               {anon ? dict.paywall.signIn : dict.paywall.seePlans}
             </a>
             <a href={anon ? `/${locale}/${PATHS.pricing[locale]}?plan=plus` : `/${locale}/${PATHS.login[locale]}`}
-              className="rounded border border-line px-3 py-1.5 text-[13px] font-medium text-ink-2">
+              className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-medium text-ink-2">
               {anon ? dict.paywall.seePlans : dict.paywall.signIn}
             </a>
           </div>
@@ -222,7 +222,7 @@ export function AskBox({ locale, isMock, tier, symbol, freeAsks = null, compact 
       )}
 
       {error && (
-        <p role="alert" className="mt-4 rounded border border-line bg-surface px-3 py-2.5 text-[13px] text-down">
+        <p role="alert" className="mt-4 rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px] text-down">
           {error}
         </p>
       )}

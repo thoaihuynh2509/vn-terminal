@@ -73,7 +73,7 @@ export function GateHint({
     : `/${locale}/${PATHS.pricing[locale]}?plan=plus`;
 
   return (
-    <div className="mt-2 flex items-start justify-between gap-3 rounded border border-line bg-surface-2 px-3 py-2 text-[12px]">
+    <div className="mt-2 flex items-start justify-between gap-3 rounded-[10px] border border-dashed border-gold-line bg-gold-soft px-3.5 py-2.5 text-[12px]">
       <p className="min-w-0 text-ink-2">
         {body}{" "}
         <Link href={href} onClick={() => track("upgrade_prompt_clicked", { gate, tier })}

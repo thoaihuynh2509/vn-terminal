@@ -54,7 +54,7 @@ export function Heatmap({
   const boxes = squarify(items.map((t) => ({ item: t, weight: t.weight })), 0, 0, 100, 100);
 
   return (
-    <div className="card overflow-hidden p-1.5">
+    <div className="card overflow-hidden p-2.5">
       <div className="relative w-full" style={{ height }}>
         {boxes.map(({ item: t, x, y, w, h }) => {
           const { bg, strong } = bucket(t.q.changePct);
@@ -70,20 +70,21 @@ export function Heatmap({
               key={t.q.symbol}
               href={`/${locale}/${PATHS.terminal[locale]}/${t.q.symbol}`}
               title={`${t.q.symbol} ${num(t.q.price, locale, 2)} ${pct(t.q.changePct, locale)}`}
-              className="absolute flex flex-col items-center justify-center overflow-hidden rounded-[3px] p-0.5 text-center leading-none outline-offset-[-2px] transition-opacity hover:opacity-85"
+              className="absolute flex flex-col items-center justify-center overflow-hidden rounded-lg p-0.5 text-center leading-none outline-offset-[-2px] transition-opacity hover:opacity-85"
               style={{
-                left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`,
+                left: `calc(${x}% + 2px)`, top: `calc(${y}% + 2px)`,
+                width: `calc(${w}% - 4px)`, height: `calc(${h}% - 4px)`,
                 background: bg,
                 color: strong ? "#fff" : "var(--ink)",
               }}
             >
               {!tiny && (
-                <span className={`truncate font-bold tracking-tight ${small ? "text-[9px]" : "text-[11px]"}`}>
+                <span className={`truncate font-mono font-semibold tracking-tight ${small ? "text-[10px]" : "text-[12px]"}`}>
                   {t.q.symbol}
                 </span>
               )}
               {showPct && (
-                <span className="tnum mt-0.5 text-[10px] opacity-90">{pct(t.q.changePct, locale)}</span>
+                <span className="tnum mt-1 font-mono text-[10px] opacity-90">{pct(t.q.changePct, locale)}</span>
               )}
             </Link>
           );
@@ -96,9 +97,9 @@ export function Heatmap({
 /** Scale legend — a diverging scale must always ship one. */
 export function HeatmapLegend({ labels }: { labels: { down: string; flat: string; up: string } }) {
   return (
-    <div className="mt-2 flex items-center gap-2 text-[10px] text-muted">
+    <div className="mt-3 flex items-center gap-3 font-mono text-[11px] text-muted">
       <span>{labels.down}</span>
-      <div className="flex h-2.5 flex-1 overflow-hidden rounded-sm" aria-hidden="true">
+      <div className="flex h-2.5 flex-1 overflow-hidden rounded-lg" aria-hidden="true">
         {[...DOWN].reverse().map((c) => <div key={c} className="flex-1" style={{ background: c }} />)}
         <div className="flex-1" style={{ background: NEUTRAL }} />
         {UP.map((c) => <div key={c} className="flex-1" style={{ background: c }} />)}

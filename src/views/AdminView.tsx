@@ -70,7 +70,7 @@ export function AdminView({ locale, orders, census = [] }: {
         <div className="card relative overflow-x-auto">
           <table className="data-table w-full text-[13px]">
             <caption className="sr-only">{dict.admin.title}</caption>
-            <thead className="border-b border-line bg-surface-2 text-[11px] uppercase tracking-wide text-muted">
+            <thead className="border-b border-line bg-surface-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
               <tr>
                 <th scope="col" className="px-3 py-2 text-left font-medium">{dict.admin.colDate}</th>
                 <th scope="col" className="px-3 py-2 text-left font-medium">{dict.admin.colEmail}</th>

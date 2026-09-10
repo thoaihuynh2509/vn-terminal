@@ -19,27 +19,27 @@ export function SectorBars({ board, locale, dict }: { board: Quote[]; locale: Lo
   const span = Math.max(...stats.map((s) => Math.abs(s.weightedChangePct)), 0.1);
 
   return (
-    <ul className="space-y-2">
+    <ul className="space-y-3.5">
       {stats.map((s) => {
         const up = s.weightedChangePct >= 0;
         const width = `${(Math.abs(s.weightedChangePct) / span) * 50}%`;
         return (
           <li key={s.key}>
             <div className="flex items-baseline justify-between gap-2">
-              <Link href={`/${locale}/${PATHS.stocks[locale]}`} className="truncate text-[12px] text-ink-2 hover:text-accent">
+              <Link href={`/${locale}/${PATHS.stocks[locale]}`} className="truncate text-[14px] text-ink hover:text-accent">
                 {SECTOR_LABEL[s.key][locale]}
-                <span className="tnum ml-1.5 text-[11px] text-muted">
+                <span className="tnum ml-1.5 font-mono text-[12px] text-muted">
                   {s.advancing}/{s.declining} {dict.home.breadth}
                 </span>
               </Link>
-              <span className="tnum shrink-0 text-[12px]">
+              <span className="tnum shrink-0 text-[14px]">
                 <Delta change={s.weightedChangePct} changePct={s.weightedChangePct} locale={locale} showAbsolute={false} />
               </span>
             </div>
             {/* Bars grow out of a centre line: left is down, right is up. */}
-            <div className="relative mt-1 h-1.5 rounded-full bg-surface-2" aria-hidden="true">
+            <div className="relative mt-2 h-2 rounded-full bg-grid" aria-hidden="true">
               <span
-                className="absolute top-0 h-1.5 rounded-full"
+                className="absolute top-0 h-2 rounded-full"
                 style={{ width, background: up ? "var(--up)" : "var(--down)", left: up ? "50%" : undefined, right: up ? undefined : "50%" }}
               />
             </div>

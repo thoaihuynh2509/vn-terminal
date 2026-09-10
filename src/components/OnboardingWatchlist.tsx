@@ -98,7 +98,7 @@ export function OnboardingWatchlist({ dict, locale }: { dict: Dict; locale: Loca
               aria-pressed={on}
               onClick={() => toggle(s)}
               className={`tnum rounded-full border px-3 py-1.5 text-[13px] font-medium ${
-                on ? "border-accent bg-accent text-page" : "border-line bg-surface-2 text-ink hover:bg-surface"
+                on ? "border-accent bg-accent text-page" : "border-line bg-page text-ink hover:bg-surface"
               }`}
             >
               {on ? "✓ " : ""}{s}
@@ -111,7 +111,7 @@ export function OnboardingWatchlist({ dict, locale }: { dict: Dict; locale: Loca
         type="button"
         onClick={add}
         disabled={picked.length === 0}
-        className="mt-4 rounded border border-accent bg-accent px-3.5 py-2 text-[13px] font-semibold text-page hover:opacity-90 disabled:opacity-50"
+        className="mt-4 rounded-lg border border-accent bg-accent px-3.5 py-2 text-[13px] font-semibold text-page hover:opacity-90 disabled:opacity-50"
       >
         {dict.home.onboardAdd}{picked.length ? ` (${picked.length})` : ""}
       </button>

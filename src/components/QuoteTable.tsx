@@ -88,7 +88,7 @@ export function QuoteTable({
   return (
     <div>
       {sectors && (
-        <div className="mb-3">
+        <div className="mb-4">
           <Pills
             label={dict.stocks.sector}
             value={sector}
@@ -100,12 +100,12 @@ export function QuoteTable({
           />
         </div>
       )}
-      <div className="card relative overflow-x-auto">
+      <div className="card relative overflow-x-auto overflow-y-hidden">
       <table className={`data-table w-full text-[13px] ${compact ? "min-w-[300px]" : sectors ? "min-w-[800px]" : "min-w-[680px]"}`}>
         <caption className="sr-only">
           {dict.stocks.title} — {dict.common.unit}: {dict.common.thousandVnd}
         </caption>
-        <thead className="border-b border-line bg-surface-2 text-[11px] uppercase tracking-wide text-muted">
+        <thead className="border-b border-line bg-surface-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
           <tr>
             {showWatch && <th scope="col" className="w-8 px-2 py-2" />}
             {head("symbol", dict.common.symbol, "left")}
@@ -140,7 +140,7 @@ export function QuoteTable({
                       for the machines. */}
                   <Link
                     href={`/${locale}/${PATHS.terminal[locale]}/${q.symbol}`}
-                    className="font-semibold hover:text-accent"
+                    className="font-mono text-[14px] font-semibold hover:text-accent"
                     title={`${q.symbol} — ${dict.stocks.chartOf}`}
                   >
                     {q.symbol}
@@ -154,12 +154,12 @@ export function QuoteTable({
                   )}
                 </td>
                 {sectors && (
-                  <td className="px-2 py-1.5 text-[12px] text-ink-2">{SECTOR_LABEL[sectorOf(q.symbol)][locale]}</td>
+                  <td className="px-2 py-1.5 text-[13px] text-muted">{SECTOR_LABEL[sectorOf(q.symbol)][locale]}</td>
                 )}
                 {/* Coloured but not glyphed: the ▲/▼ lives in the change cell
                     beside it, so the row still encodes direction without colour
                     while avoiding two arrows per row. */}
-                <td className={`px-2 py-1.5 text-right font-medium ${dirClass(dir)}`}>
+                <td className={`px-2 py-1.5 text-right font-mono font-medium ${dirClass(dir)}`}>
                   {equityPrice(q.price, locale)}
                 </td>
                 <td className="px-2 py-1.5 text-right">
@@ -167,11 +167,11 @@ export function QuoteTable({
                 </td>
                 {!compact && (
                   <>
-                    <td className="px-2 py-1.5 text-right text-ink-2">
+                    <td className="px-2 py-1.5 text-right font-mono text-ink-2">
                       {q.high !== undefined ? equityPrice(q.high, locale) : "—"} /{" "}
                       {q.low !== undefined ? equityPrice(q.low, locale) : "—"}
                     </td>
-                    <td className="px-2 py-1.5 text-right text-ink-2">{q.volume ? volume(q.volume, locale) : "—"}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-ink-2">{q.volume ? volume(q.volume, locale) : "—"}</td>
                     <td className="px-2 py-1.5">
                       <div className="flex justify-end">
                         {q.spark && q.spark.length > 2 ? (

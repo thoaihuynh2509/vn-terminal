@@ -154,16 +154,48 @@ export function PlanCards({
     manual: dict.pricing.mManual,
   };
 
+  /**
+   * Card treatment per tier. Plus is the featured card — gold rule and a lift
+   * — and Pro is the chrome one, which needs its own text pair because
+   * --ink-2 and --accent are both unreadable on that ground.
+   */
   const cards = [
     { key: "free" as const, name: dict.pricing.free, desc: dict.pricing.freeDesc },
     { key: "plus" as const, name: dict.pricing.plus, desc: dict.pricing.plusDesc },
     { key: "pro" as const, name: dict.pricing.pro, desc: dict.pricing.proDesc },
   ];
 
+  const SKIN = {
+    free: { shell: "card", name: "text-muted", body: "text-ink-2", unit: "text-muted" },
+    plus: { shell: "card card-raised card-featured", name: "text-accent", body: "text-ink-2", unit: "text-muted" },
+    pro: { shell: "rounded-[16px] bg-chrome text-chrome-ink", name: "text-gold", body: "text-chrome-ink-2", unit: "text-chrome-ink-2" },
+  } as const;
+
+  /** Segmented control — billing cadence and payment method share it. */
+  function segment<T extends string>(opts: { value: T; label: string }[], value: T, set: (v: T) => void, label: string) {
+    return (
+      <div className="inline-flex rounded-full border border-line bg-surface p-1" role="group" aria-label={label}>
+        {opts.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={value === o.value}
+            onClick={() => set(o.value)}
+            className={`rounded-full px-4 py-2 text-[13px] font-medium transition-colors ${
+              value === o.value ? "bg-btn font-semibold text-btn-ink" : "text-muted hover:text-ink"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <>
       {order !== "idle" && (
-        <div role="status" className="mb-6 rounded-lg border border-line bg-surface-2 px-4 py-3.5 text-[13px] text-ink">
+        <div role="status" className="mb-6 rounded-[14px] border border-line bg-surface px-5 py-4 text-[14px] text-ink">
           {order === "processing" && <p className="font-medium">{dict.pricing.processing}</p>}
           {order === "paid" && (
             <p className="font-medium text-up">
@@ -175,77 +207,55 @@ export function PlanCards({
       )}
 
       {qr && order !== "paid" && (
-        <Card className="mb-6 flex flex-col items-center p-5 text-center">
-          <h2 className="text-[15px] font-semibold tracking-tight">{dict.pricing.qrTitle}</h2>
+        <Card className="mb-6 flex flex-col items-center p-6 text-center">
+          <h2 className="text-[17px] font-semibold tracking-tight">{dict.pricing.qrTitle}</h2>
           <Image
             src={qr}
             alt={dict.pricing.qrTitle}
             width={220}
             height={220}
             unoptimized
-            className="my-3 rounded"
+            className="my-4 rounded-xl"
           />
           {(qrInfo.amount !== undefined || qrInfo.note) && (
-            <div className="mb-2 text-[13px]">
+            <div className="mb-2.5 text-[13px]">
               {qrInfo.amount !== undefined && (
-                <div><span className="text-muted">{dict.pricing.qrAmount}: </span><span className="tnum font-semibold">{vnd(qrInfo.amount, locale)}</span></div>
+                <div><span className="text-muted">{dict.pricing.qrAmount}: </span><span className="tnum font-mono font-semibold">{vnd(qrInfo.amount, locale)}</span></div>
               )}
               {qrInfo.note && (
-                <div><span className="text-muted">{dict.pricing.qrNote}: </span><span className="tnum font-semibold">{qrInfo.note}</span></div>
+                <div><span className="text-muted">{dict.pricing.qrNote}: </span><span className="tnum font-mono font-semibold">{qrInfo.note}</span></div>
               )}
             </div>
           )}
-          <p className="max-w-[46ch] text-[12px] text-muted">{qrInfo.manual ? dict.pricing.qrManualNote : dict.pricing.qrHint}</p>
+          <p className="max-w-[46ch] text-[13px] leading-relaxed text-muted">{qrInfo.manual ? dict.pricing.qrManualNote : dict.pricing.qrHint}</p>
         </Card>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-4">
+      <div className="mb-7 flex flex-wrap items-center justify-center gap-5">
         {/* Billing cadence. Annual is preselected because it is the better value. */}
-        <div className="inline-flex rounded-lg border border-line bg-surface-2 p-0.5" role="group" aria-label={dict.pricing.billedMonthly}>
-          {(["monthly", "annual"] as const).map((p) => (
-            <button
-              key={p}
-              type="button"
-              aria-pressed={plan === p}
-              onClick={() => setPlan(p)}
-              className={`rounded-md px-3 py-1.5 text-[13px] font-medium ${
-                plan === p ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
-              }`}
-            >
-              {p === "monthly" ? dict.pricing.billedMonthly : dict.pricing.billedAnnually}
-            </button>
-          ))}
-        </div>
+        {segment(
+          [
+            { value: "monthly" as Plan, label: dict.pricing.billedMonthly },
+            { value: "annual" as Plan, label: dict.pricing.billedAnnually },
+          ],
+          plan, setPlan, dict.pricing.billedMonthly,
+        )}
 
         {billingEnabled && providers.length > 1 && (
-          <div className="inline-flex items-center gap-2">
-            <span className="text-[12px] text-muted">{dict.pricing.payMethod}</span>
-            <div className="inline-flex rounded-lg border border-line bg-surface-2 p-0.5" role="group" aria-label={dict.pricing.payMethod}>
-              {providers.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  aria-pressed={method === p}
-                  onClick={() => setMethod(p)}
-                  className={`rounded-md px-3 py-1.5 text-[13px] font-medium ${
-                    method === p ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
-                  }`}
-                >
-                  {methodLabel[p]}
-                </button>
-              ))}
-            </div>
+          <div className="inline-flex items-center gap-2.5">
+            <span className="text-[13px] text-muted">{dict.pricing.payMethod}</span>
+            {segment(providers.map((pr) => ({ value: pr, label: methodLabel[pr] })), method, setMethod, dict.pricing.payMethod)}
           </div>
         )}
       </div>
 
       {error && (
-        <p role="alert" className="mb-4 text-[13px] text-down">
+        <p role="alert" className="mb-4 text-[14px] text-down">
           {error}
         </p>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid items-start gap-5 lg:grid-cols-3">
         {cards.map((c) => {
           const paid = c.key !== "free";
           const price = paid ? priceFor(c.key, plan) : { amount: 0 };
@@ -254,10 +264,21 @@ export function PlanCards({
           // The card the reader was sent here for. Marked, not auto-purchased:
           // arriving from a ceiling is a reason to look, not consent to pay.
           const picked = c.key === highlight && !owned;
+          const skin = SKIN[c.key];
+          const onChrome = c.key === "pro";
+          const cta = "mt-7 block rounded-[10px] px-4 py-3 text-center text-[14px] font-semibold";
+          const ctaQuiet = onChrome
+            ? `${cta} border border-chrome-line text-chrome-ink hover:bg-chrome-hover`
+            : `${cta} border border-axis text-ink hover:border-ink`;
+          const ctaLoud = onChrome
+            ? `${cta} border border-chrome-line text-chrome-ink hover:bg-chrome-hover`
+            : c.key === "plus"
+              ? `${cta} bg-gold text-gold-ink hover:bg-gold-hover`
+              : `${cta} bg-btn text-btn-ink hover:bg-btn-hover`;
           return (
-            <Card key={c.key} className="flex flex-col p-5">
+            <div key={c.key} className={`relative flex flex-col p-7 ${skin.shell}`}>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted">{c.name}</h2>
+                <h2 className={`font-mono text-[12px] font-semibold uppercase tracking-[0.12em] ${skin.name}`}>{c.name}</h2>
                 {picked && (
                   // Sits WITH the heading, not above it: readers navigating by
                   // heading land on the h2, and a badge before it is skipped.
@@ -265,54 +286,45 @@ export function PlanCards({
                   // utility, so the marker is a badge rather than a card border.
                   <span
                     id={`rec-${c.key}`}
-                    className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-page"
+                    className="rounded-full bg-gold px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-gold-ink"
                   >
                     {dict.pricing.recommended}
                   </span>
                 )}
+              </div>
+              {/* The saving rides with the PRICE, not the heading. Beside the
+                  "recommended" badge it pushed the highlighted card's heading
+                  onto a second line, so that one card's price sat lower than
+                  its neighbours' — visible only on the ?plan= entry path. */}
+              <div className="mt-3.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="tnum font-mono text-[34px] font-medium leading-none tracking-tight">
+                  {vnd(price.amount, locale)}
+                </span>
+                {paid && <span className={`text-[13px] ${skin.unit}`}>{suffix}</span>}
                 {saving > 0 && (
-                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-up">
+                  <span className={`font-mono text-[11px] font-semibold uppercase tracking-[0.08em] ${onChrome ? "text-chrome-up" : "text-up"}`}>
                     {dict.pricing.save.replace("{n}", String(saving))}
                   </span>
                 )}
               </div>
-              <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="tnum text-[30px] font-semibold leading-none tracking-tight">
-                  {vnd(price.amount, locale)}
-                </span>
-                {paid && <span className="text-[11px] text-muted">{suffix}</span>}
-              </div>
-              <p className="mt-3 flex-1 text-[13px] leading-relaxed text-ink-2">{c.desc}</p>
+              <p className={`mt-3.5 flex-1 text-[14px] leading-relaxed ${skin.body}`}>{c.desc}</p>
 
               {!paid ? (
                 owned ? (
-                  <span className="mt-5 rounded border border-line px-3 py-2 text-center text-[13px] font-medium text-muted">
-                    {dict.pricing.currentPlan}
-                  </span>
+                  <span className={`${ctaQuiet} text-muted`}>{dict.pricing.currentPlan}</span>
                 ) : (
-                  <Link
-                    href={`/${locale}`}
-                    className="mt-5 rounded border border-line bg-surface-2 px-3 py-2 text-center text-[13px] font-medium text-ink hover:bg-surface"
-                  >
-                    {dict.pricing.ctaFree}
-                  </Link>
+                  <Link href={`/${locale}`} className={ctaQuiet}>{dict.pricing.ctaFree}</Link>
                 )
               ) : owned ? (
-                <span className="mt-5 rounded border border-line px-3 py-2 text-center text-[13px] font-medium text-muted">
-                  {dict.pricing.currentPlan}
-                </span>
+                <span className={`${ctaQuiet} ${onChrome ? "" : "text-muted"}`}>{dict.pricing.currentPlan}</span>
               ) : !billingEnabled ? (
-                <button
-                  type="button"
-                  disabled
-                  className="mt-5 rounded border border-line px-3 py-2 text-[13px] font-medium text-muted opacity-70"
-                >
+                <button type="button" disabled className={`${ctaQuiet} opacity-60`}>
                   {dict.pricing.comingSoon}
                 </button>
               ) : !signedIn ? (
                 <Link
                   href={`${href(locale, "login")}?next=${encodeURIComponent(href(locale, "pricing"))}`}
-                  className="mt-5 rounded border border-line bg-surface-2 px-3 py-2 text-center text-[13px] font-medium text-ink hover:bg-surface"
+                  className={ctaLoud}
                 >
                   {dict.pricing.signInToUpgrade}
                 </Link>
@@ -324,29 +336,29 @@ export function PlanCards({
                   // Otherwise every card's CTA announces identically and the
                   // recommendation is lost to anyone tabbing straight to it.
                   aria-describedby={picked ? `rec-${c.key}` : undefined}
-                  className="mt-5 rounded border border-accent bg-accent px-3 py-2 text-[13px] font-semibold text-page hover:opacity-90 disabled:opacity-60"
+                  className={`${ctaLoud} disabled:opacity-60`}
                 >
                   {busy === c.key ? dict.pricing.processing : dict.pricing.upgrade}
                 </button>
               )}
-            </Card>
+            </div>
           );
         })}
       </div>
 
       {signedIn && referralCode && (
-        <Card className="mt-6 flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-[15px] font-semibold tracking-tight">{dict.pricing.refTitle}</h2>
-            <p className="mt-1 max-w-[60ch] text-[13px] text-ink-2">{dict.pricing.refBody}</p>
-            <p className="mt-2 break-all text-[12px] text-muted">
+        <Card className="mt-6 flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-[18px] font-semibold tracking-tight">{dict.pricing.refTitle}</h2>
+            <p className="mt-2 max-w-[60ch] text-[14px] leading-relaxed text-ink-2">{dict.pricing.refBody}</p>
+            <p className="mt-3 truncate rounded-[10px] border border-line bg-page px-3 py-2.5 font-mono text-[13px] text-muted">
               {`/${locale}?ref=${referralCode}`}
             </p>
           </div>
           <button
             type="button"
             onClick={copyInvite}
-            className="shrink-0 rounded border border-line bg-surface-2 px-3 py-2 text-[13px] font-medium text-ink hover:bg-surface"
+            className="shrink-0 rounded-[10px] bg-btn px-4 py-2.5 text-[14px] font-semibold text-btn-ink hover:bg-btn-hover"
           >
             {copied ? dict.pricing.refCopied : dict.pricing.refCopy}
           </button>

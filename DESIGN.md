@@ -12,8 +12,23 @@ your page look like a different website.
 2. **No new dependencies.** No `npm install`.
 3. **No raw colours.** Never write a hex, `rgb()`, or a Tailwind palette colour
    (`text-red-500`, `bg-slate-100`). Only these tokens exist:
-   `bg-page bg-surface bg-surface-2 text-ink text-ink-2 text-muted
-   text-up text-down text-accent border-line`.
+
+   | Group | Tokens | Use |
+   |---|---|---|
+   | Ground | `bg-page` `bg-surface` `bg-surface-2` | grey page, white card, table head / hover wash |
+   | Text | `text-ink` `text-ink-2` `text-muted` | body, secondary, tertiary |
+   | Rules | `border-line` `border-axis` `bg-grid` | hairline, stronger rule, inset fill |
+   | Direction | `text-up` `text-down` | only through `Delta` |
+   | Accent | `text-accent` | links, eyebrows; also legal as a fill carrying white |
+   | Gold | `bg-gold` `bg-gold-soft` `border-gold-line` `text-gold-ink` `bg-gold-hover` | highlight fills only |
+   | Chrome | `bg-chrome` `bg-chrome-2` `text-chrome-ink` `text-chrome-ink-2` `border-chrome-line` `text-chrome-up` `text-chrome-down` | the near-black ticker bar and dark panels |
+   | Button | `bg-btn` `text-btn-ink` `hover:bg-btn-hover` | the primary button and every "this one is on" state |
+
+   Three pairings are fixed and must not be mixed: **gold fills carry
+   `text-gold-ink` and never white**; **chrome surfaces carry `text-chrome-*`,
+   because `text-ink-2` and `text-accent` are unreadable on them**; **`bg-btn`
+   carries `text-btn-ink`, and inverts with the colour scheme** — never use
+   `bg-chrome` for a button, it is a panel ground.
 4. **Never render a directional number yourself.** Import `Delta` from
    `@/components/Delta` for every change/percentage. It carries the ▲/▼ glyph and
    sign that make the colour legal for colourblind readers, and renders the flat
@@ -31,15 +46,24 @@ your page look like a different website.
 
 ```
 @/components/layout    PageShell Stack Panel Metric EmptyState Pills KeyValue Accordion
-@/components/ui        Card StatTile LimitChip Section
+@/components/ui        Card Section StatTile Eyebrow CtaLink UpgradeBand DarkPanel LimitChip
 @/components/chrome    SectionHead Thumb
-@/components/editorial PageHeader CategoryChip Avatar Byline ArticleCard Prose DemoBadge
+@/components/editorial PageHeader Prose
 @/components/Delta     Delta
 @/components/Sparkline Sparkline
 @/components/Heatmap   Heatmap HeatmapLegend
+@/components/BreadthBar BreadthBar
+@/components/SectorBars SectorBars
 @/components/FeedBanner FeedBanner
 @/components/QuoteTable GoldTable PriceChart WatchButton
 ```
+
+- `CtaLink` is the only way to render a call to action: `gold` (the one paid
+  action on a page), `primary` (chrome/inverting), `ghost`.
+- `UpgradeBand` closes a gated block; `DarkPanel` is the "what you get when you
+  pay" panel. Both take their copy from the dictionary like everything else.
+- A **highlighted** card needs `card-featured`, not a `border-2` utility:
+  `.card` is unlayered CSS and outranks Tailwind border utilities.
 
 `Pills` and `Accordion` need `"use client"` only if you attach state; `Accordion`
 is native `<details>` and works in a server component.
@@ -54,15 +78,23 @@ is native `<details>` and works in a server component.
 
 ## Type scale (do not invent sizes)
 
+Two faces. **Be Vietnam Pro** carries every word; **IBM Plex Mono**
+(`font-mono`) carries every *figure* — prices, deltas, volumes, axis labels —
+and every uppercase micro-cap label. The design called for Sora, which ships no
+Vietnamese subset (its Latin Extended stops short of U+1EA0–1EF9, so most
+Vietnamese words would render half from a fallback); Be Vietnam Pro is the same
+geometric register with the diacritics drawn in.
+
 | Role | Class |
 |---|---|
-| Hero figure | `text-[32px] font-semibold tracking-tight` |
-| Page h1 | `text-[20px] font-semibold tracking-tight` |
-| Brief headline | `text-[28px] font-semibold leading-tight tracking-tight` |
-| Card title | `text-[16px] font-semibold` |
-| Section label | `text-[11px] font-bold uppercase tracking-wider` |
+| Hero h1 | `text-[36px] sm:text-[44px] font-semibold leading-[1.1] tracking-[-0.03em]` |
+| Page h1 | `text-[28px] sm:text-[34px] font-semibold tracking-[-0.03em]` |
+| Section h2 | `text-[18px] font-semibold tracking-tight` |
+| Hero figure | `font-mono text-[28px] font-medium tracking-tight` |
+| Eyebrow / column head | `<Eyebrow>` — `font-mono text-[11px] uppercase tracking-[0.14em]` |
+| Lede | `text-[16px] leading-relaxed text-ink-2` |
 | Body | `text-[14px] leading-relaxed` |
-| Table / dense | `text-[13px]` |
+| Table / dense | `text-[13px]`, figures `font-mono` |
 | Meta | `text-[12px] text-muted` |
 
 ## Data handling

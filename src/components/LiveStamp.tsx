@@ -24,10 +24,13 @@ export function LiveStamp({
   locale,
   refreshMs = 30_000,
   sessionAware = false,
+  tone = "default",
 }: {
   locale: Locale;
   refreshMs?: number;
   sessionAware?: boolean;
+  /** `chrome` is the near-black ticker bar, where --muted is unreadable. */
+  tone?: "default" | "chrome";
 }) {
   const router = useRouter();
   const [now, setNow] = useState<Date | null>(null); // null until mounted, so SSR and first client render match
@@ -64,13 +67,19 @@ export function LiveStamp({
       }).format(now)
     : "—";
 
+  const onChrome = tone === "chrome";
   return (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-muted" aria-live="off">
+    <span
+      className={`inline-flex items-center gap-2 whitespace-nowrap text-[12px] ${onChrome ? "text-chrome-ink-2" : "text-muted"}`}
+      aria-live="off"
+    >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${live ? "animate-pulse bg-up" : "bg-muted"}`}
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+          live ? `pulse-dot ${onChrome ? "bg-chrome-up" : "bg-up"}` : onChrome ? "bg-chrome-ink-2" : "bg-muted"
+        }`}
         aria-hidden="true"
       />
-      <span className="tnum">{label} {time}</span>
+      <span className="tnum font-mono">{label} {time}</span>
     </span>
   );
 }

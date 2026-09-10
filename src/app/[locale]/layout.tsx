@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Be_Vietnam_Pro, IBM_Plex_Mono } from "next/font/google";
 import { notFound } from "next/navigation";
 import "../globals.css";
 import { Footer } from "@/components/Footer";
@@ -13,7 +13,27 @@ import { siteUrl } from "@/lib/site";
 
 const SITE = siteUrl();
 
-const inter = Inter({ subsets: ["latin", "vietnamese"], variable: "--font-inter", display: "swap" });
+/**
+ * The v2 design specifies Sora for the UI face. Sora ships no Vietnamese
+ * subset — its Latin Extended stops short of the tone-stacked codepoints
+ * (U+1EA0–1EF9) that most Vietnamese words need — so every diacritic would
+ * render from a fallback family mid-word. Be Vietnam Pro is the same
+ * geometric register and was drawn for these diacritics.
+ */
+const sans = Be_Vietnam_Pro({
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-sans-vn",
+  display: "swap",
+});
+
+/** Every figure in the product: prices, deltas, axis labels, eyebrows. */
+const mono = IBM_Plex_Mono({
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-mono",
+  display: "swap",
+});
 
 export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }));
@@ -66,7 +86,7 @@ export default async function LocaleLayout({
   const dict = getDict(locale);
 
   return (
-    <html lang={locale === "vi" ? "vi-VN" : "en-US"} className={inter.variable} suppressHydrationWarning>
+    <html lang={locale === "vi" ? "vi-VN" : "en-US"} className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <ThemeScript />
       </head>
@@ -79,12 +99,14 @@ export default async function LocaleLayout({
         </a>
         {/* The chrome that depends on WHO is asking, isolated and suspended so
             the rest of the page is not held behind the session read. */}
+        {/* The dark index bar is the top edge of the page: it reads as the
+            market itself, with the site chrome sitting underneath it. */}
+        <TickerStrip locale={locale} />
         <Suspense fallback={<SessionChromeFallback locale={locale} dict={dict} />}>
           <SessionChrome locale={locale} dict={dict} />
         </Suspense>
-        <TickerStrip locale={locale} />
         <Analytics />
-        <main id="main" className="mx-auto max-w-[1400px] px-4 py-6">
+        <main id="main" className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
           {children}
         </main>
         <Footer dict={dict} locale={locale} />

@@ -162,7 +162,7 @@ export function ShareMenu({
   }, [busy, getPanes, symbol, tf, site]);
 
   const btn =
-    "rounded border border-line px-2 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50";
+    "rounded-lg border border-line px-2 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50";
 
   return (
     <span className="flex shrink-0 items-center gap-1">

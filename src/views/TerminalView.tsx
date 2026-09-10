@@ -330,32 +330,32 @@ export async function TerminalView({
         symbol={sym} tf={view.id} intraday={!!view.intraday} layout={cells}
         tier={tier} hasCmp={compare.length > 0} hasFr={!!foreign}
       />
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-[26px] font-semibold tracking-tight">{sym}</h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="font-mono text-[30px] font-semibold tracking-tight">{sym}</h1>
             <WatchButton symbol={sym} addLabel={dict.stocks.addWatch} removeLabel={dict.stocks.removeWatch} />
             <SymbolSearchButton label={dict.chart.changeSymbol} compact />
           </div>
           {/* A recorded series says where its history STARTS, because it has no
               upstream past and a chart that stops abruptly at the left edge
               otherwise reads as missing data rather than as the beginning. */}
-          <p className="mt-0.5 text-[12px] text-muted">
+          <p className="mt-2 font-mono text-[12px] text-muted">
             {recorded
               ? dict.chart.seriesFrom.replace("{d}", dateOnly(bars[0].t, locale))
               : `${exchangeOf(sym) ?? dict.common.noData} · ${dict.common.unit}: ${dict.common.thousandVnd}`}
           </p>
           {/* Session-aware: the chart was the one live surface with no refresh at
               all, but it must not pulse "live" at a price frozen since 15:00. */}
-          <div className="mt-1"><LiveStamp locale={locale} sessionAware /></div>
+          <div className="mt-2"><LiveStamp locale={locale} sessionAware /></div>
         </div>
         <div className="text-right">
-          <div className="text-[30px] font-semibold leading-none tracking-tight">{equityPrice(last.c, locale)}</div>
-          <div className="mt-1.5 text-[13px]"><Delta change={change} changePct={changePct} locale={locale} /></div>
+          <div className="tnum font-mono text-[32px] font-medium leading-none tracking-tight">{equityPrice(last.c, locale)}</div>
+          <div className="mt-2 text-[14px]"><Delta change={change} changePct={changePct} locale={locale} /></div>
         </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2.5">
         <TimeframePicker
           current={view.id}
           base={`/${locale}/${PATHS.terminal[locale]}/${sym}`}
@@ -395,13 +395,13 @@ export async function TerminalView({
           single chart is not wrapped, so the common case pays nothing. */}
       <ChartSyncProvider>
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
-        <div className="card min-w-0 p-4">
+        <div className="card min-w-0 p-5">
           <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} events={events} initialView={chartView} tf={view.id} />
         </div>
         {companions.map((sym2, i) =>
           companionBars[i].length ? (
-            <div key={sym2} className="card min-w-0 p-4">
-              <h2 className="mb-2 text-[14px] font-semibold tracking-tight">{sym2}</h2>
+            <div key={sym2} className="card min-w-0 p-5">
+              <h2 className="mb-3 font-mono text-[15px] font-semibold tracking-tight">{sym2}</h2>
               {/* Companions get their OWN ceiling/floor, computed from their own
                   previous close and their own exchange's band. They were drawn
                   bare, which made a 4-up grid three charts missing the first
@@ -409,7 +409,7 @@ export async function TerminalView({
               <ChartPro bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={companionRefs[i]} events={companionEvents[i]} tf={view.id} />
             </div>
           ) : (
-            <div key={sym2} className="card p-4"><FeedBanner dict={dict} /></div>
+            <div key={sym2} className="card p-5"><FeedBanner dict={dict} /></div>
           ),
         )}
       </div>
@@ -462,20 +462,20 @@ function LayoutSwitcher({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{dict.chart.layout}</span>
-      <div role="group" aria-label={dict.chart.layout} className="flex rounded border border-line">
+      <span className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted">{dict.chart.layout}</span>
+      <div role="group" aria-label={dict.chart.layout} className="flex overflow-hidden rounded-[9px] border border-line bg-surface">
         {[1, 2, 4].map((n) => {
           const locked = !multi && n > 1;
           const active = layout === n;
           return locked ? (
             <span key={n} title={dict.chart.layoutLocked}
-              className="cursor-not-allowed px-2.5 py-1 text-[12px] font-medium text-muted opacity-55">
+              className="cursor-not-allowed px-3 py-1.5 font-mono text-[12px] text-muted opacity-60">
               🔒 {n}
             </span>
           ) : (
             <Link key={n} href={href(n)} aria-current={active ? "page" : undefined}
-              className={`px-2.5 py-1 text-[12px] font-medium first:rounded-l last:rounded-r ${
-                active ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+              className={`px-3 py-1.5 font-mono text-[12px] font-medium ${
+                active ? "bg-btn text-btn-ink" : "text-ink-2 hover:bg-page hover:text-ink"
               }`}>
               {n}
             </Link>
@@ -483,8 +483,8 @@ function LayoutSwitcher({
         })}
       </div>
       {!multi && (
-        <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=pro`} className="text-[11px] font-medium text-accent hover:underline">
-          {dict.chart.layoutLocked} →
+        <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=pro`} className="text-[12px] font-medium text-accent hover:underline">
+          {dict.chart.layoutLocked} <span aria-hidden="true">→</span>
         </Link>
       )}
     </div>
@@ -506,8 +506,8 @@ function CompareToggle({
   if (!canCompare) {
     return (
       <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.compareLock}
-        className="text-[11px] font-medium text-accent hover:underline">
-        🔒 {dict.chart.compareOn} →
+        className="inline-flex items-center gap-1.5 rounded-[9px] border border-dashed border-gold-line bg-gold-soft px-3 py-1.5 text-[12px] font-medium text-accent">
+        🔒 {dict.chart.compareOn}
       </Link>
     );
   }
@@ -515,8 +515,8 @@ function CompareToggle({
     <Link
       href={on ? base : `${base}&cmp=1`}
       aria-pressed={on}
-      className={`rounded border px-2.5 py-1 text-[12px] font-medium ${
-        on ? "border-accent bg-accent text-page" : "border-line text-ink-2 hover:text-ink"
+      className={`rounded-[9px] border px-3 py-1.5 text-[12px] font-medium ${
+        on ? "border-btn bg-btn text-btn-ink" : "border-line bg-surface text-ink-2 hover:border-ink hover:text-ink"
       }`}
     >
       {on ? dict.chart.compareOff : dict.chart.compareOn}
@@ -534,15 +534,15 @@ function BreadthToggle({
   if (!canBreadth) {
     return (
       <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=pro`} title={dict.chart.breadthLock}
-        className="text-[11px] font-medium text-accent hover:underline">
-        🔒 {dict.chart.breadthOn} →
+        className="inline-flex items-center gap-1.5 rounded-[9px] border border-dashed border-gold-line bg-gold-soft px-3 py-1.5 text-[12px] font-medium text-accent">
+        🔒 {dict.chart.breadthOn}
       </Link>
     );
   }
   return (
     <Link href={on ? base : `${base}&br=1`} aria-pressed={on}
-      className={`rounded border px-2.5 py-1 text-[12px] font-medium ${
-        on ? "border-accent bg-accent text-page" : "border-line text-ink-2 hover:text-ink"
+      className={`rounded-[9px] border px-3 py-1.5 text-[12px] font-medium ${
+        on ? "border-btn bg-btn text-btn-ink" : "border-line bg-surface text-ink-2 hover:border-ink hover:text-ink"
       }`}>
       {on ? dict.chart.breadthOff : dict.chart.breadthOn}
     </Link>
@@ -559,8 +559,8 @@ function ForeignToggle({
   if (!canForeign) {
     return (
       <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.foreignLock}
-        className="text-[11px] font-medium text-accent hover:underline">
-        🔒 {dict.chart.foreignOn} →
+        className="inline-flex items-center gap-1.5 rounded-[9px] border border-dashed border-gold-line bg-gold-soft px-3 py-1.5 text-[12px] font-medium text-accent">
+        🔒 {dict.chart.foreignOn}
       </Link>
     );
   }
@@ -568,8 +568,8 @@ function ForeignToggle({
     <Link
       href={on ? base : `${base}&fr=1`}
       aria-pressed={on}
-      className={`rounded border px-2.5 py-1 text-[12px] font-medium ${
-        on ? "border-accent bg-accent text-page" : "border-line text-ink-2 hover:text-ink"
+      className={`rounded-[9px] border px-3 py-1.5 text-[12px] font-medium ${
+        on ? "border-btn bg-btn text-btn-ink" : "border-line bg-surface text-ink-2 hover:border-ink hover:text-ink"
       }`}
     >
       {on ? dict.chart.foreignOff : dict.chart.foreignOn}

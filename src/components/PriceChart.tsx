@@ -126,7 +126,7 @@ export function PriceChart({
     <div>
       {/* Controls sit in one row above the plot, per the interaction spec. */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div role="group" aria-label={dict.stocks.chartTitle} className="flex rounded border border-line">
+        <div role="group" aria-label={dict.stocks.chartTitle} className="flex rounded-lg border border-line">
           {(["candles", "line"] as Mode[]).map((m) => (
             <button
               key={m}
@@ -134,7 +134,7 @@ export function PriceChart({
               onClick={() => setMode(m)}
               aria-pressed={mode === m}
               className={`px-2.5 py-1 text-[12px] font-medium first:rounded-l last:rounded-r ${
-                mode === m ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+                mode === m ? "bg-page text-ink" : "text-ink-2 hover:text-ink"
               }`}
             >
               {m === "candles" ? dict.stocks.candles : dict.stocks.line}
@@ -145,7 +145,7 @@ export function PriceChart({
           type="button"
           onClick={() => setAsTable((v) => !v)}
           aria-pressed={asTable}
-          className="rounded border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink"
+          className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink"
         >
           {asTable ? dict.common.chartView : dict.common.tableView}
         </button>
@@ -166,7 +166,7 @@ export function PriceChart({
       </div>
 
       {asTable ? (
-        <div className="max-h-[320px] overflow-auto rounded border border-line">
+        <div className="max-h-[320px] overflow-auto rounded-lg border border-line">
           <table className="tnum w-full text-[12px]">
             <caption className="sr-only">{dict.stocks.chartTitle}</caption>
             <thead className="sticky top-0 bg-surface-2 text-left text-muted">
@@ -284,7 +284,7 @@ export function PriceChart({
           {hover !== null && (
             <div
               role="status"
-              className="pointer-events-none absolute top-2 rounded border border-line bg-surface px-2 py-1.5 text-[11px] shadow-sm"
+              className="pointer-events-none absolute top-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] shadow-sm"
               style={{
                 left: Math.min(Math.max(s.x(hover) - 60, 0), Math.max(0, width - 130)),
               }}

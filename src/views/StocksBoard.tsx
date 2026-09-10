@@ -4,8 +4,10 @@ import { QuoteTable } from "@/components/QuoteTable";
 import { Explainer } from "@/components/Explainer";
 import { BreadthBar } from "@/components/BreadthBar";
 import { LiveStamp } from "@/components/LiveStamp";
+import { SectorBars } from "@/components/SectorBars";
 import { PageHeader } from "@/components/editorial";
-import { Card } from "@/components/ui";
+import { SectionHead } from "@/components/chrome";
+import { Card, DarkPanel, UpgradeBand } from "@/components/ui";
 import { Stack } from "@/components/layout";
 import { getExplainer } from "@/content/explainers";
 import { dirOf } from "@/lib/format";
@@ -37,18 +39,66 @@ export async function StocksBoard({ locale }: { locale: Locale }) {
         title={dict.stocks.title}
         subtitle={dict.stocks.subtitle}
         meta={`${dict.common.unit}: ${dict.common.thousandVnd} · ${dict.stocks.band} HOSE ±7%`}
+        action={
+          quotes?.length ? (
+            /* Breadth reads as a figure and a bar side by side, so the header
+               answers "what kind of session is this" before the table loads. */
+            <div className="flex items-end gap-6">
+              <div className="text-right">
+                <div className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">{dict.home.breadth}</div>
+                <div className="tnum mt-1.5 font-mono text-[15px]">
+                  <span className="text-up">{advancing} {dict.common.up}</span>
+                  <span className="text-muted"> / </span>
+                  <span className="text-down">{declining} {dict.common.down}</span>
+                </div>
+              </div>
+              <div className="w-[180px] pb-2">
+                <BreadthBar
+                  up={advancing} down={declining} flat={unchanged}
+                  labels={{ up: dict.common.up, down: dict.common.down, flat: dict.common.flat }}
+                  showCounts={false}
+                />
+              </div>
+            </div>
+          ) : undefined
+        }
       />
 
       {quotes?.length ? (
-        <Stack gap="md">
-          <Card className="p-3.5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-muted">{dict.stocks.title}</span>
+        <Stack gap="lg">
+          <div>
+            <div className="mb-3 flex justify-end">
               <LiveStamp locale={locale} />
             </div>
-            <BreadthBar up={advancing} down={declining} flat={unchanged} labels={{ up: dict.common.up, down: dict.common.down, flat: dict.common.flat }} />
-          </Card>
-          <QuoteTable quotes={quotes} locale={locale} dict={dict} band={BAND.HOSE} sectors />
+            <QuoteTable quotes={quotes} locale={locale} dict={dict} band={BAND.HOSE} sectors />
+          </div>
+
+          {/* The board is complete and free. What is gated is what runs after
+              the reader closes the tab — say that, rather than greying out a
+              column of numbers we do not actually have. */}
+          <UpgradeBand
+            eyebrow={dict.pricing.plus}
+            title={dict.pricing.fAlertEmail}
+            body={dict.pricing.subtitle}
+            cta={dict.pricing.cta}
+            href={`/${locale}/${PATHS.pricing[locale]}`}
+          />
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <section>
+              <SectionHead title={dict.home.rotation} subtitle={dict.home.rotationHint} />
+              <Card className="p-5"><SectorBars board={quotes} locale={locale} dict={dict} /></Card>
+            </section>
+            <DarkPanel
+              eyebrow={dict.pricing.pro}
+              title={dict.pricing.proDesc}
+              body={dict.pricing.subtitle}
+              cta={dict.pricing.upgrade}
+              href={`/${locale}/${PATHS.pricing[locale]}`}
+              className="self-start"
+            />
+          </div>
+
           {/* The same thirty destinations the table shows, stated as a list. */}
           <JsonLd
             data={itemListLd(

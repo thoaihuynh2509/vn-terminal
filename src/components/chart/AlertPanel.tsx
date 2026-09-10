@@ -82,7 +82,7 @@ export function AlertPanel({
       <div>
         <p className="text-[12px] leading-relaxed text-ink-2">{dict.chart.alertLocked}</p>
         <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`}
-          className="mt-3 inline-block rounded border border-line bg-surface-2 px-3 py-1.5 text-[12px] font-medium hover:bg-surface">
+          className="mt-3 inline-block rounded-lg border border-line bg-page px-3 py-1.5 text-[12px] font-medium hover:bg-surface">
           {dict.chart.unlockAll}
         </Link>
       </div>
@@ -134,7 +134,7 @@ export function AlertPanel({
   return (
     <div>
       {triggered.length > 0 && (
-        <p role="status" className="mb-3 rounded border border-accent bg-surface-2 px-2.5 py-2 text-[12px] font-medium text-accent">
+        <p role="status" className="mb-3 rounded-lg border border-accent bg-page px-2.5 py-2 text-[12px] font-medium text-accent">
           {dict.chart.alertFired}: {triggered.map(describe).join(", ")}
         </p>
       )}
@@ -142,7 +142,7 @@ export function AlertPanel({
       <form onSubmit={create} className="space-y-2">
         <label className="sr-only" htmlFor="alert-kind">{dict.chart.alertKind}</label>
         <select id="alert-kind" value={kind} onChange={(e) => setKind(e.target.value as AlertKind)}
-          className="w-full rounded border border-line bg-surface px-2 py-1.5 text-[12px] text-ink">
+          className="w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-[12px] text-ink">
           <option value="price">{dict.chart.alertKindPrice}</option>
           <option value="pct" disabled={!richKinds}>
             {dict.chart.alertKindPct}{richKinds ? "" : " 🔒"}
@@ -153,7 +153,7 @@ export function AlertPanel({
         </select>
         <label className="sr-only" htmlFor="alert-cond">{dict.chart.alerts}</label>
         <select id="alert-cond" value={condition} onChange={(e) => setCondition(e.target.value as AlertCondition)}
-          className="w-full rounded border border-line bg-surface px-2 py-1.5 text-[12px] text-ink">
+          className="w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-[12px] text-ink">
           {CONDITIONS.map((c) => <option key={c.value} value={c.value}>{dict.chart[c.key]}</option>)}
         </select>
         <div className="flex gap-1.5">
@@ -161,9 +161,9 @@ export function AlertPanel({
           <input id="alert-price" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)}
             placeholder={kind === "pct" ? dict.chart.alertPct : kind === "indicator" ? dict.chart.alertLevel : num(current, locale, 2)}
             aria-label={kind === "pct" ? dict.chart.alertPct : kind === "indicator" ? dict.chart.alertLevel : dict.chart.alertPrice}
-            className="tnum min-w-0 flex-1 rounded border border-line bg-surface px-2 py-1.5 text-[12px] text-ink placeholder:text-muted" />
+            className="tnum min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-[12px] text-ink placeholder:text-muted" />
           <button type="submit" disabled={atLimit || !price}
-            className="rounded border border-line bg-surface-2 px-2.5 py-1.5 text-[12px] font-medium text-ink disabled:opacity-50">
+            className="rounded-lg border border-line bg-page px-2.5 py-1.5 text-[12px] font-medium text-ink disabled:opacity-50">
             {dict.chart.alertAdd}
           </button>
         </div>
@@ -194,13 +194,13 @@ export function AlertPanel({
               <span className="flex shrink-0 gap-1">
                 {a.triggeredAt && (
                   <button type="button" onClick={() => save(reset(all, a.id))}
-                    className="rounded border border-line px-1.5 py-1 text-[11px] text-ink-2 hover:text-ink">
+                    className="rounded-lg border border-line px-1.5 py-1 text-[11px] text-ink-2 hover:text-ink">
                     {dict.chart.alertReset}
                   </button>
                 )}
                 <button type="button" onClick={() => save(remove(all, a.id))}
                   aria-label={`${dict.chart.alertDelete} ${num(a.price, locale, 2)}`}
-                  className="rounded border border-line px-1.5 py-1 text-[11px] text-ink-2 hover:text-down">
+                  className="rounded-lg border border-line px-1.5 py-1 text-[11px] text-ink-2 hover:text-down">
                   ✕
                 </button>
               </span>

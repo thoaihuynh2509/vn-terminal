@@ -162,7 +162,7 @@ export function LayoutsTab({
       <div>
         <p className="text-[12px] leading-relaxed text-ink-2">{dict.chart.layoutAnon}</p>
         <Link href={`/${locale}/${PATHS.login[locale]}`}
-          className="mt-3 inline-block rounded border border-line bg-surface-2 px-3 py-1.5 text-[12px] font-medium hover:bg-surface">
+          className="mt-3 inline-block rounded-lg border border-line bg-page px-3 py-1.5 text-[12px] font-medium hover:bg-surface">
           {dict.auth.signIn}
         </Link>
       </div>
@@ -179,10 +179,10 @@ export function LayoutsTab({
           id="layout-name" value={name} onChange={(e) => { setName(e.target.value); setError(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
           placeholder={dict.chart.layoutNamePlaceholder} maxLength={64}
-          className="min-w-0 flex-1 rounded border border-line bg-page px-2 py-1 text-[12px]"
+          className="min-w-0 flex-1 rounded-lg border border-line bg-page px-2 py-1 text-[12px]"
         />
         <button type="button" onClick={save} disabled={!name.trim()}
-          className="shrink-0 rounded border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium hover:bg-surface disabled:opacity-50">
+          className="shrink-0 rounded-lg border border-line bg-page px-2.5 py-1 text-[12px] font-medium hover:bg-surface disabled:opacity-50">
           {dict.chart.layoutSave}
         </button>
       </div>

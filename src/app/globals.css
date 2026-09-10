@@ -1,37 +1,67 @@
 @import "tailwindcss";
 
 /* ─────────────────────────────────────────────────────────────
-   Design tokens. Chrome/ink values from the validated reference
-   palette; --up/--down validated all-pairs in BOTH modes:
-     light #008300 / #e34948  → NV ΔE 33.1, CVD ΔE 7.2 (warn band)
-     dark  #008300 / #e66767  → NV ΔE 32.6, CVD ΔE 8.6 (pass)
-   The light pair sits in the 6–8 CVD band, which is legal ONLY with
-   secondary encoding — every colored value in this app also carries a
-   ▲/▼ glyph and an explicit sign, and candle bodies encode direction
-   as hollow/filled. Never change these without re-running the
-   validator against BOTH surfaces.
+   Design tokens — the "v2" system.
+
+   Ground is grey (--page) and content sits on white cards
+   (--surface); the previous system had both white, which left the
+   board with no depth. Chrome (ticker bar, primary buttons, the
+   "why pay" panels) is near-black, and the brand accent is gold.
+
+   Gold is a FILL colour, never a text colour: #ffc53d carries
+   --gold-ink (near-black, 11.0:1) and nothing else. The readable
+   gold — links, eyebrows, accent text, and filled controls that
+   carry white — is --accent #8a5a00: 5.35:1 on --surface, 5.06:1
+   on --page, and 5.35:1 white-on-fill, so it clears 4.5:1 in BOTH
+   directions the way the old blue accent had to.
+
+   --up/--down are unchanged and still validated all-pairs in both
+   modes (light #008300/#e34948 sits in the 6–8 CVD band, legal
+   only with the ▲/▼ + sign that Delta always renders). On the
+   near-black chrome those two are too dark to read, so chrome
+   surfaces use --chrome-up/--chrome-down instead.
    ───────────────────────────────────────────────────────────── */
 :root {
   color-scheme: light;
-  --page: #ffffff;
+  --page: #f4f5f6;
   --surface: #ffffff;
-  --surface-2: #f5f6f7;
-  --ink: #1a1a1a;
-  --ink-2: #4b5563;
-  --muted: #8a8f98;
-  --grid: #eceef1;
+  --surface-2: #fbfbfc;
+  --ink: #14181d;
+  --ink-2: #4a5158;
+  --muted: #5f6771;
+  --grid: #eff0f2;
   --axis: #d7dade;
-  --line: #e6e8eb;
+  --line: #e4e6e8;
   --up: #008300;
   --down: #e34948;
-  /* Accent carries text in BOTH directions — white on a filled control, and
-     accent-coloured text on a surface — so it must clear 4.5:1 both ways.
-     Light was #2a78d6: 4.41:1 filled (eight controls, incl. the upgrade CTA)
-     and 4.08:1 as text on surface-2. Both failed. #1f66bc is 5.70 / 5.27.
-     Dark was #3987e5: 5.34:1 filled but 4.43:1 as text, so it failed the text
-     direction too; #4a92e8 below is 6.08 / 5.05. Re-check both directions
-     before changing either value — filled alone is not the whole test. */
-  --accent: #1f66bc;
+  --accent: #8a5a00;
+
+  /* Gold: fills only. --gold-ink is the one text colour legal on it,
+     and it stays near-black in dark mode too — a gold chip reads the
+     same on both surfaces rather than inverting into mud. */
+  --gold: #ffc53d;
+  --gold-hover: #f0b429;
+  --gold-soft: #fffaee;
+  --gold-line: #d9b96a;
+  --gold-ink: #14181d;
+
+  /* Chrome: the near-black bar, primary button and dark panels. */
+  --chrome: #12161b;
+  --chrome-2: #171c22;
+  --chrome-hover: #2a3038;
+  --chrome-ink: #f2f4f5;
+  --chrome-ink-2: #98a0a8;
+  --chrome-line: #262b32;
+  --chrome-up: #4ec26a;
+  --chrome-down: #f08c88;
+
+  /* The primary button and every "this one is on" state. It INVERTS with the
+     mode: near-black on a light page, near-white on a dark one. Chrome cannot
+     do this job — a #1f2124 button on a #0d0d0d page is barely a button — so
+     the panel ground and the primary fill are separate tokens. */
+  --btn: #12161b;
+  --btn-hover: #2a3038;
+  --btn-ink: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -39,16 +69,32 @@
     color-scheme: dark;
     --page: #0d0d0d;
     --surface: #161719;
-    --surface-2: #1f2124;
+    --surface-2: #1c1e21;
     --ink: #f5f6f7;
     --ink-2: #b6bcc4;
-    --muted: #8a8f98;
+    --muted: #9aa1a9;
     --grid: #26282c;
     --axis: #34373c;
     --line: #26282c;
     --up: #008300;
     --down: #e66767;
-    --accent: #4a92e8;
+    --accent: #e0aa3c;
+    --gold: #ffc53d;
+    --gold-hover: #f0b429;
+    --gold-soft: #241f10;
+    --gold-line: #4a3d1b;
+    --gold-ink: #14181d;
+    --chrome: #1f2124;
+    --chrome-2: #26282c;
+    --chrome-hover: #34373c;
+    --chrome-ink: #f2f4f5;
+    --chrome-ink-2: #b6bcc4;
+    --chrome-line: #34373c;
+    --chrome-up: #4ec26a;
+    --chrome-down: #f08c88;
+    --btn: #f5f6f7;
+    --btn-hover: #ffffff;
+    --btn-ink: #0d0d0d;
   }
 }
 
@@ -56,16 +102,32 @@
   color-scheme: dark;
   --page: #0d0d0d;
   --surface: #161719;
-  --surface-2: #1f2124;
+  --surface-2: #1c1e21;
   --ink: #f5f6f7;
   --ink-2: #b6bcc4;
-  --muted: #8a8f98;
+  --muted: #9aa1a9;
   --grid: #26282c;
   --axis: #34373c;
   --line: #26282c;
   --up: #008300;
   --down: #e66767;
-  --accent: #4a92e8;
+  --accent: #e0aa3c;
+  --gold: #ffc53d;
+  --gold-hover: #f0b429;
+  --gold-soft: #241f10;
+  --gold-line: #4a3d1b;
+  --gold-ink: #14181d;
+  --chrome: #1f2124;
+  --chrome-2: #26282c;
+  --chrome-hover: #34373c;
+  --chrome-ink: #f2f4f5;
+  --chrome-ink-2: #b6bcc4;
+  --chrome-line: #34373c;
+  --chrome-up: #4ec26a;
+  --chrome-down: #f08c88;
+  --btn: #f5f6f7;
+  --btn-hover: #ffffff;
+  --btn-ink: #0d0d0d;
 }
 
 @theme inline {
@@ -81,8 +143,26 @@
   --color-up: var(--up);
   --color-down: var(--down);
   --color-accent: var(--accent);
-  /* Wired to next/font in the layout. */
-  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-gold: var(--gold);
+  --color-gold-hover: var(--gold-hover);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-line: var(--gold-line);
+  --color-gold-ink: var(--gold-ink);
+  --color-chrome: var(--chrome);
+  --color-chrome-2: var(--chrome-2);
+  --color-chrome-hover: var(--chrome-hover);
+  --color-chrome-ink: var(--chrome-ink);
+  --color-chrome-ink-2: var(--chrome-ink-2);
+  --color-chrome-line: var(--chrome-line);
+  --color-chrome-up: var(--chrome-up);
+  --color-chrome-down: var(--chrome-down);
+  --color-btn: var(--btn);
+  --color-btn-hover: var(--btn-hover);
+  --color-btn-ink: var(--btn-ink);
+  /* Wired to next/font in the layout. Be Vietnam Pro stands in for the
+     design's Sora, which ships no Vietnamese subset — see DESIGN.md. */
+  --font-sans: var(--font-sans-vn), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -90,19 +170,19 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   background: var(--page);
   color: var(--ink);
-  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans-vn), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-synthesis-weight: none;
 }
 
-/* Columns that must align vertically get tabular figures; standalone
-   hero numbers keep proportional figures per the type spec. */
+/* Every figure in the product is mono: prices, deltas, volumes, axis
+   labels. `.tnum` marks the columns that must also align vertically. */
 .tnum { font-variant-numeric: tabular-nums; }
 
 /* Visible focus ring for keyboard users on every interactive element. */
 :where(a, button, input, select, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -118,6 +198,10 @@ body {
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
+/* The live dot on the ticker and the board's "updated" stamp. */
+@keyframes pulse-dot { 50% { opacity: 0.4; } }
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
 /* ─── Article prose ────────────────────────────────────────────
    Applied to markdown-rendered HTML. Measure is capped by the
    wrapper; these rules only handle rhythm and the elements that
@@ -127,7 +211,7 @@ body {
   margin-top: 2em;
   font-size: 1.15em;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   line-height: 1.35;
 }
 .prose-vn h3 {
@@ -144,14 +228,15 @@ body {
 .prose-vn li + li { margin-top: 0.4em; }
 .prose-vn code {
   background: var(--surface-2);
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0.1em 0.35em;
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
   font-size: 0.88em;
 }
 .prose-vn pre {
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 10px;
   padding: 0.85em 1em;
   overflow-x: auto;          /* wide code scrolls itself, never the page */
   font-variant-numeric: tabular-nums;
@@ -159,7 +244,7 @@ body {
 }
 .prose-vn pre code { background: none; padding: 0; font-size: 0.86em; }
 .prose-vn blockquote {
-  border-left: 2px solid var(--axis);
+  border-left: 2px solid var(--gold);
   padding-left: 1em;
   color: var(--ink-2);
 }
@@ -182,28 +267,29 @@ body {
 .prose-vn hr { border: 0; border-top: 1px solid var(--line); }
 
 /* ─── Surface & rhythm ─────────────────────────────────────────
-   The first pass read flat: every element sat on the same plane
-   with a hairline border and nothing else. Cards now carry a
-   very soft elevation that lifts on hover, which is what gives
-   a dense board page a sense of depth without adding chrome. */
+   Cards are the only raised plane in the system: white on the grey
+   ground, 16px corners, and a soft elevation that lifts on hover. */
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-  transition: box-shadow 160ms ease, border-color 160ms ease, transform 160ms ease;
+  border-radius: 16px;
+  transition: box-shadow 160ms ease, border-color 160ms ease;
 }
 .card-hover:hover {
-  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.09);
-  border-color: color-mix(in oklab, var(--accent) 32%, var(--line));
+  box-shadow: 0 8px 24px rgba(20, 24, 29, 0.08);
+  border-color: var(--gold-line);
 }
-:root[data-theme="dark"] .card,
-:root:not([data-theme="light"]) .card {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
+.card-raised { box-shadow: 0 18px 40px rgba(20, 24, 29, 0.08); }
+/* The one highlighted card in a set — the featured plan. Declared here for the
+   same reason the shadow is: a Tailwind `border-2` utility loses to `.card`. */
+.card-featured { border: 2px solid var(--gold); }
 :root[data-theme="dark"] .card-hover:hover,
 :root:not([data-theme="light"]) .card-hover:hover {
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="dark"] .card-raised,
+:root:not([data-theme="light"]) .card-raised {
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
 /* Data tables: taller rows and a hover wash. The previous 1.5-unit
@@ -224,8 +310,8 @@ body {
    per arm, stepped from the validated --up / --down anchors.
    A meaningful zero means diverging, never a single-hue ramp. */
 :root {
-  --up-1: #cfe8cf; --up-2: #8fc98f; --up-3: #3f9b3f; --up-4: #008300;
-  --down-1: #f8d7d6; --down-2: #efa5a3; --down-3: #e46c6a; --down-4: #c62d2b;
+  --up-1: #d8ecd8; --up-2: #96cc96; --up-3: #3f9b3f; --up-4: #008300;
+  --down-1: #f8dcdb; --down-2: #efa5a3; --down-3: #e46c6a; --down-4: #c62d2b;
   --heat-zero: #eceef1;
 }
 @media (prefers-color-scheme: dark) {

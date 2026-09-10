@@ -65,7 +65,7 @@ export function LoginForm({
 
   if (provider === "disabled") {
     return (
-      <p role="status" className="card p-4 text-[13px] text-ink-2">
+      <p role="status" className="text-[14px] leading-relaxed text-ink-2">
         {dict.auth.disabled}
       </p>
     );
@@ -73,16 +73,19 @@ export function LoginForm({
 
   if (sent) {
     return (
-      <div role="status" className="card p-5">
-        <p className="text-[14px] font-semibold text-ink">{dict.auth.linkSent}</p>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{dict.auth.linkSentBody}</p>
+      <div role="status">
+        <span aria-hidden="true" className="grid h-11 w-11 place-items-center rounded-xl bg-gold-soft text-[20px]">
+          ✉
+        </span>
+        <p className="mt-4.5 text-[20px] font-semibold tracking-tight">{dict.auth.linkSent}</p>
+        <p className="mt-2.5 text-[14px] leading-relaxed text-ink-2">{dict.auth.linkSentBody}</p>
       </div>
     );
   }
 
   return (
-    <form onSubmit={submit} className="card p-5">
-      <label htmlFor="login-email" className="block text-[12px] font-medium text-ink-2">
+    <form onSubmit={submit}>
+      <label htmlFor="login-email" className="block text-[13px] font-medium text-ink-2">
         {dict.auth.email}
       </label>
       <input
@@ -92,22 +95,22 @@ export function LoginForm({
         autoComplete="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="mt-1.5 w-full rounded border border-line bg-surface px-3 py-2 text-[14px] text-ink placeholder:text-muted"
+        className="mt-2 w-full rounded-[10px] border border-line bg-surface px-3.5 py-3 text-[15px] text-ink placeholder:text-muted"
         placeholder={dict.auth.emailPlaceholder}
       />
 
       {provider === "dev" && (
         <fieldset className="mt-4">
-          <legend className="text-[12px] font-medium text-ink-2">{dict.auth.devTier}</legend>
-          <div className="mt-1.5 flex gap-1.5">
+          <legend className="text-[13px] font-medium text-ink-2">{dict.auth.devTier}</legend>
+          <div className="mt-2 flex gap-2">
             {(["free", "plus", "pro"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTier(t)}
                 aria-pressed={tier === t}
-                className={`rounded border px-3 py-1.5 text-[12px] font-medium capitalize ${
-                  tier === t ? "border-accent bg-surface-2 text-ink" : "border-line text-ink-2 hover:text-ink"
+                className={`rounded-full border px-3.5 py-1.5 text-[13px] font-medium capitalize ${
+                  tier === t ? "border-btn bg-btn text-btn-ink" : "border-line text-ink-2 hover:border-ink hover:text-ink"
                 }`}
               >
                 {t}
@@ -124,7 +127,7 @@ export function LoginForm({
       <button
         type="submit"
         disabled={busy || !email}
-        className="mt-5 w-full rounded border border-line bg-surface-2 px-3 py-2 text-[13px] font-medium text-ink disabled:opacity-50"
+        className="mt-4 w-full rounded-[10px] bg-btn px-4 py-3.5 text-[15px] font-semibold text-btn-ink hover:bg-btn-hover disabled:opacity-50"
       >
         {busy ? dict.auth.signingIn : dict.auth.submit}
       </button>

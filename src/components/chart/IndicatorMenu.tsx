@@ -58,7 +58,7 @@ export function IndicatorMenu({
   return (
     <div ref={wrap} className="relative">
       <button type="button" onClick={() => (open ? close() : setOpen(true))} aria-expanded={open} aria-haspopup="menu"
-        className="flex items-center gap-1.5 rounded border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink">
+        className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink">
         {dict.chart.indicators}
         <span className="tnum text-[11px] text-muted">{active.length}/{limit}</span>
         <span aria-hidden="true" className="text-[10px]">▾</span>
@@ -66,7 +66,7 @@ export function IndicatorMenu({
 
       {open && (
         <div role="menu" aria-label={dict.chart.indicators}
-          className="absolute left-0 top-full z-30 mt-1 max-h-[60vh] w-64 overflow-y-auto rounded border border-line bg-surface shadow-lg">
+          className="absolute left-0 top-full z-30 mt-1 max-h-[60vh] w-64 overflow-y-auto rounded-lg border border-line bg-surface shadow-lg">
           <div className="sticky top-0 border-b border-line bg-surface p-2">
             <label htmlFor="ind-filter" className="sr-only">{dict.chart.indFilter}</label>
             <input
@@ -78,7 +78,7 @@ export function IndicatorMenu({
                 const first = visible.find((d) => (d.free || unlocked) && (isOn(d) || !atLimit));
                 if (first) toggle(first);
               }}
-              className="w-full rounded border border-line bg-page px-2 py-1 text-[12px]"
+              className="w-full rounded-lg border border-line bg-page px-2 py-1 text-[12px]"
             />
           </div>
           {visible.length === 0 && <p className="px-3 py-2 text-[12px] text-muted">{dict.chart.indNone}</p>}
@@ -101,7 +101,7 @@ export function IndicatorMenu({
                           onClick={() => toggle(def)} disabled={locked || blocked}
                           title={locked ? dict.chart.locked : blocked ? dict.chart.limitReached.replace("{n}", String(limit)) : undefined}
                           className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] ${
-                            on ? "bg-surface-2 font-semibold text-ink"
+                            on ? "bg-page font-semibold text-ink"
                               : locked || blocked ? "cursor-not-allowed text-muted opacity-60"
                               : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                           }`}>

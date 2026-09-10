@@ -29,7 +29,7 @@ export function AccountMenu({
     return (
       <Link
         href={`/${locale}/${PATHS.login[locale]}`}
-        className="rounded border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
+        className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
       >
         {dict.auth.signIn}
       </Link>
@@ -50,7 +50,7 @@ export function AccountMenu({
     <div className="flex items-center gap-1.5">
       <span
         title={`${dict.auth.signedInAs} ${email}`}
-        className="hidden rounded bg-surface-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-2 sm:inline"
+        className="hidden rounded-lg bg-page px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-2 sm:inline"
       >
         {tier}
       </span>
@@ -58,7 +58,7 @@ export function AccountMenu({
         type="button"
         onClick={signOut}
         disabled={busy}
-        className="rounded border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+        className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
       >
         {dict.auth.signOut}
       </button>

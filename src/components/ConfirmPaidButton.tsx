@@ -39,7 +39,7 @@ export function ConfirmPaidButton({ orderId, label, busyLabel, failLabel }: {
       type="button"
       onClick={confirm}
       disabled={busy}
-      className={`rounded border px-2 py-1 text-[12px] font-medium disabled:opacity-60 ${
+      className={`rounded-lg border px-2 py-1 text-[12px] font-medium disabled:opacity-60 ${
         err ? "border-down text-down" : "border-accent bg-accent text-page hover:opacity-90"
       }`}
     >

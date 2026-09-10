@@ -60,7 +60,7 @@ export async function SessionChrome({ locale, dict }: { locale: Locale; dict: Di
  */
 export function SessionChromeFallback({ locale, dict }: { locale: Locale; dict: Dict }) {
   return (
-    <Suspense fallback={<div className="h-14 border-b border-line" aria-hidden="true" />}>
+    <Suspense fallback={<div className="h-[68px] border-b border-line bg-surface" aria-hidden="true" />}>
     <Header
       locale={locale} dict={dict}
       email={null} tier="anon"

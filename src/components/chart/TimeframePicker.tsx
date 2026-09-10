@@ -118,7 +118,7 @@ export function TimeframePicker({
 
   const label = (t: Timeframe) => `${t.n} ${dict.chart.tfUnit[t.unit]}`;
   const locked = (t: Timeframe) => t.intraday && !intraday;
-  const seg = "px-2.5 py-1 text-[12px] font-medium transition-colors";
+  const seg = "px-3 py-1.5 font-mono text-[12px] font-medium transition-colors";
 
   // The quick row always contains the current interval. Without this, choosing
   // "3 months" from the menu leaves every visible pill unselected and the reader
@@ -128,26 +128,26 @@ export function TimeframePicker({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+      <span className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted">
         {dict.chart.timeframe}
       </span>
 
       {/* Pills and the full list share one border so they read as one control
           rather than two that happen to sit side by side. */}
       <div ref={wrap} className="relative">
-        <div role="group" aria-label={dict.chart.timeframe} className="flex rounded border border-line">
+        <div role="group" aria-label={dict.chart.timeframe} className="flex overflow-hidden rounded-[9px] border border-line bg-surface">
           {pills.map((t) => {
             const on = t.id === active.id;
             return locked(t) ? (
               <span key={t.id} title={dict.chart.tfLocked} aria-disabled="true"
-                className={`${seg} tnum cursor-not-allowed text-muted opacity-55 first:rounded-l`}>
+                className={`${seg} tnum cursor-not-allowed text-muted opacity-60`}>
                 🔒 {t.id}
               </span>
             ) : (
               <Link key={t.id} href={href(t.id)} aria-current={on ? "page" : undefined}
                 onClick={() => { if (!on) track("chart_tf_changed", { from: active.id, to: t.id, intraday: !!t.intraday }); }}
-                className={`${seg} tnum first:rounded-l ${
-                  on ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+                className={`${seg} tnum ${
+                  on ? "bg-btn font-semibold text-btn-ink" : "text-ink-2 hover:bg-page hover:text-ink"
                 }`}>
                 {t.id}
               </Link>
@@ -155,7 +155,7 @@ export function TimeframePicker({
           })}
           <button type="button" onClick={() => setOpen(!open)}
             aria-expanded={open} aria-haspopup="menu"
-            className="rounded-r border-l border-line px-2 py-1 text-[10px] text-ink-2 hover:bg-surface-2 hover:text-ink">
+            className="border-l border-line px-2.5 py-1.5 text-[10px] text-ink-2 hover:bg-page hover:text-ink">
             <span aria-hidden="true">▾</span>
             <span className="sr-only">{dict.chart.timeframe}</span>
           </button>
@@ -163,10 +163,10 @@ export function TimeframePicker({
 
         {open && (
           <div role="menu" aria-label={dict.chart.timeframe}
-            className="absolute left-0 top-full z-30 mt-1 max-h-[60vh] w-52 overflow-y-auto rounded border border-line bg-surface shadow-lg">
+            className="absolute left-0 top-full z-30 mt-1.5 max-h-[60vh] w-52 overflow-y-auto rounded-xl border border-line bg-surface shadow-lg">
             {GROUPS.map((g) => (
               <div key={g} className="border-b border-line last:border-b-0">
-                <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                <p className="px-3 pb-1 pt-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">
                   {dict.chart[GROUP_LABEL[g]] as string}
                 </p>
                 <ul>
@@ -188,7 +188,7 @@ export function TimeframePicker({
                         <Link href={href(t.id)} role="menuitem" onClick={() => setOpen(false)}
                           aria-current={on ? "page" : undefined}
                           className={`flex items-center justify-between px-3 py-1.5 text-[12px] hover:bg-surface-2 ${
-                            on ? "bg-surface-2 font-semibold text-ink" : "text-ink-2"
+                            on ? "bg-page font-semibold text-ink" : "text-ink-2"
                           }`}>
                           <span>{label(t)}</span>
                           <span className="tnum text-[11px] text-muted">{t.id}</span>
@@ -223,10 +223,10 @@ export function TimeframePicker({
                   placeholder="7m"
                   aria-invalid={customBad || undefined}
                   aria-describedby="tf-custom-hint"
-                  className="tnum w-full min-w-0 rounded border border-line bg-page px-2 py-1 text-[12px]"
+                  className="tnum w-full min-w-0 rounded-lg border border-line bg-page px-2 py-1 text-[12px]"
                 />
                 <button type="submit"
-                  className="shrink-0 rounded border border-line px-2 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink">
+                  className="shrink-0 rounded-lg border border-line px-2 py-1 text-[12px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink">
                   {dict.chart.tfCustomAdd}
                 </button>
               </div>
@@ -246,8 +246,8 @@ export function TimeframePicker({
 
       {(typed || refused) && (
         <span role="status" aria-live="polite"
-          className={`tnum rounded border px-2 py-0.5 text-[11px] ${
-            refused ? "border-line bg-surface-2 text-muted" : "border-accent text-accent"
+          className={`tnum rounded-lg border px-2 py-0.5 text-[11px] ${
+            refused ? "border-line bg-page text-muted" : "border-accent text-accent"
           }`}>
           {refused ? dict.chart.tfLocked : `${dict.chart.tfTyping}: ${typed}`}
         </span>

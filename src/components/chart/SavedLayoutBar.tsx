@@ -41,8 +41,8 @@ export function SavedLayoutBar({
             href={`/${locale}/${PATHS.terminal[locale]}/${l.symbol}${q ? `?${q}` : ""}`}
             aria-current={active ? "true" : undefined}
             title={`${l.name} · ${[l.symbol, ...l.extra].join(" · ")}`}
-            className={`max-w-[9rem] truncate rounded border border-line px-2 py-1 text-[12px] font-medium ${
-              active ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+            className={`max-w-[9rem] truncate rounded-lg border border-line px-2 py-1 text-[12px] font-medium ${
+              active ? "bg-page text-ink" : "text-ink-2 hover:text-ink"
             }`}
           >
             {l.name}

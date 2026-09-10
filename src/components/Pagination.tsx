@@ -35,7 +35,7 @@ export function Pagination({
   window.sort((a, b) => a - b);
 
   const cell =
-    "inline-flex min-w-[34px] items-center justify-center rounded border px-2.5 py-1.5 text-[13px] font-medium";
+    "inline-flex min-w-[34px] items-center justify-center rounded-lg border px-2.5 py-1.5 text-[13px] font-medium";
 
   return (
     <nav aria-label={dict.news.page} className="mt-8 flex flex-wrap items-center justify-center gap-1.5">
@@ -58,7 +58,7 @@ export function Pagination({
             aria-label={`${dict.news.page} ${n}`}
             className={`${cell} tnum ${
               n === page
-                ? "border-accent bg-surface-2 text-ink"
+                ? "border-accent bg-page text-ink"
                 : "border-line text-ink-2 hover:bg-surface-2 hover:text-ink"
             }`}
           >

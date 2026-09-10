@@ -40,7 +40,7 @@ export function Delta({
   }
 
   return (
-    <span className={`tnum inline-flex items-center gap-1 ${dirClass(dir)} ${className}`}>
+    <span className={`tnum inline-flex items-center gap-1 font-mono ${dirClass(dir)} ${className}`}>
       <span aria-hidden="true">{arrow(dir)}</span>
       <span className="sr-only">{label}</span>
       {showAbsolute && <span>{signed(change, locale, digits)}</span>}

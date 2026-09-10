@@ -405,7 +405,7 @@ export function ChartPro({
    * indicator toggle does it. Reading it from render state instead makes a HELD
    * arrow key — which repeats far faster than React re-renders — compute every
    * step from the same stale height, so ten presses move the divider once. It
-   * is exact rather than rounded so a nudge never quantises to the reported
+   * is exact rather than rounded-lg so a nudge never quantises to the reported
    * whole percent.
    */
   const ratioRef = useRef<number | null>(null);
@@ -1195,7 +1195,7 @@ export function ChartPro({
         <p role="note" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
           {dict.chart.firstHint}
           <button type="button" onClick={() => writeStored(HINT_KEY, "1")}
-            className="rounded border border-line px-2 py-0.5 text-[11px] font-medium text-ink-2 hover:text-ink">
+            className="rounded-lg border border-line px-2 py-0.5 text-[11px] font-medium text-ink-2 hover:text-ink">
             {dict.chart.gotIt}
           </button>
         </p>
@@ -1205,10 +1205,10 @@ export function ChartPro({
           first thing worth doing on a chart is marking a level, and nobody
           discovers a drawing rail by being left alone with it. */}
       {firstChart === "1" && canDraw && (
-        <p role="status" className="mt-2 flex items-center justify-between gap-3 rounded border border-line bg-surface-2 px-3 py-2 text-[12px] text-ink-2">
+        <p role="status" className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-line bg-page px-3 py-2 text-[12px] text-ink-2">
           {dict.chart.firstChartHint}
           <button type="button" onClick={() => writeStored(FIRST_CHART_KEY, null)}
-            className="shrink-0 rounded border border-line px-2 py-0.5 text-[11px] font-medium hover:text-ink">
+            className="shrink-0 rounded-lg border border-line px-2 py-0.5 text-[11px] font-medium hover:text-ink">
             {dict.chart.gotIt}
           </button>
         </p>
@@ -1226,7 +1226,7 @@ export function ChartPro({
 
       {/* Status line: symbol + OHLC + indicator values, the way a terminal
           reports the bar under the cursor. */}
-      <dl className="tnum mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-line bg-surface-2 px-2.5 py-1.5 text-[12px]">
+      <dl className="tnum mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-page px-2.5 py-1.5 text-[12px]">
         <div className="flex gap-1.5"><dt className="sr-only">{dict.chart.symbol}</dt><dd className="font-bold tracking-tight">{symbol}</dd></div>
         <div className="flex gap-1.5"><dt className="sr-only">{dict.common.updated}</dt><dd title={dict.common.updated}>{stamp(activeBar.t, locale, intraday)}</dd></div>
         <div className="flex gap-1.5"><dt className="text-muted">O</dt><dd>{num(activeBar.o, locale, digits)}</dd></div>
@@ -1247,7 +1247,7 @@ export function ChartPro({
           const mine = def.pane === "price" ? plots : [];
           const color = COLOR_VAR[plots[0]?.color ?? "muted"];
           return (
-            <div key={def.id} className="flex items-center gap-1.5 rounded border border-line bg-surface pl-1.5">
+            <div key={def.id} className="flex items-center gap-1.5 rounded-lg border border-line bg-surface pl-1.5">
               {/* The chip names the indicator AND is where its period is set —
                   the legend is already where a reader looks to see what is on. */}
               <dt style={{ color }}>
@@ -1273,7 +1273,7 @@ export function ChartPro({
           dragging all the way to the present is not a reasonable ask. */}
       {!asTable && offset > 0 && (
         <button type="button" onClick={() => setOffset(0)}
-          className="mt-2 rounded border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink">
+          className="mt-2 rounded-lg border border-line bg-page px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink">
           {dict.chart.panBack} →
         </button>
       )}
@@ -1287,7 +1287,7 @@ export function ChartPro({
               twelve 40px targets cannot fit 390px and a non-shrinking rail
               pushes the whole page into horizontal overflow. */}
           <div role="group" aria-label={dict.chart.draw}
-            className="flex w-full flex-row gap-1 overflow-x-auto rounded border border-line p-1 lg:w-auto lg:shrink-0 lg:flex-col lg:overflow-visible">
+            className="flex w-full flex-row gap-1 overflow-x-auto rounded-lg border border-line p-1 lg:w-auto lg:shrink-0 lg:flex-col lg:overflow-visible">
             {(["cursor", "hline", "vline", "trend", "ray", "rect", "fib", "fibext", "channel", "trade", "measure", "text"] as const).map((m) => {
               const locked = !canDraw && m !== "cursor";
               // The original five read their label straight off the tool name;
@@ -1326,8 +1326,8 @@ export function ChartPro({
                   aria-pressed={locked ? undefined : mode === m}
                   aria-label={locked ? `${label} — ${dict.chart.drawLocked}` : label}
                   title={locked ? dict.chart.drawLocked : label}
-                  className={`relative grid h-10 w-10 shrink-0 place-items-center rounded text-[13px] leading-none lg:h-8 lg:w-8 ${
-                    mode === m ? "bg-surface-2 text-ink"
+                  className={`relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[13px] leading-none lg:h-8 lg:w-8 ${
+                    mode === m ? "bg-page text-ink"
                       : locked ? "cursor-not-allowed text-ink-2"
                       : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                   }`}
@@ -1356,12 +1356,12 @@ export function ChartPro({
               <div className="mt-1 flex flex-col gap-1 border-t border-line pt-1">
                 <button type="button" onClick={() => stepHistory("undo")} disabled={!histFlags.undo}
                   aria-label={dict.chart.undo} title={dict.chart.undo}
-                  className="grid h-8 w-8 place-items-center rounded text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
+                  className="grid h-8 w-8 place-items-center rounded-lg text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                   <span aria-hidden="true">↶</span>
                 </button>
                 <button type="button" onClick={() => stepHistory("redo")} disabled={!histFlags.redo}
                   aria-label={dict.chart.redo} title={dict.chart.redo}
-                  className="grid h-8 w-8 place-items-center rounded text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
+                  className="grid h-8 w-8 place-items-center rounded-lg text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                   <span aria-hidden="true">↷</span>
                 </button>
               </div>
@@ -1369,14 +1369,14 @@ export function ChartPro({
             {selectedId && (
               <button type="button" onClick={deleteSelected}
                 aria-label={dict.chart.deleteSelected} title={dict.chart.deleteSelected}
-                className="grid h-8 w-8 place-items-center rounded text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-down">
+                className="grid h-8 w-8 place-items-center rounded-lg text-[13px] leading-none text-ink-2 hover:bg-surface-2 hover:text-down">
                 <span aria-hidden="true">⌫</span>
               </button>
             )}
             {drawings.length > 0 && (
               <button type="button" onClick={() => { commitDrawings([]); setPending([]); setSelectedId(null); }}
                 aria-label={dict.chart.clearDrawings} title={dict.chart.clearDrawings}
-                className="grid h-8 w-8 place-items-center rounded text-[13px] text-ink-2 hover:bg-surface-2 hover:text-down">
+                className="grid h-8 w-8 place-items-center rounded-lg text-[13px] text-ink-2 hover:bg-surface-2 hover:text-down">
                 <span aria-hidden="true">🗑</span>
               </button>
             )}
@@ -1468,16 +1468,16 @@ function Toolbar({
   full: boolean; toggleFull: () => void; canDraw: boolean;
 }) {
   const seg = "px-2.5 py-1 text-[12px] font-medium transition-colors";
-  const btn = "shrink-0 rounded border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink";
+  const btn = "shrink-0 rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:text-ink";
   const pricingHref = `/${locale}/${PATHS.pricing[locale]}?plan=plus`;
 
   return (
     // One row that scrolls on a phone; wraps only once there is room to.
     <div className="relative -mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0">
-      <div role="group" aria-label={dict.chart.type} className="flex shrink-0 rounded border border-line">
+      <div role="group" aria-label={dict.chart.type} className="flex shrink-0 rounded-lg border border-line">
         {(["candle", "line", "area"] as ChartType[]).map((t) => (
           <button key={t} type="button" onClick={() => { setType(t); track("chart_type_changed", { type: t }); }} aria-pressed={type === t}
-            className={`${seg} first:rounded-l last:rounded-r ${type === t ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}>
+            className={`${seg} first:rounded-l last:rounded-r ${type === t ? "bg-page text-ink" : "text-ink-2 hover:text-ink"}`}>
             {dict.chart[t]}
           </button>
         ))}
@@ -1486,12 +1486,12 @@ function Toolbar({
       <IndicatorMenu dict={dict} unlocked={unlocked} limit={limit} active={active} toggle={toggle} pricingHref={pricingHref} />
 
       {/* Zoom is the wheel and +/−; the one button left is the way back out. */}
-      <div role="group" aria-label={dict.chart.range} className="flex shrink-0 rounded border border-line">
+      <div role="group" aria-label={dict.chart.range} className="flex shrink-0 rounded-lg border border-line">
         {presets.map((p) => (
           <button key={p.id} type="button" onClick={() => setRange(p.count)}
             aria-pressed={activePreset === p.id}
             className={`${seg} first:rounded-l last:rounded-r ${
-              activePreset === p.id ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+              activePreset === p.id ? "bg-page text-ink" : "text-ink-2 hover:text-ink"
             }`}>
             {p.id === "ALL" ? dict.chart.all : p.id}
           </button>
@@ -1501,12 +1501,12 @@ function Toolbar({
       {/* The price axis. Free for every tier: reading a chart on the right axis
           is a basic, and over years a linear axis makes doubling your money
           look smaller than a ten-percent move. */}
-      <div role="group" aria-label={dict.chart.scale} className="flex shrink-0 rounded border border-line">
+      <div role="group" aria-label={dict.chart.scale} className="flex shrink-0 rounded-lg border border-line">
         {SCALES.map((sc) => (
           <button key={sc} type="button" onClick={() => setScale(sc)} aria-pressed={scale === sc}
             title={dict.chart.scaleHint[sc]}
             className={`${seg} first:rounded-l last:rounded-r ${
-              scale === sc ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"
+              scale === sc ? "bg-page text-ink" : "text-ink-2 hover:text-ink"
             }`}>
             {dict.chart.scaleLabel[sc]}
           </button>
@@ -1529,7 +1529,7 @@ function Toolbar({
         <HelpSheet dict={dict} canDraw={canDraw} />
         <button type="button" onClick={toggleFull} aria-pressed={full}
           title={full ? dict.chart.exitFullscreen : dict.chart.fullscreen}
-          className="rounded border border-line px-2 py-1 text-[12px] font-medium text-ink-2 hover:text-ink">
+          className="rounded-lg border border-line px-2 py-1 text-[12px] font-medium text-ink-2 hover:text-ink">
           <span aria-hidden="true">{full ? "⤢" : "⛶"}</span>
           <span className="sr-only">{full ? dict.chart.exitFullscreen : dict.chart.fullscreen}</span>
         </button>
@@ -1550,12 +1550,12 @@ function HelpSheet({ dict, canDraw }: { dict: Dict; canDraw: boolean }) {
     <div ref={wrap} className="relative">
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="dialog"
         aria-label={dict.chart.help} title={dict.chart.help}
-        className="rounded border border-line px-2.5 py-1 text-[12px] font-semibold text-ink-2 hover:text-ink">
+        className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink-2 hover:text-ink">
         ?
       </button>
       {open && (
         <div role="dialog" aria-label={dict.chart.help}
-          className="absolute right-0 top-full z-30 mt-1 w-72 rounded border border-line bg-surface p-3 text-[12px] shadow-lg">
+          className="absolute right-0 top-full z-30 mt-1 w-72 rounded-lg border border-line bg-surface p-3 text-[12px] shadow-lg">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted">{dict.chart.help}</p>
           <ul className="space-y-1.5 text-ink-2">
             {rows.map((r) => <li key={r}>{r}</li>)}
@@ -1637,18 +1637,18 @@ function PeriodChip({
         aria-expanded={open}
         aria-label={`${dict.chart.indPeriod} ${labelFor(def, period)}`}
         style={{ color }}
-        className="rounded px-0.5 hover:underline"
+        className="rounded-lg px-0.5 hover:underline"
       >
         {shortFor(def, period)}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded border border-line bg-surface p-2 shadow-lg">
+        <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-lg border border-line bg-surface p-2 shadow-lg">
           <label htmlFor={`per-${def.id}`} className="block text-[11px] text-muted">
             {dict.chart.indPeriod}
           </label>
           <div className="mt-1 flex items-center gap-1">
             <button type="button" onClick={() => nudge(-1)} aria-label={dict.chart.indPeriodDown}
-              className="rounded border border-line px-1.5 py-0.5 text-[12px] text-ink-2 hover:text-ink">−</button>
+              className="rounded-lg border border-line px-1.5 py-0.5 text-[12px] text-ink-2 hover:text-ink">−</button>
             <input
               id={`per-${def.id}`} type="number" inputMode="numeric"
               min={def.param!.min} max={def.param!.max} value={draft}
@@ -1658,10 +1658,10 @@ function PeriodChip({
                 if (e.key === "Enter") { e.preventDefault(); commit((e.target as HTMLInputElement).value); close(); }
                 if (e.key === "Escape") { e.preventDefault(); close(); }
               }}
-              className="tnum w-full rounded border border-line bg-page px-2 py-0.5 text-center text-[12px]"
+              className="tnum w-full rounded-lg border border-line bg-page px-2 py-0.5 text-center text-[12px]"
             />
             <button type="button" onClick={() => nudge(1)} aria-label={dict.chart.indPeriodUp}
-              className="rounded border border-line px-1.5 py-0.5 text-[12px] text-ink-2 hover:text-ink">+</button>
+              className="rounded-lg border border-line px-1.5 py-0.5 text-[12px] text-ink-2 hover:text-ink">+</button>
           </div>
           <p className="mt-1 text-[10px] text-muted">
             {def.param!.min}–{def.param!.max}
@@ -2141,13 +2141,13 @@ function PricePane({
 
       {/* A three-click tool that says nothing after two clicks reads as broken. */}
       {pending.length > 0 && mode !== "cursor" && (
-        <div role="status" className="pointer-events-none absolute right-2 top-1 rounded border border-accent bg-surface px-2 py-0.5 text-[11px] font-medium text-accent">
+        <div role="status" className="pointer-events-none absolute right-2 top-1 rounded-lg border border-accent bg-surface px-2 py-0.5 text-[11px] font-medium text-accent">
           {dict.chart.drawNeed.replace("{n}", String(TOOL_POINTS[mode] - pending.length))}
         </div>
       )}
 
       {hover !== null && (
-        <div role="status" className="pointer-events-none absolute top-1 rounded border border-line bg-surface px-2 py-1 text-[11px] shadow-sm"
+        <div role="status" className="pointer-events-none absolute top-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] shadow-sm"
           style={{ left: Math.min(Math.max(x(hover) - 55, 0), Math.max(0, width - 120)) }}>
           <div className="font-medium">{stamp(view[idx].t, locale, intraday)}</div>
           <div className="tnum text-ink-2">{num(view[idx].c, locale, digits)}</div>

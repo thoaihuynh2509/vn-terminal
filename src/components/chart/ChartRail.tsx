@@ -5,6 +5,8 @@ import Link from "next/link";
 import { AlertPanel } from "@/components/chart/AlertPanel";
 import { LayoutsTab } from "@/components/chart/LayoutsTab";
 import { AskBox } from "@/components/AskBox";
+import { DarkPanel } from "@/components/ui";
+import { INDICATOR_LIMIT } from "@/lib/auth/entitlement";
 import { Sparkline } from "@/components/Sparkline";
 import { WATCH_KEY, parseWatchlist, useWatchlistRaw } from "@/components/WatchButton";
 import { useStored, writeStored } from "@/lib/browser-store";
@@ -112,31 +114,32 @@ export function ChartRail({
   };
 
   return (
+    <>
     <section ref={wrap} className="card contents lg:block">
       <div role="tablist" aria-label={dict.chart.workspace}
         className="fixed inset-x-0 bottom-0 z-40 flex h-11 border-t border-line bg-surface lg:static lg:h-auto lg:border-b lg:border-t-0">
         {TABS.map((t) => (
           <button key={t} type="button" role="tab" id={`rail-tab-${t}`} aria-selected={tab === t}
             aria-controls={`rail-panel-${t}`} onClick={() => pick(t)}
-            className={`flex-1 px-2 text-[12px] font-semibold lg:py-2 ${
-              tab === t ? "border-b-2 border-accent text-ink" : "text-ink-2 hover:text-ink"
+            className={`flex-1 px-2 text-[13px] font-semibold lg:py-3 ${
+              tab === t ? "text-ink shadow-[inset_0_-2px_0_var(--gold)]" : "text-muted hover:text-ink"
             }`}>
             {label[t]}
           </button>
         ))}
         {streak && streak.count > 1 && (
-          <span className="hidden shrink-0 items-center px-2 text-[11px] text-muted lg:flex"
+          <span className="hidden shrink-0 items-center px-3 font-mono text-[11px] text-muted lg:flex"
             title={dict.chart.streak.replace("{n}", String(streak.count))}>
             {dict.chart.streak.replace("{n}", String(streak.count))}
           </span>
         )}
       </div>
       <div role="tabpanel" id={`rail-panel-${tab}`} aria-labelledby={`rail-tab-${tab}`}
-        className={`${sheet ? "fixed" : "hidden"} inset-x-0 bottom-11 z-40 max-h-[70dvh] overflow-y-auto rounded-t-[10px] border-t border-line bg-surface p-3.5 shadow-lg lg:static lg:block lg:max-h-none lg:overflow-visible lg:rounded-none lg:border-0 lg:shadow-none`}>
+        className={`${sheet ? "fixed" : "hidden"} inset-x-0 bottom-11 z-40 max-h-[70dvh] overflow-y-auto rounded-t-[16px] border-t border-line bg-surface p-4 shadow-lg lg:static lg:block lg:max-h-none lg:overflow-visible lg:rounded-none lg:border-0 lg:shadow-none`}>
         <div className="mb-2 flex items-center justify-between lg:hidden">
           <span className="text-[12px] font-semibold">{label[tab]}</span>
           <button type="button" onClick={closeSheet} aria-label={dict.chart.closeRail}
-            className="grid h-7 w-7 place-items-center rounded text-[14px] text-ink-2 hover:bg-surface-2 hover:text-ink">
+            className="grid h-7 w-7 place-items-center rounded-lg text-[14px] text-ink-2 hover:bg-surface-2 hover:text-ink">
             <span aria-hidden="true">×</span>
           </button>
         </div>
@@ -157,6 +160,23 @@ export function ChartRail({
         )}
       </div>
     </section>
+
+    {/* The indicator budget the reader is actually against. It lives in the
+        rail COMPONENT, not the page, because it has to know which tab is open:
+        AskBox owns the whole assistant ladder and prints this same sentence
+        itself, so a panel here would say it twice in one column. A Pro reader
+        has nothing left to buy and gets the space back. */}
+    {tier !== "pro" && tab !== "ask" && (
+      <DarkPanel
+        className="hidden lg:block"
+        eyebrow={dict.pricing.upgrade}
+        title={`${dict.pricing.fIndicators}: ${INDICATOR_LIMIT[tier]} / ${INDICATOR_LIMIT.plus}`}
+        body={dict.ask.upgradeIncludes}
+        cta={dict.pricing.cta}
+        href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`}
+      />
+    )}
+    </>
   );
 }
 

@@ -1,13 +1,14 @@
 import { FeedBanner } from "@/components/FeedBanner";
 import { GoldTable } from "@/components/GoldTable";
 import { Delta } from "@/components/Delta";
-import { KeyValue, Metric, Panel, PageShell, Stack } from "@/components/layout";
+import { KeyValue, Panel, PageShell, Stack } from "@/components/layout";
+import { StatTile, DarkPanel } from "@/components/ui";
 import { num, pct, usd, vnd } from "@/lib/format";
 import { Explainer } from "@/components/Explainer";
 import { PageHeader } from "@/components/editorial";
 import { LiveStamp } from "@/components/LiveStamp";
 import { getExplainer } from "@/content/explainers";
-import { getDict } from "@/lib/i18n";
+import { getDict, PATHS } from "@/lib/i18n";
 import { getGold, headlineRow, OZ_PER_LUONG, premium } from "@/lib/providers/gold";
 import type { Locale } from "@/lib/types";
 
@@ -43,8 +44,8 @@ export async function GoldView({ locale }: { locale: Locale }) {
   const rail =
     prem && gold.world ? (
       <Panel title={dict.gold.premium}>
-        <p className="text-[12px] text-ink-2">{dict.gold.premiumHint}</p>
-        <div className="mt-3">
+        <p className="text-[13px] leading-relaxed text-ink-2">{dict.gold.premiumHint}</p>
+        <div className="mt-4">
           <KeyValue
             rows={[
               { k: "XAU/USD", v: usd(gold.world.buy, locale) },
@@ -59,39 +60,56 @@ export async function GoldView({ locale }: { locale: Locale }) {
 
   return (
     <>
-      <PageHeader title={dict.gold.title} subtitle={dict.gold.subtitle} meta={dict.gold.perLuongNote} />
-
-      <div className="mb-3"><LiveStamp locale={locale} /></div>
+      <PageHeader
+        title={dict.gold.title}
+        subtitle={dict.gold.subtitle}
+        meta={dict.gold.perLuongNote}
+        action={<LiveStamp locale={locale} />}
+      />
 
       <PageShell rail={rail}>
-        <Stack>
-          {/* Two figures, not four: the headline ask and the premium are the two
-              numbers the table below cannot give at a glance. Bid and world spot
-              are already in the table and the rail. */}
-          <div className="grid gap-2 sm:grid-cols-2">
+        <Stack gap="md">
+          {/* Three figures: the headline ask, the standing premium, and world
+              spot. Bid sits in the table; repeating it here would waste the row. */}
+          <div className="grid gap-4 sm:grid-cols-3">
             {top && (
-              <Metric
+              <StatTile
                 label={`${top.name} · ${dict.gold.sell}`}
                 value={vnd(top.sell, locale)}
-                delta={<Delta change={top.changeSell || top.changeBuy} locale={locale} digits={0} />}
+                sub={<Delta change={top.changeSell || top.changeBuy} locale={locale} digits={0} />}
               />
             )}
             {prem && (
               /* No Delta here: the premium is a standing level, not a move. A green
                  ▲ would claim gold "rose 53%" when it means domestic sits 53% above
                  world parity — a status hue must never stand in for a positive sign. */
-              <Metric
+              <StatTile
                 label={dict.gold.premium}
                 value={vnd(prem.diff, locale)}
-                delta={<span className="tnum text-ink-2">{pct(prem.pct, locale)} {dict.gold.vsWorld}</span>}
+                sub={<span className="tnum font-mono text-ink-2">{pct(prem.pct, locale)} {dict.gold.vsWorld}</span>}
+              />
+            )}
+            {gold.world && (
+              <StatTile
+                label="XAU/USD"
+                value={usd(gold.world.buy, locale)}
+                sub={<Delta change={gold.world.changeBuy} locale={locale} digits={2} />}
               />
             )}
           </div>
 
           <div>
-            <h2 className="mb-3 text-[15px] font-semibold tracking-tight">{dict.gold.domestic}</h2>
+            <h2 className="mb-4 text-[18px] font-semibold tracking-tight">{dict.gold.domestic}</h2>
             <GoldTable gold={gold} locale={locale} dict={dict} />
           </div>
+
+          <DarkPanel
+            eyebrow={dict.pricing.plus}
+            title={dict.pricing.fAlertEmail}
+            body={dict.chart.alertScopeEmail}
+            cta={dict.pricing.cta}
+            href={`/${locale}/${PATHS.pricing[locale]}`}
+          />
         </Stack>
       </PageShell>
 

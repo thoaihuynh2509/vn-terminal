@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/editorial";
+import { Card } from "@/components/ui";
 import { PlanCards } from "@/components/PlanCards";
 import { ALERT_LIMIT, DRAWING_LIMIT, INDICATOR_LIMIT, LAYOUT_LIMIT, can } from "@/lib/auth/entitlement";
 import { COMPARE_LIMIT } from "@/lib/chart/compare";
@@ -68,11 +69,16 @@ export async function PricingView({
 
   return (
     <>
-      <PageHeader title={dict.pricing.title} subtitle={dict.pricing.subtitle} />
+      <PageHeader
+        title={dict.pricing.title}
+        subtitle={dict.pricing.subtitle}
+        size="hero"
+        align="center"
+      />
 
       {!enabled && (
-        <div role="status" className="mb-6 rounded-lg border border-line bg-surface-2 px-4 py-3.5">
-          <p className="text-[13px] font-medium text-ink">{dict.pricing.notice}</p>
+        <div role="status" className="mx-auto mb-7 max-w-[68ch] rounded-[14px] border border-dashed border-gold-line bg-gold-soft px-5 py-4 text-center">
+          <p className="text-[14px] leading-relaxed text-ink">{dict.pricing.notice}</p>
         </div>
       )}
 
@@ -86,46 +92,67 @@ export async function PricingView({
         highlight={highlight}
       />
 
-      <h2 className="mb-3 mt-8 text-[15px] font-semibold tracking-tight">{dict.pricing.featuresTitle}</h2>
-      <div className="card relative overflow-x-auto">
-        <table className="data-table w-full text-[13px]">
-          <caption className="sr-only">{dict.pricing.featuresTitle}</caption>
-          <thead className="border-b border-line bg-surface-2 text-[11px] uppercase tracking-wide text-muted">
-            <tr>
-              <th scope="col" className="px-3 py-2 text-left font-medium" />
-              {TIERS.map((t) => (
-                <th
-                  key={t}
-                  scope="col"
-                  // Colour alone cannot carry the highlight: it is invisible in
-                  // greyscale and silent to a screen reader, which is exactly
-                  // the reader who cannot see which column the URL picked.
-                  aria-current={t === highlight ? "true" : undefined}
-                  className={`px-3 py-2 text-center font-medium ${t === highlight ? "text-accent underline underline-offset-4" : ""}`}
-                >
-                  {dict.pricing[t]}
-                  {t === highlight && <span className="sr-only"> — {dict.pricing.recommended}</span>}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {features.map((f) => (
-              <tr key={f.label} className="border-b border-line last:border-0">
-                <th scope="row" className="px-3 py-2 text-left font-medium">{f.label}</th>
-                {f.values.map((v, i) => (
-                  <td
-                    key={i}
-                    className={`tnum px-3 py-2 text-center ${TIERS[i] === highlight ? "bg-surface-2 font-semibold text-ink" : ""}`}
+      <section className="mt-12">
+        <h2 className="mb-4 text-[22px] font-semibold tracking-tight">{dict.pricing.featuresTitle}</h2>
+        <div className="card relative overflow-x-auto overflow-y-hidden">
+          <table className="data-table w-full min-w-[600px] text-[14px]">
+            <caption className="sr-only">{dict.pricing.featuresTitle}</caption>
+            <thead className="border-b border-line bg-surface-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+              <tr>
+                <th scope="col" className="px-5 py-3 text-left font-medium" />
+                {TIERS.map((t) => (
+                  <th
+                    key={t}
+                    scope="col"
+                    // Colour alone cannot carry the highlight: it is invisible in
+                    // greyscale and silent to a screen reader, which is exactly
+                    // the reader who cannot see which column the URL picked.
+                    aria-current={t === highlight ? "true" : undefined}
+                    className={`w-[150px] px-3 py-3 text-center font-medium ${
+                      t === highlight ? "text-accent underline underline-offset-4" : t === "plus" ? "text-accent" : ""
+                    }`}
                   >
-                    {typeof v === "string" ? v : v ? "✓" : "–"}
-                  </td>
+                    {dict.pricing[t]}
+                    {t === highlight && <span className="sr-only"> — {dict.pricing.recommended}</span>}
+                  </th>
                 ))}
               </tr>
+            </thead>
+            <tbody>
+              {features.map((f) => (
+                <tr key={f.label} className="border-b border-line last:border-0">
+                  <th scope="row" className="px-5 py-3 text-left font-normal">{f.label}</th>
+                  {f.values.map((v, i) => (
+                    <td
+                      key={i}
+                      className={`tnum px-3 py-3 text-center font-mono ${
+                        TIERS[i] === highlight ? "bg-gold-soft font-semibold text-ink" : TIERS[i] === "plus" ? "font-medium" : "text-ink-2"
+                      }`}
+                    >
+                      {typeof v === "string" ? v : v ? "✓" : "–"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* What the reader can actually pay with, straight from the providers
+          that are configured — never a logo wall of gateways we do not accept. */}
+      {enabled && (
+        <Card className="mt-7 p-6">
+          <h2 className="text-[18px] font-semibold tracking-tight">{dict.pricing.payMethod}</h2>
+          <ul className="mt-4 flex flex-wrap gap-2.5">
+            {enabledProviders().map((p) => (
+              <li key={p} className="rounded-[10px] border border-line px-3.5 py-2.5 text-[13px] text-ink-2">
+                {({ momo: dict.pricing.mMomo, vnpay: dict.pricing.mVnpay, sepay: dict.pricing.mSepay, manual: dict.pricing.mManual })[p]}
+              </li>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </ul>
+        </Card>
+      )}
     </>
   );
 }

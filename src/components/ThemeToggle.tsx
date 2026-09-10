@@ -42,7 +42,7 @@ export function ThemeToggle({ label }: { label: string }) {
       onClick={apply}
       aria-label={`${label} — ${next}`}
       title={`${label} — ${next}`}
-      className="grid h-8 w-8 place-items-center rounded border border-line text-ink-2 hover:bg-surface-2 hover:text-ink"
+      className="grid h-8 w-8 place-items-center rounded-lg border border-line text-ink-2 hover:bg-surface-2 hover:text-ink"
     >
       {/* Shows the CURRENT theme; pressing moves to the other one. */}
       <span aria-hidden="true" className="text-sm leading-none">{effective === "dark" ? "☾" : "☀"}</span>

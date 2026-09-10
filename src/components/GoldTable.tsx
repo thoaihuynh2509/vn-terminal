@@ -20,12 +20,12 @@ export function GoldTable({
   const rows = limit ? gold.rows.slice(0, limit) : gold.rows;
 
   return (
-    <div className="card relative overflow-x-auto">
+    <div className="card relative overflow-x-auto overflow-y-hidden">
       <table className="data-table w-full min-w-[600px] text-[13px]">
         <caption className="sr-only">
           {dict.gold.title} — {dict.gold.perLuongNote}
         </caption>
-        <thead className="border-b border-line bg-surface-2 text-[11px] uppercase tracking-wide text-muted">
+        <thead className="border-b border-line bg-surface-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
           <tr>
             <th scope="col" className="px-2 py-2 text-left font-medium">{dict.common.name}</th>
             <th scope="col" className="px-2 py-2 text-right font-medium">{dict.gold.buy}</th>
@@ -47,8 +47,8 @@ export function GoldTable({
                   </Link>
                 ) : r.name}
               </th>
-              <td className="px-2 py-1.5 text-right">{vnd(r.buy, locale)}</td>
-              <td className="px-2 py-1.5 text-right font-medium">{vnd(r.sell, locale)}</td>
+              <td className="px-2 py-1.5 text-right font-mono">{vnd(r.buy, locale)}</td>
+              <td className="px-2 py-1.5 text-right font-mono font-medium">{vnd(r.sell, locale)}</td>
               <td className="px-2 py-1.5 text-right">
                 {/* Delta renders the flat case as a bare dash itself — no local
                     "— 0" branch, which is exactly what it existed to prevent. */}
@@ -63,14 +63,14 @@ export function GoldTable({
                   }
                 />
               </td>
-              <td className="px-2 py-1.5 text-right text-ink-2">
+              <td className="px-2 py-1.5 text-right font-mono text-ink-2">
                 {r.sell > r.buy ? vnd(r.sell - r.buy, locale) : "—"}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="border-t border-line px-2 py-1.5 text-[11px] text-muted">
+      <p className="border-t border-line px-4 py-3 font-mono text-[12px] text-muted">
         {dict.gold.perLuongNote} · {dict.common.updated} {gold.updatedAt} · {gold.date}
       </p>
     </div>

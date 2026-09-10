@@ -49,7 +49,7 @@ export function RevokeButton({ orderId, label, armLabel, busyLabel, failLabel }:
       type="button"
       onClick={revoke}
       disabled={busy}
-      className="rounded border border-down px-2 py-1 text-[12px] font-medium text-down disabled:opacity-60"
+      className="rounded-lg border border-down px-2 py-1 text-[12px] font-medium text-down disabled:opacity-60"
     >
       {busy ? busyLabel : err ? failLabel : armed ? armLabel : label}
     </button>

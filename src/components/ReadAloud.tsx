@@ -84,7 +84,7 @@ export function ReadAloud({ text, dict, locale }: { text: string; dict: Dict; lo
         type="button"
         onClick={toggle}
         aria-label={speaking && !paused ? dict.audio.pause : dict.audio.play}
-        className="inline-flex items-center gap-1.5 rounded border border-line bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-surface"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-page px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-surface"
       >
         <span aria-hidden="true">{speaking && !paused ? "❚❚" : "▶"}</span>
         {speaking && !paused ? dict.audio.pause : dict.audio.play}
@@ -94,7 +94,7 @@ export function ReadAloud({ text, dict, locale }: { text: string; dict: Dict; lo
           type="button"
           onClick={stop}
           aria-label={dict.audio.stop}
-          className="rounded border border-line px-2.5 py-1.5 text-[12px] text-ink-2 hover:text-ink"
+          className="rounded-lg border border-line px-2.5 py-1.5 text-[12px] text-ink-2 hover:text-ink"
         >
           <span aria-hidden="true">■</span>
         </button>

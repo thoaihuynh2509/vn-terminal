@@ -23,26 +23,26 @@ export function VerifyView({ locale, token }: { locale: Locale; token?: string }
       }
     >
       <PageHeader title={dict.auth.verifyTitle} subtitle={dict.auth.verifyBody} />
-      <div className="max-w-[420px]">
+      <div className="max-w-[460px]">
         {token ? (
-          <form method="post" action="/api/auth/magic/verify" className="card p-5">
+          <form method="post" action="/api/auth/magic/verify" className="card p-7">
             <input type="hidden" name="token" value={token} />
             <input type="hidden" name="locale" value={locale} />
             <button
               type="submit"
-              className="w-full rounded border border-line bg-surface-2 px-3 py-2 text-[13px] font-medium text-ink"
+              className="w-full rounded-[10px] bg-btn px-4 py-3.5 text-[15px] font-semibold text-btn-ink hover:bg-btn-hover"
             >
               {dict.auth.verifyContinue}
             </button>
           </form>
         ) : (
-          <div className="card p-5">
-            <p role="alert" className="text-[13px] leading-relaxed text-ink-2">
+          <div className="card p-7">
+            <p role="alert" className="text-[14px] leading-relaxed text-ink-2">
               {dict.auth.linkInvalid}
             </p>
             <Link
               href={`/${locale}/${PATHS.login[locale]}`}
-              className="mt-4 inline-block rounded border border-line bg-surface-2 px-3 py-2 text-[13px] font-medium text-ink hover:bg-surface"
+              className="mt-5 inline-block rounded-[10px] bg-btn px-4 py-2.5 text-[14px] font-semibold text-btn-ink hover:bg-btn-hover"
             >
               {dict.auth.signIn}
             </Link>

@@ -91,7 +91,7 @@ export function SymbolSearch({ locale, dict, symbols }: { locale: Locale; dict: 
             <li key={s} id={`sym-${s}`} role="option" aria-selected={i === cursor}>
               <button type="button" onClick={() => go(s)} onMouseEnter={() => setCursor(i)}
                 className={`flex w-full items-center justify-between px-4 py-2 text-left text-[13px] ${
-                  i === cursor ? "bg-surface-2 text-ink" : "text-ink-2"
+                  i === cursor ? "bg-page text-ink" : "text-ink-2"
                 }`}>
                 <span className="font-semibold tracking-wide">{s}</span>
                 <span className="text-[12px] text-muted">{sectorLabel(s, locale)}</span>
@@ -113,12 +113,12 @@ function sectorLabel(sym: string, locale: Locale): string {
 export function SymbolSearchButton({ label, compact = false }: { label: string; compact?: boolean }) {
   return (
     <button type="button" onClick={openSymbolSearch}
-      className={`flex items-center gap-2 rounded border border-line text-ink-2 hover:bg-surface-2 hover:text-ink ${
+      className={`flex items-center gap-2 rounded-lg border border-line text-ink-2 hover:bg-surface-2 hover:text-ink ${
         compact ? "px-2 py-1 text-[11px]" : "px-2.5 py-1.5 text-[12px] font-medium"
       }`}>
       <span aria-hidden="true">⌕</span>
       {label}
-      <kbd aria-hidden="true" className="hidden rounded border border-line px-1 text-[10px] text-muted md:inline">⌘K</kbd>
+      <kbd aria-hidden="true" className="hidden rounded-lg border border-line px-1 text-[10px] text-muted md:inline">⌘K</kbd>
     </button>
   );
 }

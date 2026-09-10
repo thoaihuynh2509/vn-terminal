@@ -11,11 +11,15 @@ export function BreadthBar({
   down,
   flat,
   labels,
+  showCounts = true,
 }: {
   up: number;
   down: number;
   flat: number;
   labels: { up: string; down: string; flat: string };
+  /** Off where the counts are already printed beside the bar. The bar keeps
+      its `aria-label`, so nothing is lost to a screen reader either way. */
+  showCounts?: boolean;
 }) {
   const total = Math.max(1, up + down + flat);
   const pctOf = (n: number) => `${(n / total) * 100}%`;
@@ -24,7 +28,7 @@ export function BreadthBar({
   return (
     <div>
       <div
-        className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-2"
+        className="flex h-2 w-full overflow-hidden rounded-full bg-grid"
         role="img"
         aria-label={aria}
       >
@@ -35,11 +39,13 @@ export function BreadthBar({
           <div className="h-full bg-current" />
         </div>
       </div>
-      <div className="mt-1.5 flex justify-between text-[11px] tnum text-muted" aria-hidden="true">
-        <span className="text-up">▲ {up} {labels.up}</span>
-        {flat > 0 && <span>— {flat} {labels.flat}</span>}
-        <span className="text-down">▼ {down} {labels.down}</span>
-      </div>
+      {showCounts && (
+        <div className="tnum mt-2 flex justify-between font-mono text-[12px]" aria-hidden="true">
+          <span className="text-up">▲ {up} {labels.up}</span>
+          {flat > 0 && <span className="text-muted">— {flat} {labels.flat}</span>}
+          <span className="text-down">▼ {down} {labels.down}</span>
+        </div>
+      )}
     </div>
   );
 }

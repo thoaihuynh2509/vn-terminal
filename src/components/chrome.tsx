@@ -2,28 +2,35 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 /**
- * Section header: accent bullet, uppercase label, optional "view all" on the
- * right — the rhythm that makes the reference's long home page scannable.
+ * Section header: the heading, anything the section wants to hang off it, and
+ * a "view all" on the right. The rhythm that makes a long, dense page
+ * scannable without turning every block into a card.
  */
 export function SectionHead({
   title,
   href,
   viewAll,
+  subtitle,
   children,
 }: {
   title: string;
   href?: string;
   viewAll?: string;
+  subtitle?: string;
   children?: ReactNode;
 }) {
   return (
-    <div className="mb-3 flex items-center gap-2 border-b border-line pb-2">
-      <span aria-hidden="true" className="h-1.5 w-1.5 rotate-45 bg-accent" />
-      <h2 className="text-[12px] font-bold uppercase tracking-wider">{title}</h2>
-      {children}
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-[18px] font-semibold tracking-tight">{title}</h2>
+          {children}
+        </div>
+        {subtitle && <p className="mt-1.5 max-w-[68ch] text-[14px] leading-relaxed text-ink-2">{subtitle}</p>}
+      </div>
       {href && viewAll && (
-        <Link href={href} className="ml-auto shrink-0 text-[11px] font-medium uppercase tracking-wide text-ink-2 hover:text-accent">
-          {viewAll}
+        <Link href={href} className="shrink-0 text-[14px] font-medium text-accent hover:underline">
+          {viewAll} <span aria-hidden="true">→</span>
         </Link>
       )}
     </div>
@@ -46,11 +53,11 @@ export function Thumb({ seed, label, ratio = "16 / 9" }: { seed: string; label?:
   return (
     <div
       aria-hidden="true"
-      className="relative w-full overflow-hidden rounded"
+      className="relative w-full overflow-hidden rounded-xl"
       style={{ aspectRatio: ratio, background: `linear-gradient(135deg, ${a}, ${b})` }}
     >
       {label && (
-        <span className="absolute bottom-2 left-2 rounded bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white backdrop-blur-sm">
+        <span className="absolute bottom-2 left-2 rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-white backdrop-blur-sm">
           {label}
         </span>
       )}

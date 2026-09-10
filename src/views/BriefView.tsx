@@ -2,7 +2,8 @@ import Link from "next/link";
 import { BriefArticle } from "@/components/BriefArticle";
 import { FeedBanner } from "@/components/FeedBanner";
 import { JsonLd } from "@/components/JsonLd";
-import { Card } from "@/components/ui";
+import { UpgradeBand } from "@/components/ui";
+import { PageShell, Panel } from "@/components/layout";
 import { buildBrief } from "@/lib/brief";
 import { loadBriefInputs } from "@/lib/briefs/load";
 import { composeSnapshot } from "@/lib/briefs/snapshot";
@@ -37,8 +38,8 @@ export async function BriefView({ locale }: { locale: Locale }) {
   if (!brief.paragraphs.length) {
     return (
       <>
-        <h1 className="text-[20px] font-semibold tracking-tight">{dict.brief.title}</h1>
-        <p className="mb-5 mt-1 text-[13px] text-ink-2">{dict.brief.subtitle}</p>
+        <h1 className="text-[28px] font-semibold tracking-tight">{dict.brief.title}</h1>
+        <p className="mb-6 mt-3 max-w-[66ch] text-[15px] leading-relaxed text-ink-2">{dict.brief.subtitle}</p>
         <FeedBanner dict={dict} />
       </>
     );
@@ -57,8 +58,20 @@ export async function BriefView({ locale }: { locale: Locale }) {
           publisher: dict.brand,
         })}
       />
-      <BriefArticle locale={locale} dict={dict} brief={brief} visuals={visuals} dateLabel={dateLabel} />
-      <BriefArchiveIndex locale={locale} />
+      <PageShell rail={<BriefArchiveIndex locale={locale} />}>
+        <BriefArticle locale={locale} dict={dict} brief={brief} visuals={visuals} dateLabel={dateLabel} />
+        {/* The brief itself is free and always will be. What Plus adds is the
+            same structure narrowed to the reader's own symbols, delivered. */}
+        <div className="mt-10">
+          <UpgradeBand
+            eyebrow={dict.pricing.plus}
+            title={dict.pricing.fAlertEmail}
+            body={dict.pricing.subtitle}
+            cta={dict.pricing.cta}
+            href={`/${locale}/${PATHS.pricing[locale]}`}
+          />
+        </div>
+      </PageShell>
     </>
   );
 }
@@ -90,25 +103,20 @@ async function BriefArchiveIndex({ locale }: { locale: Locale }) {
   });
 
   return (
-    <section className="mt-10" aria-labelledby="brief-archive-title">
-      <h2 id="brief-archive-title" className="text-[14px] font-semibold tracking-tight">
-        {dict.brief.archive}
-      </h2>
-      <Card className="mt-3 p-2">
-        <ul>
-          {days.map(({ day }) => (
-            <li key={day} className="border-b border-line last:border-0">
-              <Link
-                href={`/${locale}/${PATHS.brief[locale]}/${day}`}
-                className="block px-2 py-2 text-[13px] text-ink-2 hover:text-accent"
-              >
-                {/* Noon UTC keeps the label on the intended ICT calendar day. */}
-                {fmt.format(new Date(`${day}T12:00:00Z`))}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </section>
+    <Panel title={dict.brief.archive}>
+      <ul className="-my-1">
+        {days.map(({ day }) => (
+          <li key={day} className="border-t border-line first:border-0">
+            <Link
+              href={`/${locale}/${PATHS.brief[locale]}/${day}`}
+              className="block py-2.5 text-[13px] text-ink-2 hover:text-accent"
+            >
+              {/* Noon UTC keeps the label on the intended ICT calendar day. */}
+              {fmt.format(new Date(`${day}T12:00:00Z`))}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }

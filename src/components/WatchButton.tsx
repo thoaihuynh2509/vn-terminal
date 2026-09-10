@@ -133,7 +133,7 @@ export function WatchButton({
       aria-pressed={on}
       aria-label={on ? removeLabel : addLabel}
       title={on ? removeLabel : addLabel}
-      className={`grid h-6 w-6 place-items-center rounded text-[13px] leading-none hover:bg-surface-2 ${
+      className={`grid h-6 w-6 place-items-center rounded-lg text-[13px] leading-none hover:bg-surface-2 ${
         on ? "text-accent" : "text-muted"
       }`}
     >
