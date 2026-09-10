@@ -1,8 +1,4 @@
-"use client";
-
-import { useParams } from "next/navigation";
 import { Card, SkeletonBar } from "@/components/ui";
-import { DEFAULT_LOCALE, getDict, isLocale } from "@/lib/i18n";
 
 /**
  * The instant loading state for every route under /:locale.
@@ -13,17 +9,21 @@ import { DEFAULT_LOCALE, getDict, isLocale } from "@/lib/i18n";
  * the heatmap and the brief all share. Anything more specific would swap into
  * the wrong thing on four routes out of five.
  *
- * A Client Component only because `loading.tsx` receives no params and the
- * label has to be in the reader's language; `getDict` is already in the client
- * bundle via AskBox, so this costs no extra bytes.
+ * A SERVER component, deliberately. `loading.tsx` takes no params, so showing
+ * a translated "loading" label here would mean `"use client"` and `useParams`
+ * — and that adds a client boundary around every page in the app, whose
+ * hydration and swap cost the first interaction on the route: with a client
+ * version of this file in place, the board's own test suite could sort a
+ * board it had just loaded only in the first fraction of a second.
+ *
+ * Nothing here is announced, because there is nothing to say that the router
+ * does not already say: the App Router announces the new page on navigation.
+ * The bars are scaffolding, so they are hidden from assistive tech rather than
+ * described to it.
  */
 export default function Loading() {
-  const params = useParams<{ locale: string }>();
-  const locale = isLocale(params.locale) ? params.locale : DEFAULT_LOCALE;
-  const dict = getDict(locale);
-
   return (
-    <div role="status" aria-label={dict.common.loading}>
+    <div aria-hidden="true">
       {/* Heading block: eyebrow, title, standfirst. */}
       <div className="mb-8">
         <SkeletonBar ch={14} className="text-[11px]" />
