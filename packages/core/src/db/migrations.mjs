@@ -158,4 +158,47 @@ CREATE TABLE IF NOT EXISTS series_points (
 CREATE INDEX IF NOT EXISTS series_points_series_t_idx ON series_points (series, t DESC);
 `,
   },
+  {
+    // A settlement the owner takes back. Payment here is a static bank/MoMo QR
+    // with no gateway, so the owner confirms by hand hours later — and a
+    // mistaken confirmation needs an undo that is not a `failed`: a failed order
+    // may still be paid late, a revoked one never is.
+    //
+    // The constraint is dropped by name rather than recreated conditionally:
+    // `orders_status_check` was confirmed against production by query, and the
+    // production orders table is empty, so the rewritten CHECK cannot reject a
+    // row that already exists.
+    id: "009_order_revocation",
+    sql: `
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+ALTER TABLE orders ADD CONSTRAINT orders_status_check CHECK (status IN ('pending','paid','failed','revoked'));
+ALTER TABLE orders ADD COLUMN revoked_at timestamptz;
+`,
+  },
+  {
+    // One row per trading day, holding the brief exactly as it was composed
+    // that afternoon.
+    //
+    // The daily brief is built live from feeds that only publish "now": open
+    // yesterday's page and you get today's numbers under yesterday's headline.
+    // That is why /ban-tin was a single URL and the site had no indexable
+    // publishing history at all. Storing the composed document — both locales,
+    // and the few series its charts draw — turns each session into a permanent
+    // page.
+    //
+    // `day` is the primary key, so a cron re-run on a day already recorded
+    // updates it rather than publishing a second version of the same date.
+    // jsonb rather than columns: the brief's shape belongs to the composer, is
+    // versioned inside the document (`v`), and is never queried by field.
+    id: "010_briefs",
+    sql: `
+CREATE TABLE IF NOT EXISTS briefs (
+  day date PRIMARY KEY,
+  data jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS briefs_day_idx ON briefs (day DESC);
+`,
+  },
 ];

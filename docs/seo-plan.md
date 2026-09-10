@@ -19,8 +19,8 @@ Everything under "Yours" is not, and no amount of schema substitutes for it.
 
 ## The single biggest problem is the domain
 
-The site serves from **`vn-terminal.vercel.app`** (`packages/core/src/site.ts`,
-`DEFAULT_SITE_URL`, used whenever `NEXT_PUBLIC_SITE_URL` is unset).
+The site serves from **`vn-terminal.vercel.app`** (now `BRAND.defaultOrigin` in
+`packages/core/src/brand.ts`, used whenever `NEXT_PUBLIC_SITE_URL` is unset).
 
 Every canonical, every hreflang, every sitemap entry and every breadcrumb now points
 there. A `vercel.app` subdomain is shared infrastructure — it carries no independent
@@ -32,8 +32,23 @@ on their own domains.
 `NEXT_PUBLIC_SITE_URL`, redeploy, and verify in Search Console. Until then the
 technical work below is groundwork on rented land.
 
-`docs/deploy-checklist.md` §1 already lists this: *"`NEXT_PUBLIC_SITE_URL` — your real
-origin, e.g. `https://vnterminal.vn`"*.
+`docs/deploy-checklist.md` §1 already lists this. Two things now happen the moment
+you set it: every canonical, hreflang and sitemap entry follows it, and in
+production the old `*.vercel.app` host answers **308** to the domain
+(`canonicalRedirect`, `packages/core/src/routing.ts`). Without that redirect the
+two origins would go on serving identical pages and splitting the authority the
+domain is trying to accrue — the one duplication a canonical tag cannot fix,
+because the duplicate is a whole host. Preview deploys are exempt, and with the
+variable unset nothing redirects, so there is no loop before you buy anything.
+
+### The name is now one edit
+`packages/core/src/brand.ts` owns the product name, its ASCII slug and both
+taglines. It used to be seventeen string literals across the header, the page
+titles, four kinds of email, the MoMo payment memo and the AI system prompt.
+`brand.test.ts` scans every source file and fails if a literal reappears, so
+the rename stays a single edit. Worth doing before the domain, because the two
+decisions are the same decision: a name a Vietnamese investor would type
+(`cổ phiếu`, `biểu đồ`, `bảng giá`) is also the domain worth buying.
 
 ---
 
@@ -62,7 +77,7 @@ site for that specific question long before it outranks anything for "chứng kh
 
 ---
 
-## Fixed in this change
+## Fixed in the previous change
 
 The audit found the site's SEO foundations in good shape — canonicals are per-page
 and correct, hreflang is complete, the sitemap covers VN30 × both locales, robots is
@@ -90,19 +105,34 @@ Deliberately **not** included:
 
 ## Buildable next, in order
 
-| # | Work | Size | Why here |
+| # | Work | Size | Status |
 |---|---|---|---|
-| 1 | **Per-symbol prose + FAQ on chart pages** | M | The 60 URLs rank on markup alone today. `Explainer` already exists and gives boards a `FAQPage`; charts have no text at all. **Caveat below.** |
-| 2 | **Longer meta descriptions** | S | Currently 39–52 chars where ~150 is the target; Google rewrites short ones. Note `views/meta.ts` deliberately ties description to the visible subtitle so they cannot drift — so this means richer subtitles, not a second string. |
-| 3 | **`Dataset` schema on gold + breadth** | S | These are genuinely unique series. `Dataset` is how you tell Google you publish data rather than repeat it. |
-| 4 | **Core Web Vitals pass** | M | Never measured. `ChartPro` is 2,300 lines of client component on the money pages, and the panes are un-memoised (flagged by the perf lens). LCP/INP on a mid-range Android over 4G is the real test. |
-| 5 | **`ItemList` on the board** | S | Describes the price table as a ranked list rather than an opaque grid. |
-| 6 | **Internal linking** | S | Charts link out to the board, but the board's 30 rows do not each link to their chart with descriptive anchor text. That is 30 internal links per page, free. |
+| 1 | **Per-symbol prose + FAQ on chart pages** | M | **Done.** `packages/core/src/seo/narrative.ts` |
+| 2 | **Longer meta descriptions** | S | **Done.** Seven subtitles, both locales, 100–160 chars, pinned by a test |
+| 3 | **`Dataset` schema on gold + breadth** | S | Still open. These are genuinely unique series, and `Dataset` is how you tell Google you publish data rather than repeat it |
+| 4 | **Core Web Vitals pass** | M | Still open, still never measured. `ChartPro` is 2,300 lines of client component on the money pages, un-memoised. LCP/INP on a mid-range Android over 4G is the real test |
+| 5 | **`ItemList` on the board** | S | **Done.** `itemListLd`, emitted from `StocksBoard` |
+| 6 | **Internal linking** | S | **Done.** The board's 30 rows already linked to their charts; the anchors now carry a description instead of a bare ticker |
 
-**Caveat on #1.** Per-symbol prose must be generated from data the site actually has —
-price action, band, volume, foreign flow — never invented company descriptions. Thirty
-fabricated company essays would be both a quality penalty and, on a finance site, a
-credibility problem. If it cannot be honestly derived, it should not be written.
+### What #1 actually does, and what it refuses to do
+`symbolNarrative` is pure and takes only figures the page has already loaded: the
+last close and its change, position within the 250-session range, volume against
+its own 20-session average, the RSI reading, five sessions of foreign flow when
+the overlay already fetched it, and the next ex-rights date. A missing input
+drops its sentence rather than guessing it — with no bars there is no prose at
+all, only the stable FAQ.
+
+It writes **no company descriptions**. Thirty fabricated company essays would be
+a quality penalty and, on a finance site, a credibility problem; a test asserts
+no paragraph contains one. Two more rules worth keeping:
+
+- Every price sentence names the session it describes. The meta description,
+  which is built from the live board and has no timestamp to trust, names **no**
+  date at all — stamping the clock on it dated the previous close to today
+  whenever the session had not opened, and Google keeps that sentence for weeks.
+- Only the *stable* half of the FAQ reaches JSON-LD: exchange, band, index
+  membership, what the page offers. No prices, for the reason this file has
+  given from the start.
 
 ---
 
@@ -116,9 +146,21 @@ credibility problem. If it cannot be honestly derived, it should not be written.
 3. **Backlinks.** The one ranking factor no code change touches. For a VN finance
    tool: forum answers where the data actually helps, a free embeddable gold-premium
    widget, and being the source someone cites for foreign-flow numbers.
-4. **Publishing cadence.** `/ban-tin` already auto-composes a daily brief from real
-   figures. A dated, indexable archive of those — one URL per trading day — is the
-   cheapest content engine here, and it is already three-quarters built.
+4. ~~**Publishing cadence.**~~ **Built.** `/ban-tin/<YYYY-MM-DD>` is now a real page
+   per trading session, in both locales, in the sitemap, linked from the live
+   brief and carrying `NewsArticle` with the date it actually covers.
+
+   The mechanism matters: the brief is composed from feeds that only report
+   "now", so it could never be reconstructed after the fact — re-render
+   yesterday's page today and it silently shows today's numbers under
+   yesterday's headline. The daily cron therefore *snapshots* the composed
+   document (both locales, ~8 KB) into the `briefs` table before it does
+   anything else, including before it checks whether anyone is subscribed. A
+   site with no subscribers yet is exactly the site that most needs a year of
+   indexable pages.
+
+   Your part is only to keep `CRON_SECRET` and the database configured. A day
+   the cron misses has no page and nothing backfills it.
 
 ---
 

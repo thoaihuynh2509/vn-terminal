@@ -38,6 +38,7 @@ interface OrderRow {
   provider_ref: string | null;
   created_at: Date;
   paid_at: Date | null;
+  revoked_at: Date | null;
 }
 
 interface AlertRow {
@@ -100,6 +101,7 @@ const toOrder = (r: OrderRow): OrderRecord => ({
   providerRef: r.provider_ref,
   createdAt: r.created_at,
   paidAt: r.paid_at,
+  revokedAt: r.revoked_at,
 });
 
 const toAlert = (r: AlertRow): PriceAlert => ({
@@ -174,11 +176,14 @@ export async function createPostgresDb(url: string): Promise<Db> {
       async upsertByEmail(email) {
         // DO UPDATE rather than DO NOTHING so the row comes back either way,
         // and it touches only email so an existing tier is never reset.
-        const rows = await sql<UserRow[]>`
+        // `xmax = 0` is the ON CONFLICT implementation detail that tells the two
+        // apart: an inserted row has no updating transaction stamped on it, an
+        // upserted one does. There is no other way to ask which branch ran.
+        const rows = await sql<(UserRow & { created: boolean })[]>`
           INSERT INTO users (email, referral_code) VALUES (${email.toLowerCase()}, ${newReferralCode()})
           ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
-          RETURNING id, email, tier, tier_expires_at, renewal_reminded_at, referral_code, referred_by, referral_rewarded_at, marketing_opt_out, teaser_sent_at, created_at`;
-        return toUser(rows[0]);
+          RETURNING id, email, tier, tier_expires_at, renewal_reminded_at, referral_code, referred_by, referral_rewarded_at, marketing_opt_out, teaser_sent_at, created_at, (xmax = 0) AS created`;
+        return { ...toUser(rows[0]), created: rows[0].created };
       },
 
       async setTier(email, tier) {
@@ -207,6 +212,27 @@ export async function createPostgresDb(url: string): Promise<Db> {
            WHERE email = ${email.toLowerCase()}
           RETURNING id, email, tier, tier_expires_at, renewal_reminded_at, referral_code, referred_by, referral_rewarded_at, marketing_opt_out, teaser_sent_at, created_at`;
         return rows[0] ? toUser(rows[0]) : null;
+      },
+
+      async retract(email, tier, days, now) {
+        // Subtract the term the order sold, in one UPDATE, and drop to free when
+        // nothing is left. Guarded on the tier so a later upgrade is not clipped
+        // by an older order's refund, and on a non-null end so a comped account
+        // — never bought — cannot be shortened.
+        const rows = await sql<UserRow[]>`
+          UPDATE users
+             SET tier = CASE WHEN tier_expires_at - ${days} * interval '1 day' <= ${now} THEN 'free' ELSE tier END,
+                 tier_expires_at = CASE WHEN tier_expires_at - ${days} * interval '1 day' <= ${now}
+                                        THEN NULL ELSE tier_expires_at - ${days} * interval '1 day' END
+           WHERE email = ${email.toLowerCase()} AND tier = ${tier} AND tier_expires_at IS NOT NULL
+          RETURNING id, email, tier, tier_expires_at, renewal_reminded_at, referral_code, referred_by, referral_rewarded_at, marketing_opt_out, teaser_sent_at, created_at`;
+        if (rows[0]) return toUser(rows[0]);
+        // Nothing to take back: hand the row back unchanged rather than null,
+        // which the contract reserves for an account that does not exist.
+        const cur = await sql<UserRow[]>`
+          SELECT id, email, tier, tier_expires_at, renewal_reminded_at, referral_code, referred_by, referral_rewarded_at, marketing_opt_out, teaser_sent_at, created_at
+          FROM users WHERE email = ${email.toLowerCase()}`;
+        return cur[0] ? toUser(cur[0]) : null;
       },
 
       async markRenewalReminded(email, now) {
@@ -275,31 +301,50 @@ export async function createPostgresDb(url: string): Promise<Db> {
           INSERT INTO orders (id, email, tier, plan, amount, status, provider, created_at)
           VALUES (${o.id}, ${o.email.toLowerCase()}, ${o.tier}, ${o.plan}, ${o.amount},
                   'pending', ${o.provider}, ${now})
-          RETURNING id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at`;
+          RETURNING id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at, revoked_at`;
         return toOrder(rows[0]);
       },
 
       async get(id) {
         const rows = await sql<OrderRow[]>`
-          SELECT id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at
+          SELECT id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at, revoked_at
           FROM orders WHERE id = ${id}`;
         return rows[0] ? toOrder(rows[0]) : null;
       },
 
       async recent(limit) {
         const rows = await sql<OrderRow[]>`
-          SELECT id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at
+          SELECT id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at, revoked_at
           FROM orders ORDER BY created_at DESC LIMIT ${Math.max(0, limit)}`;
         return rows.map(toOrder);
       },
 
-      // The WHERE status = 'pending' is the idempotency lock: a replayed IPN
-      // updates zero rows and returns null, so the caller grants only once.
+      // The status predicate is the idempotency lock: a replayed IPN updates
+      // zero rows and returns null, so the caller grants only once. An explicit
+      // ALLOW-list, never a deny-list — 'failed' is claimable because a transfer
+      // can land after the abandonment sweep gave up, 'revoked' never is.
       async markPaid(id, providerRef, now) {
         const rows = await sql<OrderRow[]>`
           UPDATE orders SET status = 'paid', provider_ref = ${providerRef}, paid_at = ${now}
-           WHERE id = ${id} AND status = 'pending'
-          RETURNING id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at`;
+           WHERE id = ${id} AND status IN ('pending','failed')
+          RETURNING id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at, revoked_at`;
+        return rows[0] ? toOrder(rows[0]) : null;
+      },
+
+      async expirePending(createdBefore) {
+        const res = await sql`
+          UPDATE orders SET status = 'failed'
+           WHERE status = 'pending' AND created_at < ${createdBefore}`;
+        return res.count;
+      },
+
+      // The mirror of markPaid: only 'paid' can be taken back, so a replayed
+      // revoke updates zero rows and the entitlement is retracted exactly once.
+      async markRevoked(id, now) {
+        const rows = await sql<OrderRow[]>`
+          UPDATE orders SET status = 'revoked', revoked_at = ${now}
+           WHERE id = ${id} AND status = 'paid'
+          RETURNING id, email, tier, plan, amount, status, provider, provider_ref, created_at, paid_at, revoked_at`;
         return rows[0] ? toOrder(rows[0]) : null;
       },
     },
@@ -480,6 +525,38 @@ export async function createPostgresDb(url: string): Promise<Db> {
         const [row] = await sql<{ t: string }[]>`
           SELECT min(t)::text AS t FROM series_points WHERE series = ${series}`;
         return row?.t ? Number(row.t) : null;
+      },
+    },
+
+    briefs: {
+      async put(day, data, now) {
+        // `created_at` is left alone on conflict: the day a brief was first
+        // published is what `datePublished` claims, and a re-run hours later
+        // must not move it.
+        await sql`
+          INSERT INTO briefs (day, data, created_at, updated_at)
+          VALUES (${day}::date, ${sql.json(data as never)}, ${now}, ${now})
+          ON CONFLICT (day) DO UPDATE
+            SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at`;
+      },
+
+      async get(day) {
+        const [row] = await sql<{ day: string; data: unknown; created_at: Date; updated_at: Date }[]>`
+          SELECT to_char(day, 'YYYY-MM-DD') AS day, data, created_at, updated_at
+          FROM briefs WHERE day = ${day}::date`;
+        return row
+          ? { day: row.day, data: row.data, createdAt: row.created_at, updatedAt: row.updated_at }
+          : null;
+      },
+
+      async recent(limit) {
+        // The document is deliberately not selected: an index and a sitemap
+        // need dates, and a year of briefs is megabytes of jsonb.
+        const rows = await sql<{ day: string; updated_at: Date }[]>`
+          SELECT to_char(day, 'YYYY-MM-DD') AS day, updated_at
+          FROM briefs ORDER BY day DESC
+          LIMIT ${Math.max(1, Math.min(1000, Math.floor(limit)))}`;
+        return rows.map((r) => ({ day: r.day, updatedAt: r.updated_at }));
       },
     },
   };

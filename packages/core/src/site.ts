@@ -1,3 +1,5 @@
+import { BRAND } from "./brand.ts";
+
 /**
  * Canonical site origin for metadata, robots and sitemap.
  *
@@ -9,7 +11,7 @@
  * whitespace, or an unparseable value as "unset" and fall back to the
  * production origin, so a bad env var can never crash a render.
  */
-const DEFAULT_SITE_URL = "https://vn-terminal.vercel.app";
+const DEFAULT_SITE_URL = BRAND.defaultOrigin;
 
 export function siteUrl(): string {
   const raw = (process.env.NEXT_PUBLIC_SITE_URL || "").trim().replace(/\/+$/, "");

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, encodeSession, cookieOptions, sessionsAvailable, SESSION_COOKIE } from "@/lib/auth/session";
-import { resolveTier, subscriptionExp } from "@/lib/auth/provider";
+import { remintSession } from "@/lib/auth/remint";
+import { subscriptionExp } from "@/lib/auth/provider";
 import { dbAvailable, getDb, DbUnavailableError } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -31,13 +32,8 @@ export async function POST() {
     }
 
     const exp = subscriptionExp(user);
-    const next = {
-      email: user.email,
-      tier: resolveTier(user),
-      read: session.read, // keep the free-article meter
-      iat: Math.floor(Date.now() / 1000),
-      ...(exp !== undefined ? { exp } : {}),
-    };
+    // Both meters ride across: the free-article list and the free-AI asks.
+    const next = remintSession(user, { read: session.read, asks: session.asks }, Math.floor(Date.now() / 1000));
     const res = NextResponse.json(
       { ok: true, data: { tier: next.tier, exp: exp ?? null } },
       { headers: { "Cache-Control": "private, no-store" } },

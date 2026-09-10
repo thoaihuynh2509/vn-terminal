@@ -740,6 +740,386 @@ function contract(driver: string, makeDb: () => Promise<Db>) {
     assert.equal(downgraded?.tierExpiresAt, null);
   });
 
+  // ── new-account signal (A3) ──────────────────────────────────────────────
+  test(`[${driver}] the first upsert of an address reports it as created`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    assert.equal((await db.users.upsertByEmail(email)).created, true, "a sign-up is a conversion");
+    assert.equal((await db.users.upsertByEmail(email)).created, false, "a returning reader is not a new account");
+  });
+
+  // ── abandoned checkouts (A5) ─────────────────────────────────────────────
+  //
+  // Fixed instants far from every other fixture, and each count assertion
+  // drains first, so the number is about THIS row and not about pending orders
+  // an earlier test left in a shared postgres database.
+  const E0 = new Date("2010-01-01T00:00:00.000Z");
+  const eAt = (ms: number) => new Date(E0.getTime() + ms);
+
+  test(`[${driver}] a pending order older than the cutoff is failed and counted`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    const id = `ord-${uniq()}`;
+    await db.orders.expirePending(eAt(minutes(60)));
+    await db.orders.create({ id, email, tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, E0);
+
+    assert.equal(await db.orders.expirePending(eAt(minutes(60))), 1);
+    assert.equal((await db.orders.get(id))?.status, "failed");
+  });
+
+  test(`[${driver}] a second sweep of the same window expires nothing`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.orders.create({ id: `ord-${uniq()}`, email, tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, E0);
+    await db.orders.expirePending(eAt(minutes(60)));
+
+    assert.equal(await db.orders.expirePending(eAt(minutes(60))), 0, "the sweep is idempotent");
+  });
+
+  test(`[${driver}] a pending order newer than the cutoff is left alone`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, eAt(minutes(120)));
+
+    await db.orders.expirePending(eAt(minutes(60)));
+    assert.equal((await db.orders.get(id))?.status, "pending", "the buyer may still be paying");
+  });
+
+  test(`[${driver}] an order created exactly at the cutoff is not expired`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, eAt(minutes(60)));
+
+    await db.orders.expirePending(eAt(minutes(60)));
+    assert.equal((await db.orders.get(id))?.status, "pending", "the boundary is strictly older-than");
+  });
+
+  test(`[${driver}] a paid order is never expired, however old it is`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "pro", plan: "annual", amount: 1990000, provider: "momo" }, E0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, eAt(minutes(1)));
+
+    await db.orders.expirePending(eAt(minutes(60)));
+    assert.equal((await db.orders.get(id))?.status, "paid", "a settled sale is history, not an abandonment");
+  });
+
+  // ── revoke (A6) ──────────────────────────────────────────────────────────
+  test(`[${driver}] a paid order is revoked exactly once`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "pro", plan: "monthly", amount: 199000, provider: "momo" }, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+
+    const first = await db.orders.markRevoked(id, at(minutes(2)));
+    assert.equal(first?.status, "revoked");
+    assert.equal(await db.orders.markRevoked(id, at(minutes(3))), null, "a replayed revoke takes nothing more");
+  });
+
+  test(`[${driver}] a revoke records when it happened`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "pro", plan: "monthly", amount: 199000, provider: "momo" }, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+
+    await db.orders.markRevoked(id, at(minutes(2)));
+    assert.deepEqual((await db.orders.get(id))?.revokedAt, at(minutes(2)));
+  });
+
+  test(`[${driver}] a pending order cannot be revoked`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "pro", plan: "monthly", amount: 199000, provider: "momo" }, T0);
+
+    assert.equal(await db.orders.markRevoked(id, at(minutes(1))), null, "there is nothing to take back yet");
+    assert.equal((await db.orders.get(id))?.status, "pending");
+  });
+
+  test(`[${driver}] an IPN replayed after a revoke grants nothing`, async () => {
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "pro", plan: "monthly", amount: 199000, provider: "momo" }, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+    await db.orders.markRevoked(id, at(minutes(2)));
+
+    assert.equal(await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(3))), null);
+    assert.equal((await db.orders.get(id))?.status, "revoked", "a refund is not undone by the provider");
+  });
+
+  test(`[${driver}] an expired order that is paid late is still honoured`, async () => {
+    // The sweep only says we stopped waiting. Money that arrives afterwards is
+    // still money, so 'failed' remains claimable while 'revoked' never is.
+    const db = await makeDb();
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, E0);
+    await db.orders.expirePending(eAt(minutes(60)));
+
+    const claimed = await db.orders.markPaid(id, `trans-${uniq()}`, eAt(minutes(90)));
+    assert.equal(claimed?.status, "paid");
+  });
+
+  // ── retract (A6) ─────────────────────────────────────────────────────────
+  //
+  // Real-time offsets, not the fixture clock: `grant` stacks from Date.now(),
+  // so a term built on T0 would already be in the past. `later` breaks the tie
+  // at the exact instant a fully retracted term ends.
+  test(`[${driver}] retracting the only term drops the reader to free`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    await db.users.grant(email, "plus", new Date(Date.now() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 30, new Date(Date.now() + 60_000));
+    assert.equal(after?.tier, "free");
+    assert.equal(after?.tierExpiresAt, null, "a free row carries no dangling expiry");
+  });
+
+  test(`[${driver}] retracting one month of a stacked renewal keeps the tier`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    const now = new Date();
+    await db.users.grant(email, "plus", new Date(now.getTime() + 30 * 86_400_000));
+    await db.users.grant(email, "plus", new Date(now.getTime() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 30, now);
+    assert.equal(after?.tier, "plus", "the month they still hold is still theirs");
+    const daysLeft = (after!.tierExpiresAt!.getTime() - now.getTime()) / 86_400_000;
+    assert.ok(Math.abs(daysLeft - 30) < 1, `~30 days remain, got ${daysLeft}`);
+  });
+
+  test(`[${driver}] retracting a tier the reader does not hold changes nothing`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    const granted = await db.users.grant(email, "pro", new Date(Date.now() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 30, new Date());
+    assert.equal(after?.tier, "pro");
+    assert.deepEqual(after?.tierExpiresAt, granted?.tierExpiresAt);
+  });
+
+  test(`[${driver}] retracting never shortens a comped account with no end`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    await db.users.setTier(email, "plus");
+
+    const after = await db.users.retract(email, "plus", 30, new Date());
+    assert.equal(after?.tier, "plus", "a comped tier was never bought, so it cannot be refunded");
+    assert.equal(after?.tierExpiresAt, null);
+  });
+
+  // ── the settle state machine, exhaustively (A6) ──────────────────────────
+  //
+  // `markPaid` is the allow-list that decides whether money grants a tier, so
+  // every stored status is asserted against it, not just the happy path.
+  const anOrder = async (db: Db, createdAt: Date) => {
+    const id = `ord-${uniq()}`;
+    await db.orders.create({ id, email: anEmail(), tier: "plus", plan: "monthly", amount: 99000, provider: "momo" }, createdAt);
+    return id;
+  };
+
+  test(`[${driver}] markPaid claims a pending order`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, T0);
+    assert.equal((await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1))))?.status, "paid");
+  });
+
+  test(`[${driver}] markPaid claims an order the sweep gave up on`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, E0);
+    await db.orders.expirePending(eAt(minutes(60)));
+    assert.equal((await db.orders.get(id))?.status, "failed", "precondition: the sweep failed it");
+
+    assert.equal((await db.orders.markPaid(id, `trans-${uniq()}`, eAt(minutes(90))))?.status, "paid");
+  });
+
+  test(`[${driver}] markPaid refuses an order that is already paid`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+    assert.equal(await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(2))), null);
+  });
+
+  test(`[${driver}] markPaid refuses an order that was revoked`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+    await db.orders.markRevoked(id, at(minutes(2)));
+    assert.equal(await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(3))), null);
+  });
+
+  test(`[${driver}] markPaid refuses an id that does not exist`, async () => {
+    const db = await makeDb();
+    assert.equal(await db.orders.markPaid(`ord-${uniq()}`, `trans-${uniq()}`, T0), null);
+  });
+
+  test(`[${driver}] markRevoked refuses every status but paid`, async () => {
+    const db = await makeDb();
+    const pending = await anOrder(db, T0);
+    const failed = await anOrder(db, E0);
+    await db.orders.expirePending(eAt(minutes(60)));
+
+    assert.equal(await db.orders.markRevoked(pending, at(minutes(1))), null, "pending");
+    assert.equal(await db.orders.markRevoked(failed, at(minutes(1))), null, "failed");
+    assert.equal(await db.orders.markRevoked(`ord-${uniq()}`, at(minutes(1))), null, "absent");
+  });
+
+  test(`[${driver}] a late transfer after a sweep still claims the order once`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, E0);
+    await db.orders.expirePending(eAt(minutes(60)));
+
+    assert.notEqual(await db.orders.markPaid(id, `trans-${uniq()}`, eAt(minutes(90))), null, "the money arrived");
+    assert.equal(await db.orders.markPaid(id, `trans-${uniq()}`, eAt(minutes(91))), null, "and it arrives only once");
+  });
+
+  test(`[${driver}] an unrevoked order carries no revocation timestamp`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+    assert.equal((await db.orders.get(id))?.revokedAt, null);
+  });
+
+  test(`[${driver}] the sweep moves the stale pending row and nothing else`, async () => {
+    const db = await makeDb();
+    const cutoff = new Date("2011-01-01T12:00:00.000Z");
+    const before = new Date("2011-01-01T00:00:00.000Z");
+    const after = new Date("2011-01-02T00:00:00.000Z");
+    await db.orders.expirePending(cutoff); // drain, so the count is about these four
+
+    const stalePending = await anOrder(db, before);
+    const freshPending = await anOrder(db, after);
+    const stalePaid = await anOrder(db, before);
+    const staleRevoked = await anOrder(db, before);
+    await db.orders.markPaid(stalePaid, `trans-${uniq()}`, before);
+    await db.orders.markPaid(staleRevoked, `trans-${uniq()}`, before);
+    await db.orders.markRevoked(staleRevoked, before);
+
+    assert.equal(await db.orders.expirePending(cutoff), 1);
+    assert.deepEqual(
+      await Promise.all([stalePending, freshPending, stalePaid, staleRevoked].map(async (id) => (await db.orders.get(id))?.status)),
+      ["failed", "pending", "paid", "revoked"],
+    );
+  });
+
+  test(`[${driver}] exactly one of 20 concurrent IPNs claims the order`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, T0);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)))),
+    );
+    assert.equal(results.filter((r) => r !== null).length, 1, "a burst of retries grants one tier, not twenty");
+  });
+
+  test(`[${driver}] exactly one of 20 concurrent revokes takes the term back`, async () => {
+    const db = await makeDb();
+    const id = await anOrder(db, T0);
+    await db.orders.markPaid(id, `trans-${uniq()}`, at(minutes(1)));
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => db.orders.markRevoked(id, at(minutes(2)))),
+    );
+    assert.equal(results.filter((r) => r !== null).length, 1, "a double-clicked admin button refunds once");
+  });
+
+  // ── retract date maths (A6) ──────────────────────────────────────────────
+  test(`[${driver}] retracting more days than remain drops the reader to free`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    await db.users.grant(email, "plus", new Date(Date.now() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 365, new Date());
+    assert.equal(after?.tier, "free", "a year taken off a month cannot leave a negative term");
+    assert.equal(after?.tierExpiresAt, null);
+  });
+
+  test(`[${driver}] a term that lands exactly on now is over, not a moment of access`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    const granted = await db.users.grant(email, "plus", new Date(Date.now() + 30 * 86_400_000));
+    // The exact tie: retract at the instant the shortened term would end.
+    const tie = new Date(granted!.tierExpiresAt!.getTime() - 30 * 86_400_000);
+
+    const after = await db.users.retract(email, "plus", 30, tie);
+    assert.equal(after?.tier, "free");
+    assert.equal(after?.tierExpiresAt, null);
+  });
+
+  test(`[${driver}] retracting an annual order takes back all 365 days`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    const now = new Date();
+    await db.users.grant(email, "pro", new Date(now.getTime() + 365 * 86_400_000));
+    await db.users.grant(email, "pro", new Date(now.getTime() + 365 * 86_400_000));
+
+    const after = await db.users.retract(email, "pro", 365, now);
+    assert.equal(after?.tier, "pro", "one of the two years is still theirs");
+    const daysLeft = (after!.tierExpiresAt!.getTime() - now.getTime()) / 86_400_000;
+    assert.ok(Math.abs(daysLeft - 365) < 1, `~365 days remain, got ${daysLeft}`);
+  });
+
+  test(`[${driver}] retracting from a term that already lapsed leaves a clean free row`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    await db.users.grant(email, "plus", new Date(Date.now() - 5 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 30, new Date());
+    assert.equal(after?.tier, "free");
+    assert.equal(after?.tierExpiresAt, null, "no dangling expiry is left behind");
+  });
+
+  test(`[${driver}] retracting nothing at all leaves the term exactly as it was`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    const granted = await db.users.grant(email, "plus", new Date(Date.now() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 0, new Date());
+    assert.equal(after?.tier, "plus");
+    assert.deepEqual(after?.tierExpiresAt, granted?.tierExpiresAt);
+  });
+
+  test(`[${driver}] retracting from an account that does not exist is null, not a crash`, async () => {
+    const db = await makeDb();
+    assert.equal(await db.users.retract(anEmail(), "plus", 30, new Date()), null);
+  });
+
+  test(`[${driver}] retracting is case-insensitive about the address`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    await db.users.upsertByEmail(email);
+    await db.users.grant(email, "plus", new Date(Date.now() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email.toUpperCase(), "plus", 365, new Date());
+    assert.equal(after?.tier, "free", "an address is one account however it is typed");
+  });
+
+  test(`[${driver}] retracting never touches the referral ledger`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    const u = await db.users.upsertByEmail(email);
+    await db.users.markReferralRewarded(email, new Date());
+    await db.users.grant(email, "plus", new Date(Date.now() + 30 * 86_400_000));
+
+    const after = await db.users.retract(email, "plus", 365, new Date());
+    assert.ok(after?.referralRewardedAt, "un-marking it would let a re-purchase pay twice");
+    assert.equal(after?.referralCode, u.referralCode);
+  });
+
+  test(`[${driver}] upserting a returning reader reports created false and keeps their id`, async () => {
+    const db = await makeDb();
+    const email = anEmail();
+    const first = await db.users.upsertByEmail(email);
+    const again = await db.users.upsertByEmail(email.toUpperCase());
+    assert.equal(again.created, false, "a differently-typed address is the same account");
+    assert.equal(again.id, first.id);
+  });
+
   // ── recorded series (P2-17) ───────────────────────────────────────────────
   test(`[${driver}] recorded points come back in ascending time`, async () => {
     const db = await makeDb();
@@ -771,6 +1151,70 @@ function contract(driver: string, makeDb: () => Promise<Db>) {
     await db.series.append(b, [{ t: 100, o: 2, h: 2, l: 2, c: 2 }]);
     assert.equal((await db.series.range(a, 10))[0].c, 1);
     assert.equal((await db.series.range(b, 10))[0].c, 2);
+  });
+
+  // ── archived briefs (one URL per trading day) ─────────────────────────────
+
+  test(`[${driver}] a brief is stored and read back as the document it was`, async () => {
+    const db = await makeDb();
+    const day = "2026-09-10";
+    const doc = { v: 1, day, vi: { headline: "Chỉ số tăng" }, visuals: { board: [{ symbol: "VNM" }] } };
+    await db.briefs.put(day, doc, T0);
+
+    const row = await db.briefs.get(day);
+    assert.ok(row);
+    assert.equal(row.day, day);
+    // jsonb round-trips as a structure, not as a string.
+    assert.deepEqual(row.data, doc);
+  });
+
+  test(`[${driver}] a day with no brief is absent, not an error`, async () => {
+    const db = await makeDb();
+    assert.equal(await db.briefs.get("1999-01-04"), null);
+  });
+
+  test(`[${driver}] re-running the cron republishes the day, never duplicates it`, async () => {
+    // The cron can fire twice — a retry, a manual trigger. Two rows for one
+    // date would mean two pages claiming to be the same session.
+    const db = await makeDb();
+    const day = "2026-09-11";
+    await db.briefs.put(day, { v: 1, headline: "first" }, T0);
+    await db.briefs.put(day, { v: 1, headline: "second" }, at(minutes(30)));
+
+    const row = await db.briefs.get(day);
+    assert.deepEqual(row?.data, { v: 1, headline: "second" });
+
+    const listed = (await db.briefs.recent(50)).filter((b) => b.day === day);
+    assert.equal(listed.length, 1);
+  });
+
+  test(`[${driver}] republishing moves updated_at but not the publication date`, async () => {
+    const db = await makeDb();
+    const day = "2026-09-14";
+    await db.briefs.put(day, { v: 1 }, T0);
+    const first = await db.briefs.get(day);
+    await db.briefs.put(day, { v: 2 }, at(minutes(90)));
+    const second = await db.briefs.get(day);
+
+    assert.ok(second);
+    // datePublished is a claim about when the edition came out; a re-run hours
+    // later must not restate it.
+    assert.equal(second.createdAt.getTime(), first?.createdAt.getTime());
+    assert.ok(second.updatedAt.getTime() > (first?.updatedAt.getTime() ?? 0));
+  });
+
+  test(`[${driver}] recent briefs come back newest first, and honour the limit`, async () => {
+    const db = await makeDb();
+    const days = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"];
+    for (const day of days) await db.briefs.put(day, { v: 1, day }, T0);
+
+    const all = (await db.briefs.recent(100)).map((b) => b.day).filter((d) => days.includes(d));
+    assert.deepEqual(all, ["2026-10-08", "2026-10-07", "2026-10-06", "2026-10-05"]);
+
+    // The index and the sitemap both take the most recent N.
+    const two = await db.briefs.recent(2);
+    assert.equal(two.length, 2);
+    assert.equal(two[0].day, "2026-10-08");
   });
 
   test(`[${driver}] a limit keeps the NEWEST points, not the oldest`, async () => {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isAdminPath, localeSegmentOk } from "./routing.ts";
+import { canonicalRedirect, isAdminPath, localeSegmentOk } from "./routing.ts";
 
 test("a segment spelled for its own locale is fine", () => {
   assert.ok(localeSegmentOk("/vi/vang"));
@@ -59,4 +59,46 @@ test("nothing else is the admin path", () => {
 test("trailing slashes do not change the decision", () => {
   assert.ok(isAdminPath("/vi/admin/"));
   assert.ok(!localeSegmentOk("/vi/gold/"));
+});
+
+const DOMAIN = "https://cophieuviet.vn";
+
+test("the old vercel host redirects to the domain in production", () => {
+  assert.equal(canonicalRedirect("vn-terminal.vercel.app", DOMAIN, "production"), "cophieuviet.vn");
+});
+
+test("a preview deploy is never dragged to production", () => {
+  // The whole point of a preview is to serve something the live site does not.
+  assert.equal(canonicalRedirect("vn-terminal-git-x.vercel.app", DOMAIN, "preview"), null);
+  assert.equal(canonicalRedirect("vn-terminal.vercel.app", DOMAIN, undefined), null);
+  assert.equal(canonicalRedirect("vn-terminal.vercel.app", DOMAIN, "development"), null);
+});
+
+test("with no domain configured the host redirects to itself, so it does not", () => {
+  // Before NEXT_PUBLIC_SITE_URL is set, siteUrl() IS the vercel origin. A
+  // redirect here would be an infinite loop on every page of the live site.
+  assert.equal(
+    canonicalRedirect("vn-terminal.vercel.app", "https://vn-terminal.vercel.app", "production"),
+    null,
+  );
+  assert.equal(
+    canonicalRedirect("VN-Terminal.Vercel.App", "https://vn-terminal.vercel.app", "production"),
+    null,
+  );
+});
+
+test("a request already on the domain is left alone", () => {
+  assert.equal(canonicalRedirect("cophieuviet.vn", DOMAIN, "production"), null);
+  // Not a general canonicaliser: a second custom domain is somebody's decision,
+  // not a mistake to correct.
+  assert.equal(canonicalRedirect("staging.example.com", DOMAIN, "production"), null);
+});
+
+test("a missing or unusable value never produces a redirect", () => {
+  assert.equal(canonicalRedirect(null, DOMAIN, "production"), null);
+  assert.equal(canonicalRedirect("vn-terminal.vercel.app", "not a url", "production"), null);
+});
+
+test("a port on the incoming host does not defeat the comparison", () => {
+  assert.equal(canonicalRedirect("vn-terminal.vercel.app:443", DOMAIN, "production"), "cophieuviet.vn");
 });

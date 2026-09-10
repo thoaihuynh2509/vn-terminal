@@ -1,6 +1,6 @@
 # Monetization & retention
 
-Goal: turn VN Terminal into a recurring income source — readers subscribe to a
+Goal: turn the product (named in `packages/core/src/brand.ts`) into a recurring income source — readers subscribe to a
 paid tier (VIP) and keep coming back. Payment provider chosen: **MoMo**. Prices
 are **monthly + annual**, editable in one file (`src/lib/billing/plans.ts`).
 
@@ -104,4 +104,6 @@ webhook `/api/billing/sepay/webhook`. Referral reward days:
 
 Not built:
 
-- Admin controls beyond read-only reconciliation (refunds, manual grants).
+- Manual grants from the admin view. Settlement controls ARE built: the owner
+  confirms a transfer by hand and can revoke an order confirmed by mistake,
+  which takes the tier back (`/api/billing/revoke`).

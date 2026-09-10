@@ -21,6 +21,11 @@ export function sectionMetadata(
   copy: { title: string; description: string },
   /** Trailing segment for a detail page, e.g. "/VNM" under the terminal. */
   rest = "",
+  /**
+   * A dated edition rather than a standing page. Optional, because every other
+   * section shares this function and must keep `type: "website"`.
+   */
+  article?: { publishedTime: string },
 ): Metadata {
   const path = (l: Locale) => `/${l}/${PATHS[key][l]}${rest}`;
   return {
@@ -33,8 +38,10 @@ export function sectionMetadata(
     openGraph: {
       title: copy.title,
       description: copy.description,
-      type: "website",
       url: path(locale),
+      ...(article
+        ? { type: "article" as const, publishedTime: article.publishedTime }
+        : { type: "website" as const }),
     },
   };
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { breadcrumbLd, organizationLd, symbolTrail, websiteLd } from "./seo.ts";
+import { breadcrumbLd, itemListLd, organizationLd, symbolTrail, websiteLd } from "./seo.ts";
 import { LOCALES } from "./i18n/index.ts";
 
 const SITE = "https://example.test";
@@ -64,4 +64,33 @@ test("every locale produces a complete trail", () => {
   for (const locale of LOCALES) {
     assert.equal(symbolTrail(locale, "FPT", "H", "B").every((c) => c.path.startsWith(`/${locale}/`) || c.path === `/${locale}`), true);
   }
+});
+
+test("the board's ItemList numbers its rows and points at real chart URLs", () => {
+  const ld = itemListLd(SITE, [
+    { name: "VNM — biểu đồ giá cổ phiếu", path: "/vi/bieu-do/VNM" },
+    { name: "HPG — biểu đồ giá cổ phiếu", path: "/vi/bieu-do/HPG" },
+  ]);
+  assert.equal(ld["@type"], "ItemList");
+  assert.equal(ld.numberOfItems, 2);
+  const items = ld.itemListElement as { position: number; url: string; name: string }[];
+  assert.deepEqual(items.map((i) => i.position), [1, 2]);
+  assert.equal(items[0].url, `${SITE}/vi/bieu-do/VNM`);
+  assert.equal(items[1].name, "HPG — biểu đồ giá cổ phiếu");
+});
+
+test("the ItemList states no price", () => {
+  // Same rule the rest of this file follows: the feed may lag, so a number
+  // handed to a machine that will repeat it is a liability, not a rich result.
+  const ld = itemListLd(SITE, [{ name: "VNM", path: "/vi/bieu-do/VNM" }]);
+  const dumped = JSON.stringify(ld);
+  for (const forbidden of ["price", "offers", "Offer", "priceCurrency"]) {
+    assert.equal(dumped.includes(forbidden), false, `ItemList leaked ${forbidden}`);
+  }
+});
+
+test("an empty board still produces a well-formed, empty list", () => {
+  const ld = itemListLd(SITE, []);
+  assert.equal(ld.numberOfItems, 0);
+  assert.deepEqual(ld.itemListElement, []);
 });

@@ -8,6 +8,7 @@
  * board so an alert reaches a subscriber who has the page closed — the single
  * biggest reason to come back, and the clearest thing a paid tier sells.
  */
+import { BRAND } from "../brand.ts";
 import {
   alertKind, indicatorKey, observationFor, shouldFire,
   type AlertObservation, type PriceAlert,
@@ -115,8 +116,8 @@ export function alertEmail(
       : `🔔 ${fired.length} price alerts triggered`;
   const head = vi ? "Cảnh báo giá của bạn vừa kích hoạt:" : "Your price alerts just triggered:";
   const foot = vi
-    ? "Mở VN Terminal để xem chi tiết. Cảnh báo chỉ kích hoạt một lần; đặt lại trong ứng dụng."
-    : "Open VN Terminal for details. Each alert fires once; re-arm it in the app.";
+    ? `Mở ${BRAND.name} để xem chi tiết. Cảnh báo chỉ kích hoạt một lần; đặt lại trong ứng dụng.`
+    : `Open ${BRAND.name} for details. Each alert fires once; re-arm it in the app.`;
   return { subject, text: `${head}\n\n${lines.join("\n")}\n\n${foot}\n` };
 }
 
@@ -164,8 +165,8 @@ export function renewalEmail(
   }).format(expiresAt);
   const subject = vi ? `Gói ${name} của bạn sắp hết hạn` : `Your ${name} plan is ending soon`;
   const text = vi
-    ? `Gói ${name} của bạn hết hạn ngày ${date}.\n\nGia hạn trong VN Terminal để không mất cảnh báo giá, trợ lý AI và các công cụ biểu đồ.\n`
-    : `Your ${name} plan ends on ${date}.\n\nRenew in VN Terminal to keep your price alerts, the AI assistant and the charting tools.\n`;
+    ? `Gói ${name} của bạn hết hạn ngày ${date}.\n\nGia hạn trong ${BRAND.name} để không mất cảnh báo giá, trợ lý AI và các công cụ biểu đồ.\n`
+    : `Your ${name} plan ends on ${date}.\n\nRenew in ${BRAND.name} to keep your price alerts, the AI assistant and the charting tools.\n`;
   return { subject, text };
 }
 
@@ -224,8 +225,8 @@ export function teaserEmail(
       : "Unlock advanced charts, price alerts and the AI assistant");
 
   const body = vi
-    ? `Bạn đang dùng bản miễn phí của VN Terminal. Gói trả phí thêm: chỉ báo đầy đủ, cảnh báo giá gửi tận email, so sánh hai mã và trợ lý AI.\n\nXem gói: ${links.pricingUrl}`
-    : `You're on the free plan of VN Terminal. A paid plan adds the full indicator library, price alerts delivered by email, two-symbol compare and the AI assistant.\n\nSee plans: ${links.pricingUrl}`;
+    ? `Bạn đang dùng bản miễn phí của ${BRAND.name}. Gói trả phí thêm: chỉ báo đầy đủ, cảnh báo giá gửi tận email, so sánh hai mã và trợ lý AI.\n\nXem gói: ${links.pricingUrl}`
+    : `You're on the free plan of ${BRAND.name}. A paid plan adds the full indicator library, price alerts delivered by email, two-symbol compare and the AI assistant.\n\nSee plans: ${links.pricingUrl}`;
   const open = links.chartUrl
     ? (vi ? `\n\nMở biểu đồ: ${links.chartUrl}` : `\n\nOpen your chart: ${links.chartUrl}`)
     : "";

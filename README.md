@@ -1,4 +1,4 @@
-# VN Terminal
+# Cổ Phiếu Việt
 
 Vietnamese market terminal: **HOSE equities · gold · crypto** on one screen, in
 Vietnamese and English. Next.js 16 App Router, Tailwind v4, deploys to Vercel.

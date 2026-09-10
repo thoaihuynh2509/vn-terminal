@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Header } from "@/components/Header";
 import { Identify } from "@/components/Identify";
 import { WatchlistSync } from "@/components/WatchlistSync";
+import { personId } from "@/lib/analytics/server";
 import { getSession } from "@/lib/auth/session";
 import { cryptoEnabled } from "@/lib/flags";
 import { ALL_SYMBOLS } from "@/lib/universe";
@@ -49,6 +50,7 @@ export async function SessionChrome({ locale, dict }: { locale: Locale; dict: Di
         locale={locale}
         signedIn={!!session?.email}
         expiresAt={session?.exp ?? null}
+        personId={session?.email ? personId(session.email) : null}
       />
     </>
   );

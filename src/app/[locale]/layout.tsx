@@ -27,9 +27,10 @@ export async function generateMetadata({
   const { locale } = await params;
   if (!isLocale(locale)) return {};
   const d = getDict(locale);
+  const verification = (process.env.GOOGLE_SITE_VERIFICATION || "").trim();
   const title = locale === "vi"
-    ? "VN Terminal — Chứng khoán, Vàng, Crypto"
-    : "VN Terminal — Vietnam Stocks, Gold, Crypto";
+    ? `${d.brand} — Chứng khoán, Vàng, Crypto`
+    : `${d.brand} — Vietnam Stocks, Gold, Crypto`;
   const description = locale === "vi"
     ? "Bảng giá chứng khoán Việt Nam, giá vàng SJC/DOJI/PNJ và thị trường crypto trên một màn hình. Dữ liệu cập nhật liên tục, miễn phí."
     : "Vietnam stock board, SJC/DOJI/PNJ gold prices and the crypto market on one screen. Continuously updated, free.";
@@ -45,6 +46,11 @@ export async function generateMetadata({
     },
     openGraph: { title, description, type: "website", locale: locale === "vi" ? "vi_VN" : "en_US" },
     robots: { index: true, follow: true },
+    // Search Console's meta-tag verification. Omitted entirely when unset: an
+    // empty `google` value renders a meta tag with no content, which the
+    // verifier reads as a failed attempt rather than an absent one. No page
+    // sets `verification`, so every route inherits this.
+    ...(verification ? { verification: { google: verification } } : {}),
   };
 }
 

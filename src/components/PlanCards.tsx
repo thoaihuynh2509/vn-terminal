@@ -68,7 +68,8 @@ export function PlanCards({
           const body = await res.json();
           const status = body?.data?.status;
           if (status === "paid") {
-            track("purchase_completed", { tier: body.data.tier, plan: body.data.plan });
+            // The purchase is reported from the settle seam on the server, which
+            // is the only place that sees the owner's manual confirmation too.
             await fetch("/api/auth/refresh", { method: "POST" });
             if (stop) return;
             setPaidTier(body.data.tier === "pro" ? dict.pricing.pro : dict.pricing.plus);

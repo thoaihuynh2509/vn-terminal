@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { BRAND } from "@/lib/brand";
 import { getSession } from "@/lib/auth/session";
+import { sameOrigin } from "@/lib/auth/same-origin";
 import { dbAvailable, getDb, DbUnavailableError } from "@/lib/db";
 import { clientIp, createLimiter } from "@/lib/rate-limit";
 import { isPaidTier, isPlan, priceFor } from "@/lib/billing/plans";
@@ -28,6 +30,12 @@ type CheckoutData =
  * scan and the reader is settled by webhook while the page polls the order.
  */
 export async function POST(req: Request) {
+  // A forged cross-site POST would write orders against a signed-in reader and
+  // spend calls at the gateway on their behalf.
+  if (!sameOrigin(req)) {
+    return NextResponse.json({ ok: false, error: "cross_site" }, { status: 403 });
+  }
+
   const session = await getSession();
   if (!session?.email) {
     return NextResponse.json({ ok: false, error: "sign_in_required" }, { status: 401 });
@@ -78,7 +86,7 @@ export async function POST(req: Request) {
         amount,
         orderId,
         requestId: crypto.randomUUID(),
-        orderInfo: `VN Terminal ${tier} · ${plan}`,
+        orderInfo: `${BRAND.name} ${tier} · ${plan}`,
         redirectUrl: returnUrl,
         ipnUrl: `${site}/api/billing/momo/ipn`,
       });
@@ -96,7 +104,7 @@ export async function POST(req: Request) {
       const url = buildPayUrl(vnpayConfig()!, {
         amount,
         txnRef: orderId,
-        orderInfo: `VN Terminal ${tier} ${plan}`,
+        orderInfo: `${BRAND.name} ${tier} ${plan}`,
         returnUrl,
         ipAddr: clientIp(req),
         createDate: vnpDate(new Date()),

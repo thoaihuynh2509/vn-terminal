@@ -3,6 +3,7 @@ import { LOCALES, PATHS } from "@/lib/i18n";
 import { VN30 } from "@/lib/providers/vnstock";
 import { siteUrl } from "@/lib/site";
 import { cryptoEnabled } from "@/lib/flags";
+import { dbAvailable, getDb } from "@/lib/db";
 
 const SITE = siteUrl();
 
@@ -12,7 +13,7 @@ const SITE = siteUrl();
 // keep advertising (or omitting) /crypto until the next deploy.
 export const dynamic = "force-dynamic";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const out: MetadataRoute.Sitemap = [];
   // With the crypto flag off `/crypto` 404s, and a sitemap that advertises a
@@ -43,5 +44,33 @@ export default function sitemap(): MetadataRoute.Sitemap {
       });
     }
   }
+
+  // One URL per archived session, in both locales.
+  //
+  // Only days that actually have a stored row are listed: an archive advertising
+  // a date the cron never ran for is a 404 in a sitemap, which is the same
+  // mistake as listing /crypto with the flag off. Capped at a year — beyond
+  // that the pages still resolve, they simply stop being re-advertised.
+  if (dbAvailable()) {
+    try {
+      const db = await getDb();
+      const days = await db.briefs.recent(365);
+      for (const locale of LOCALES) {
+        for (const { day, updatedAt } of days) {
+          out.push({
+            url: `${SITE}/${locale}/${PATHS.brief[locale]}/${day}`,
+            lastModified: updatedAt,
+            // A published edition never changes again.
+            changeFrequency: "yearly",
+            priority: 0.5,
+          });
+        }
+      }
+    } catch {
+      // A sitemap missing its archive still correctly describes every other
+      // page; failing the whole file would de-list the site over one query.
+    }
+  }
+
   return out;
 }

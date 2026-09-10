@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BRAND } from "@/lib/brand";
 
 export default function NotFound() {
   return (
@@ -8,7 +9,7 @@ export default function NotFound() {
         Không tìm thấy trang hoặc mã này. / Page or symbol not found.
       </p>
       <Link href="/vi" className="mt-4 inline-block text-[13px] text-accent hover:underline">
-        ← VN Terminal
+        ← {BRAND.name}
       </Link>
     </div>
   );

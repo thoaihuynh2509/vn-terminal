@@ -1,4 +1,5 @@
 import type { Locale } from "../types";
+import { BRAND, brandName, brandTagline } from "../brand.ts";
 
 export const LOCALES: Locale[] = ["vi", "en"];
 export const DEFAULT_LOCALE: Locale = "vi";
@@ -29,8 +30,8 @@ export function href(locale: Locale, key: keyof typeof PATHS, rest = ""): string
 }
 
 const vi = {
-  brand: "VN TERMINAL",
-  tagline: "Chứng khoán · Vàng · Crypto",
+  brand: brandName(),
+  tagline: brandTagline("vi"),
   nav: {
     home: "Tổng Quan", stocks: "Chứng Khoán", gold: "Vàng", crypto: "Crypto",
     brief: "Bản Tin", news: "Tin Tức", experts: "Chuyên Gia",
@@ -107,7 +108,7 @@ const vi = {
 
   stocks: {
     title: "Bảng Giá Chứng Khoán",
-    subtitle: "VN30 và các mã thanh khoản cao trên HOSE",
+    subtitle: "Bảng giá VN30 và các mã thanh khoản cao nhất sàn HOSE: giá khớp lệnh, thay đổi, khối lượng và giá trị giao dịch, cập nhật liên tục trong phiên.",
     filterExchange: "Sàn",
     filterAll: "Tất cả",
     sector: "Ngành",
@@ -115,6 +116,7 @@ const vi = {
     ceiling: "Trần",
     floor: "Sàn",
     ceilingShort: "TR",
+    chartOf: "biểu đồ giá cổ phiếu",
     floorShort: "SA",
     band: "Biên độ",
     session: "Phiên",
@@ -130,7 +132,7 @@ const vi = {
 
   gold: {
     title: "Giá Vàng Hôm Nay",
-    subtitle: "SJC, DOJI, PNJ, Bảo Tín và giá vàng thế giới",
+    subtitle: "Giá vàng SJC, DOJI, PNJ và Bảo Tín hôm nay cùng giá vàng thế giới quy đổi, kèm mức chênh lệch giá vàng trong nước so với quốc tế.",
     buy: "Mua vào",
     sell: "Bán ra",
     spread: "Chênh lệch",
@@ -145,7 +147,7 @@ const vi = {
 
   crypto: {
     title: "Thị Trường Crypto",
-    subtitle: "Top tài sản số theo vốn hóa",
+    subtitle: "Top tài sản số theo vốn hóa: giá Bitcoin, Ethereum và các đồng lớn, thay đổi 24 giờ, vốn hóa và khối lượng giao dịch, quy đổi sang VND.",
     rank: "#",
     price24h: "24 giờ",
     volume24h: "KLGD 24h",
@@ -166,7 +168,10 @@ const vi = {
   },
   chart: {
     title: "Biểu Đồ Chuyên Sâu",
-    subtitle: "Nến, chỉ báo kỹ thuật và nhiều khung thời gian",
+    aboutTitle: "Tổng quan giá {symbol}",
+    faqTitle: "Câu hỏi thường gặp về {symbol}",
+    aboutNote: "Các số liệu dưới đây được tính từ chính dữ liệu giá hiển thị trên trang, chỉ mang tính tham khảo.",
+    subtitle: "Biểu đồ nến chuyên sâu cho cổ phiếu HOSE, vàng và crypto: hơn 15 chỉ báo kỹ thuật, công cụ vẽ, nhiều khung thời gian và so sánh nhiều mã.",
     type: "Kiểu biểu đồ",
     candle: "Nến",
     line: "Đường",
@@ -396,7 +401,7 @@ const vi = {
     verifyTitle: "Xác Nhận Đăng Nhập",
     verifyBody: "Bấm nút bên dưới để hoàn tất đăng nhập trên thiết bị này.",
     verifyContinue: "Hoàn tất đăng nhập",
-    mailSubject: "Liên kết đăng nhập VN Terminal",
+    mailSubject: `Liên kết đăng nhập ${BRAND.name}`,
     mailBody:
       "Bấm vào liên kết bên dưới để đăng nhập. Liên kết có hiệu lực trong 15 phút và chỉ dùng được một lần. Nếu bạn không yêu cầu, hãy bỏ qua email này.",
   },
@@ -415,7 +420,7 @@ const vi = {
 
   heatmap: {
     title: "Bản Đồ Nhiệt Thị Trường",
-    subtitle: "Rổ VN30 — diện tích theo giá trị giao dịch, màu theo mức thay đổi",
+    subtitle: "Bản đồ nhiệt rổ VN30: diện tích mỗi ô theo giá trị giao dịch, màu theo mức tăng giảm trong phiên, để thấy nhóm nào đang dẫn dắt thị trường.",
     legendDown: "Giảm",
     legendFlat: "Không đổi",
     legendUp: "Tăng",
@@ -424,7 +429,7 @@ const vi = {
 
   pricing: {
     title: "Gói Dịch Vụ",
-    subtitle: "Dữ liệu thị trường miễn phí. Các tính năng có chi phí vận hành nằm ở gói trả phí.",
+    subtitle: "Dữ liệu thị trường luôn miễn phí. Các tính năng có chi phí vận hành như cảnh báo giá qua email, trợ lý AI và bộ chỉ báo đầy đủ nằm ở gói trả phí.",
     monthly: "mỗi tháng",
     free: "Miễn phí",
     freeDesc: "Toàn bộ bảng giá, tin tức và bản tin",
@@ -496,6 +501,7 @@ const vi = {
     sPaid: "Đã thanh toán",
     sPending: "Đang chờ",
     sFailed: "Thất bại",
+    sRevoked: "Đã thu hồi",
     pMonthly: "Tháng",
     pAnnual: "Năm",
     empty: "Chưa có đơn hàng nào.",
@@ -503,6 +509,10 @@ const vi = {
     confirmPaid: "Xác nhận đã nhận",
     confirming: "Đang xác nhận…",
     confirmFailed: "Không xác nhận được. Thử lại.",
+    revoke: "Thu hồi",
+    revokeArm: "Bấm lần nữa để thu hồi",
+    revoking: "Đang thu hồi…",
+    revokeFailed: "Không thu hồi được. Thử lại.",
   },
 
 
@@ -559,9 +569,15 @@ const vi = {
 
   brief: {
     title: "Bản Tin Thị Trường",
-    subtitle: "Tổng hợp tự động từ số liệu trong ngày",
+    subtitle: "Bản tin thị trường tổng hợp tự động từ số liệu trong ngày: chỉ số VNINDEX, độ rộng thị trường, giá vàng và crypto, cập nhật sau mỗi phiên.",
     method:
       "Bản tin này do hệ thống tự động soạn từ chính các số liệu hiển thị trên trang: mức thay đổi của chỉ số, số mã tăng giảm, giá vàng niêm yết và giá crypto. Hệ thống chỉ mô tả số liệu đã ghi nhận, không giải thích nguyên nhân, không dự báo và không đưa ra khuyến nghị đầu tư.",
+    archive: "Bản tin các phiên trước",
+    archiveEmpty: "Chưa có bản tin nào được lưu. Mỗi phiên giao dịch sẽ được lưu lại thành một trang riêng.",
+    archiveOf: "Bản tin phiên {day}",
+    latest: "Bản tin mới nhất",
+    backToLatest: "← Xem bản tin mới nhất",
+    archivedNote: "Đây là bản tin đã lưu của phiên {day}. Số liệu giữ nguyên như lúc đóng phiên, không cập nhật theo thời gian thực.",
   },
 
   disclaimer: {
@@ -573,8 +589,8 @@ const vi = {
 };
 
 const en: typeof vi = {
-  brand: "VN TERMINAL",
-  tagline: "Stocks · Gold · Crypto",
+  brand: brandName(),
+  tagline: brandTagline("en"),
   nav: {
     home: "Overview", stocks: "Stocks", gold: "Gold", crypto: "Crypto",
     brief: "Brief", news: "News", experts: "Experts",
@@ -651,7 +667,7 @@ const en: typeof vi = {
 
   stocks: {
     title: "Stock Board",
-    subtitle: "VN30 and the most liquid HOSE tickers",
+    subtitle: "The VN30 board and the most liquid tickers on HOSE: last matched price, session change, volume and traded value, updated through the session.",
     filterExchange: "Exchange",
     filterAll: "All",
     sector: "Sector",
@@ -659,6 +675,7 @@ const en: typeof vi = {
     ceiling: "Ceiling",
     floor: "Floor",
     ceilingShort: "CE",
+    chartOf: "stock price chart",
     floorShort: "FL",
     band: "Band",
     session: "Session",
@@ -674,7 +691,7 @@ const en: typeof vi = {
 
   gold: {
     title: "Gold Prices Today",
-    subtitle: "SJC, DOJI, PNJ, Bao Tin and world gold",
+    subtitle: "Today's SJC, DOJI, PNJ and Bao Tin gold prices alongside the world price converted to VND, with the domestic premium over the world market.",
     buy: "Bid",
     sell: "Ask",
     spread: "Spread",
@@ -689,7 +706,7 @@ const en: typeof vi = {
 
   crypto: {
     title: "Crypto Market",
-    subtitle: "Top digital assets by market cap",
+    subtitle: "The top digital assets by market capitalisation: Bitcoin, Ethereum and the major coins, with 24-hour change, market cap and volume in VND.",
     rank: "#",
     price24h: "24h",
     volume24h: "24h volume",
@@ -710,7 +727,10 @@ const en: typeof vi = {
   },
   chart: {
     title: "Advanced Chart",
-    subtitle: "Candles, technical indicators and multiple timeframes",
+    aboutTitle: "{symbol} price overview",
+    faqTitle: "Frequently asked questions about {symbol}",
+    aboutNote: "The figures below are computed from the same price data shown on this page, for reference only.",
+    subtitle: "In-depth candle charts for HOSE equities, gold and crypto: over 15 technical indicators, drawing tools, multiple timeframes and multi-symbol compare.",
     type: "Chart type",
     candle: "Candles",
     line: "Line",
@@ -937,7 +957,7 @@ const en: typeof vi = {
     verifyTitle: "Confirm Sign-In",
     verifyBody: "Select the button below to finish signing in on this device.",
     verifyContinue: "Finish signing in",
-    mailSubject: "Your VN Terminal sign-in link",
+    mailSubject: `Your ${BRAND.name} sign-in link`,
     mailBody:
       "Follow the link below to sign in. It is valid for 15 minutes and works once. If you did not request it, ignore this email.",
   },
@@ -956,7 +976,7 @@ const en: typeof vi = {
 
   heatmap: {
     title: "Market Heatmap",
-    subtitle: "VN30 — area by traded value, colour by session change",
+    subtitle: "A heatmap of the VN30 basket: each tile sized by traded value and coloured by session change, so you can see which names are leading the market.",
     legendDown: "Down",
     legendFlat: "Flat",
     legendUp: "Up",
@@ -965,7 +985,7 @@ const en: typeof vi = {
 
   pricing: {
     title: "Pricing",
-    subtitle: "Market data is free. Features with a real running cost sit behind a paid tier.",
+    subtitle: "Market data is always free. Features with a real running cost, such as emailed price alerts, the AI assistant and the full indicator library, are paid.",
     monthly: "per month",
     free: "Free",
     freeDesc: "Every board, the newsroom and the daily brief",
@@ -1037,6 +1057,7 @@ const en: typeof vi = {
     sPaid: "Paid",
     sPending: "Pending",
     sFailed: "Failed",
+    sRevoked: "Revoked",
     pMonthly: "Monthly",
     pAnnual: "Annual",
     empty: "No orders yet.",
@@ -1044,6 +1065,10 @@ const en: typeof vi = {
     confirmPaid: "Confirm received",
     confirming: "Confirming…",
     confirmFailed: "Could not confirm. Try again.",
+    revoke: "Revoke",
+    revokeArm: "Click again to revoke",
+    revoking: "Revoking…",
+    revokeFailed: "Could not revoke. Try again.",
   },
 
 
@@ -1100,9 +1125,15 @@ const en: typeof vi = {
 
   brief: {
     title: "Market Brief",
-    subtitle: "Automatically compiled from today's figures",
+    subtitle: "A market brief compiled automatically from the day's own figures: the VNINDEX, market breadth, gold and crypto, refreshed after every session.",
     method:
       "This brief is composed automatically from the same figures shown across the site: index moves, advancing and declining counts, quoted gold prices and crypto prices. It describes recorded figures only — it does not explain causes, forecast, or offer investment advice.",
+    archive: "Briefs from previous sessions",
+    archiveEmpty: "No briefs have been archived yet. Each trading session will be kept as its own page.",
+    archiveOf: "Market brief for {day}",
+    latest: "Latest brief",
+    backToLatest: "← See the latest brief",
+    archivedNote: "This is the archived brief for {day}. The figures are exactly as they stood at the close and are not updated.",
   },
 
   disclaimer: {

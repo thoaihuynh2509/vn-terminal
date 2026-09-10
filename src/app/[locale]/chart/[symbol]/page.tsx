@@ -2,6 +2,9 @@ import { TerminalView } from "@/views/TerminalView";
 import { guard } from "@/views/guard";
 import { sectionMetadata } from "@/views/meta";
 import { getDict } from "@/lib/i18n";
+import { quoteDescription } from "@/lib/seo/narrative";
+import { getBoard } from "@/lib/providers/vnstock";
+import { exchangeOf } from "@/lib/universe";
 
 export async function generateMetadata({
   params,
@@ -16,7 +19,15 @@ export async function generateMetadata({
   // every one of them inherited the layout's `/{locale}` canonical — telling
   // Google each chart was a duplicate of the home page. The title was also
   // hardcoded English on the Vietnamese route.
-  return sectionMetadata(locale, "terminal", { title: `${sym} — ${d.title}`, description: `${sym} · ${d.subtitle}` }, `/${sym}`);
+  //
+  // The description now names the symbol's own price. `getBoard()` is the same
+  // cached call the page itself makes, so this costs a cache read, not a fetch;
+  // when it fails the generic subtitle still describes the page correctly.
+  const quote = (await getBoard().catch(() => []))?.find((q) => q.symbol === sym);
+  const description =
+    quoteDescription(quote, { symbol: sym, locale, exchange: exchangeOf(sym) })
+    ?? `${sym} · ${d.subtitle}`;
+  return sectionMetadata(locale, "terminal", { title: `${sym} — ${d.title}`, description }, `/${sym}`);
 }
 
 export default async function Page({

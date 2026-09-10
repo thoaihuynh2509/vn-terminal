@@ -133,8 +133,18 @@ export function QuoteTable({
                   </td>
                 )}
                 <td className="px-2 py-1.5">
-                  <Link href={`/${locale}/${PATHS.terminal[locale]}/${q.symbol}`} className="font-semibold hover:text-accent">
+                  {/* The anchor used to be the bare ticker, which tells a
+                      crawler (and a screen reader running a link list) nothing
+                      about where thirty otherwise identical links go. The
+                      visible text is unchanged; the description rides along
+                      for the machines. */}
+                  <Link
+                    href={`/${locale}/${PATHS.terminal[locale]}/${q.symbol}`}
+                    className="font-semibold hover:text-accent"
+                    title={`${q.symbol} — ${dict.stocks.chartOf}`}
+                  >
                     {q.symbol}
+                    <span className="sr-only"> — {dict.stocks.chartOf}</span>
                   </Link>
                   {limit && (
                     <LimitChip

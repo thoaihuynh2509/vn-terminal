@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { encodeSession, cookieOptions, SESSION_COOKIE } from "@/lib/auth/session";
-import { isDevAuth, looksLikeEmail, resolveTier, subscriptionExp } from "@/lib/auth/provider";
+import { getSession, encodeSession, cookieOptions, SESSION_COOKIE } from "@/lib/auth/session";
+import { carriedAsks, remintSession } from "@/lib/auth/remint";
+import { isDevAuth, looksLikeEmail } from "@/lib/auth/provider";
 import { dbAvailable, getDb, DbUnavailableError } from "@/lib/db";
 import type { StoredTier } from "@/lib/db";
+import { captureServer, INTERACTIVE_CAPTURE_MS } from "@/lib/analytics/server";
+import { signupCompletedEvent } from "@/lib/analytics/conversion";
 import { clientIp, createLimiter } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -47,6 +50,10 @@ export async function POST(req: Request) {
   try {
     const db = await getDb();
     user = await db.users.upsertByEmail(address);
+    // Only a genuinely new row is a sign-up, exactly as on the magic-link rail;
+    // read before setTier below, which returns a row without the flag. A person
+    // is waiting on this response, so it takes the interactive budget.
+    if (user.created) await captureServer(signupCompletedEvent(user.email), { timeoutMs: INTERACTIVE_CAPTURE_MS });
     // The request may MUTATE the record (dev only); the session then reads it
     // back. A tier minted straight from the body is a tier the account was
     // never granted.
@@ -63,14 +70,11 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  const exp = subscriptionExp(user);
-  const session = {
-    email: user.email,
-    tier: resolveTier(user),
-    read: [] as string[],
-    iat: Math.floor(Date.now() / 1000),
-    ...(exp !== undefined ? { exp } : {}),
-  };
+  // `read` resets at sign-in as it always has; the free-AI meter carries over
+  // from the anonymous session so signing in does not refill it — but only when
+  // it is this reader's, never the last person to use the browser.
+  const prior = await getSession();
+  const session = remintSession(user, { read: [], asks: carriedAsks(prior, address) }, Math.floor(Date.now() / 1000));
 
   const res = NextResponse.json({ ok: true, data: { email: session.email, tier: session.tier } });
   res.cookies.set(SESSION_COOKIE, await encodeSession(session), cookieOptions());

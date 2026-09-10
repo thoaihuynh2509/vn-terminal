@@ -1,4 +1,5 @@
 import { FeedBanner } from "@/components/FeedBanner";
+import { JsonLd } from "@/components/JsonLd";
 import { QuoteTable } from "@/components/QuoteTable";
 import { Explainer } from "@/components/Explainer";
 import { BreadthBar } from "@/components/BreadthBar";
@@ -8,7 +9,9 @@ import { Card } from "@/components/ui";
 import { Stack } from "@/components/layout";
 import { getExplainer } from "@/content/explainers";
 import { dirOf } from "@/lib/format";
-import { getDict } from "@/lib/i18n";
+import { getDict, PATHS } from "@/lib/i18n";
+import { itemListLd } from "@/lib/seo";
+import { siteUrl } from "@/lib/site";
 import { BAND, getBoard } from "@/lib/providers/vnstock";
 import type { Locale } from "@/lib/types";
 
@@ -46,6 +49,16 @@ export async function StocksBoard({ locale }: { locale: Locale }) {
             <BreadthBar up={advancing} down={declining} flat={unchanged} labels={{ up: dict.common.up, down: dict.common.down, flat: dict.common.flat }} />
           </Card>
           <QuoteTable quotes={quotes} locale={locale} dict={dict} band={BAND.HOSE} sectors />
+          {/* The same thirty destinations the table shows, stated as a list. */}
+          <JsonLd
+            data={itemListLd(
+              siteUrl(),
+              quotes.map((q) => ({
+                name: `${q.symbol} — ${dict.stocks.chartOf}`,
+                path: `/${locale}/${PATHS.terminal[locale]}/${q.symbol}`,
+              })),
+            )}
+          />
         </Stack>
       ) : (
         <FeedBanner dict={dict} detail={error} />

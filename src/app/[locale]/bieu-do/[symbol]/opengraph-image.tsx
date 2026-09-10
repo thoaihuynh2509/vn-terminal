@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { BRAND } from "@/lib/brand";
 import { getTimeframeBars } from "@/lib/providers/vnstock";
 import { chartSource } from "@/lib/chart/series";
 
@@ -89,7 +90,7 @@ export default async function Image({
         )}
 
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 26, color: "#9aa0a6" }}>
-          <span>VN Terminal</span>
+          <span>{BRAND.name}</span>
           <span>{last === null ? "" : "1D"}</span>
         </div>
       </div>

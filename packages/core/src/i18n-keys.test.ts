@@ -45,3 +45,24 @@ test("no dictionary string is empty — a blank label reads as a broken page", (
     }
   }
 });
+
+/**
+ * `sectionMetadata` uses each section's visible subtitle as its meta
+ * description, deliberately, so the sentence a searcher reads on Google is the
+ * one the page shows and the two cannot drift. That makes subtitle length an
+ * SEO property: Google truncates past roughly 160 characters and rewrites
+ * descriptions it considers too thin, which is what it did to the 40-character
+ * ones these replaced.
+ */
+test("every indexed section's subtitle is a usable meta description", () => {
+  const SECTIONS = ["stocks", "gold", "crypto", "chart", "heatmap", "pricing", "brief"] as const;
+  for (const locale of ["vi", "en"] as const) {
+    const dict = getDict(locale) as unknown as Record<string, { subtitle?: string }>;
+    for (const section of SECTIONS) {
+      const subtitle = dict[section]?.subtitle;
+      assert.equal(typeof subtitle, "string", `${locale}.${section}.subtitle is missing`);
+      const n = (subtitle as string).length;
+      assert.ok(n >= 100 && n <= 160, `${locale}.${section}.subtitle is ${n} chars, want 100-160`);
+    }
+  }
+});

@@ -43,6 +43,7 @@ interface OrderRow {
   providerRef: string | null;
   createdAt: string;
   paidAt: string | null;
+  revokedAt: string | null;
 }
 
 interface TokenRow {
@@ -94,6 +95,16 @@ interface FileState {
   docs: DocRow[];
   /** Optional: a store written before 008 has no series, and must still load. */
   series?: SeriesRow[];
+  /** Optional for the same reason: a store written before 010 has no briefs. */
+  briefs?: BriefRow[];
+}
+
+interface BriefRow {
+  day: string;
+  data: unknown;
+  /** ISO strings: the store is JSON on disk and must round-trip through it. */
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface SeriesRow {
@@ -167,6 +178,7 @@ async function load(s: Store): Promise<FileState> {
   if (isFileState(parsed)) {
     parsed.orders ??= [];
     parsed.docs ??= [];
+    for (const o of parsed.orders) o.revokedAt ??= null;
     for (const u of parsed.users) {
       u.tierExpiresAt ??= null;
       u.renewalRemindedAt ??= null;
@@ -209,6 +221,9 @@ function withLock<T>(s: Store, mutates: boolean, fn: (state: FileState) => T): P
   return task;
 }
 
+/** markPaid's ALLOW-list — see the contract in types.ts. */
+const CLAIMABLE: OrderStatus[] = ["pending", "failed"];
+
 const toUser = (r: UserRow): UserRecord => ({
   id: r.id,
   email: r.email,
@@ -234,6 +249,7 @@ const toOrder = (r: OrderRow): OrderRecord => ({
   providerRef: r.providerRef,
   createdAt: new Date(r.createdAt),
   paidAt: r.paidAt ? new Date(r.paidAt) : null,
+  revokedAt: r.revokedAt ? new Date(r.revokedAt) : null,
 });
 
 export async function createFileDb(dir: string): Promise<Db> {
@@ -254,7 +270,7 @@ export async function createFileDb(dir: string): Promise<Db> {
         withLock(s, true, (state) => {
           const lower = email.toLowerCase();
           const existing = state.users.find((u) => u.email === lower);
-          if (existing) return toUser(existing); // tier untouched
+          if (existing) return { ...toUser(existing), created: false }; // tier untouched
           const row: UserRow = {
             id: crypto.randomUUID(),
             email: lower,
@@ -269,7 +285,7 @@ export async function createFileDb(dir: string): Promise<Db> {
             createdAt: new Date().toISOString(),
           };
           state.users.push(row);
-          return toUser(row);
+          return { ...toUser(row), created: true };
         }),
 
       setTier: (email, tier) =>
@@ -293,6 +309,23 @@ export async function createFileDb(dir: string): Promise<Db> {
           row.tier = tier;
           row.tierExpiresAt = new Date(base + added).toISOString();
           row.renewalRemindedAt = null; // a fresh term is a fresh thing to remind about
+          return toUser(row);
+        }),
+
+      retract: (email, tier, days, now) =>
+        withLock(s, true, (state) => {
+          const row = state.users.find((u) => u.email === email.toLowerCase());
+          if (!row) return null;
+          // Only the tier the order sold, and only a term with an end: a comped
+          // account was never bought, so there is nothing to take back.
+          if (row.tier !== tier || !row.tierExpiresAt) return toUser(row);
+          const end = new Date(row.tierExpiresAt).getTime() - days * 86_400_000;
+          if (end <= now.getTime()) {
+            row.tier = "free";
+            row.tierExpiresAt = null;
+          } else {
+            row.tierExpiresAt = new Date(end).toISOString();
+          }
           return toUser(row);
         }),
 
@@ -363,6 +396,7 @@ export async function createFileDb(dir: string): Promise<Db> {
             providerRef: null,
             createdAt: now.toISOString(),
             paidAt: null,
+            revokedAt: null,
           };
           state.orders.push(row);
           return toOrder(row);
@@ -382,15 +416,40 @@ export async function createFileDb(dir: string): Promise<Db> {
             .map(toOrder),
         ),
 
-      // Flip inside ONE lock and only from pending, so a replayed IPN sees a row
-      // already 'paid' and returns null — the grant happens exactly once.
+      // Flip inside ONE lock and only from an unsettled state, so a replayed IPN
+      // sees a row already 'paid' and returns null — the grant happens exactly
+      // once. An ALLOW-list, never a deny-list: 'failed' is claimable because a
+      // transfer can land after the sweep gave up, 'revoked' never is.
       markPaid: (id, providerRef, now) =>
         withLock(s, true, (state) => {
           const row = state.orders.find((o) => o.id === id);
-          if (!row || row.status !== "pending") return null;
+          if (!row || !CLAIMABLE.includes(row.status)) return null;
           row.status = "paid";
           row.providerRef = providerRef;
           row.paidAt = now.toISOString();
+          return toOrder(row);
+        }),
+
+      expirePending: (createdBefore) =>
+        withLock(s, true, (state) => {
+          let n = 0;
+          for (const row of state.orders) {
+            if (row.status !== "pending") continue;
+            if (new Date(row.createdAt).getTime() >= createdBefore.getTime()) continue;
+            row.status = "failed";
+            n += 1;
+          }
+          return n;
+        }),
+
+      // The mirror of markPaid: only a paid order can be taken back, and only
+      // once, so a replayed revoke retracts nothing further.
+      markRevoked: (id, now) =>
+        withLock(s, true, (state) => {
+          const row = state.orders.find((o) => o.id === id);
+          if (!row || row.status !== "paid") return null;
+          row.status = "revoked";
+          row.revokedAt = now.toISOString();
           return toOrder(row);
         }),
     },
@@ -554,6 +613,34 @@ export async function createFileDb(dir: string): Promise<Db> {
           const ts = (state.series ?? []).filter((x) => x.series === series).map((x) => x.t);
           return ts.length ? Math.min(...ts) : null;
         }),
+    },
+
+    briefs: {
+      put: (day, data, now) =>
+        withLock(s, true, (state) => {
+          state.briefs ??= [];
+          const at = state.briefs.findIndex((b) => b.day === day);
+          const iso = now.toISOString();
+          if (at === -1) state.briefs.push({ day, data, createdAt: iso, updatedAt: iso });
+          // First-published stays put, matching the Postgres driver.
+          else state.briefs[at] = { ...state.briefs[at], data, updatedAt: iso };
+        }),
+
+      get: (day) =>
+        withLock(s, false, (state) => {
+          const row = (state.briefs ?? []).find((b) => b.day === day);
+          return row
+            ? { day: row.day, data: row.data, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) }
+            : null;
+        }),
+
+      recent: (limit) =>
+        withLock(s, false, (state) =>
+          [...(state.briefs ?? [])]
+            .sort((a, b) => b.day.localeCompare(a.day))
+            .slice(0, Math.max(1, Math.floor(limit)))
+            .map((b) => ({ day: b.day, updatedAt: new Date(b.updatedAt) })),
+        ),
     },
   };
 }

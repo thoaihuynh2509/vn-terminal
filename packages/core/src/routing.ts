@@ -60,3 +60,42 @@ export function isAdminPath(pathname: string): boolean {
   const parts = pathname.split("/").filter(Boolean);
   return parts.length === 2 && isLocale(parts[0]) && parts[1] === "admin";
 }
+
+/**
+ * The host a request should be answered on, or null to answer where it landed.
+ *
+ * Once a custom domain is the canonical origin, the old `*.vercel.app` host
+ * still serves every page — the same content at a second origin, which splits
+ * whatever authority the domain is accruing and is the one duplication a
+ * canonical tag cannot fix, because the duplicate is a whole host.
+ *
+ * Three guards, and each one matters:
+ *
+ * - Production only. `VERCEL_ENV` is "preview" on a branch deploy, and
+ *   redirecting a preview to production would make every preview URL show the
+ *   live site — the deploys exist precisely to be different.
+ * - Only ever redirects AWAY from a `.vercel.app` host. A custom domain that is
+ *   not the configured one (a second domain, a staging alias) is left alone;
+ *   this is not a general canonicaliser.
+ * - Never redirects to itself, so before NEXT_PUBLIC_SITE_URL is set — when the
+ *   canonical origin IS the vercel host — nothing moves and there is no loop.
+ */
+export function canonicalRedirect(
+  host: string | null,
+  canonicalOrigin: string,
+  vercelEnv: string | undefined,
+): string | null {
+  if (vercelEnv !== "production") return null;
+  if (!host) return null;
+  const from = host.toLowerCase().split(":")[0];
+  if (!from.endsWith(".vercel.app")) return null;
+
+  let to: string;
+  try {
+    to = new URL(canonicalOrigin).host.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!to || to === from) return null;
+  return to;
+}

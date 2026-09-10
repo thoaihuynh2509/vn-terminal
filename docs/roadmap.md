@@ -1,8 +1,14 @@
-# VN Terminal — product roadmap
+# Cổ Phiếu Việt — product roadmap
 
 Written as a prioritized backlog, not a wish list. A good roadmap says **no** as
 much as yes. **Owner** = who unblocks it: **You** (accounts, money, product
 calls) or **Build** (engineering, doable in-repo).
+
+> **Name.** The product name lives in `packages/core/src/brand.ts` and nowhere
+> else; a test fails the build if a literal reappears in any source file. The
+> working name here is a placeholder — change that one file when you decide, and
+> buy the matching domain (see `docs/seo-plan.md`, which explains why the domain
+> outranks every other item on this page).
 
 ## Positioning (the one-liner that decides scope)
 The best **Vietnam-focused** cross-asset terminal — HOSE equities · gold · crypto

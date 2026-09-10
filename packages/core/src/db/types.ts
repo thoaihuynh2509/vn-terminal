@@ -40,7 +40,11 @@ export interface UserRecord {
   createdAt: Date;
 }
 
-export type OrderStatus = "pending" | "paid" | "failed";
+/**
+ * `revoked` is the owner taking a manual settlement back — a distinct state, not
+ * a `failed`, because a failure may still be paid late while a revoke never can.
+ */
+export type OrderStatus = "pending" | "paid" | "failed" | "revoked";
 
 /** A purchase attempt. The ledger that makes an IPN idempotent and payments reconcilable. */
 export interface OrderRecord {
@@ -54,6 +58,7 @@ export interface OrderRecord {
   providerRef: string | null;
   createdAt: Date;
   paidAt: Date | null;
+  revokedAt: Date | null;
 }
 
 export interface NewOrder {
@@ -92,14 +97,25 @@ export interface Db {
     findByEmail(email: string): Promise<UserRecord | null>;
     /** Every account, for server jobs (cron delivery). Small scale by design. */
     all(): Promise<UserRecord[]>;
-    /** Creates with tier 'free' when absent; an existing row's tier is untouched. */
-    upsertByEmail(email: string): Promise<UserRecord>;
+    /**
+     * Creates with tier 'free' when absent; an existing row's tier is untouched.
+     * `created` distinguishes a sign-up from a returning reader, so a conversion
+     * is only reported for a genuinely new account.
+     */
+    upsertByEmail(email: string): Promise<UserRecord & { created: boolean }>;
     setTier(email: string, tier: StoredTier): Promise<UserRecord | null>;
     /**
      * Grant a paid tier until `expiresAt`. Extends from the later of now and any
      * live subscription so a renewal adds time rather than resetting it.
      */
     grant(email: string, tier: "plus" | "pro", expiresAt: Date): Promise<UserRecord | null>;
+    /**
+     * Take back `days` of a tier, for an order settled by mistake. SUBTRACTS the
+     * term rather than zeroing it, so revoking a mis-settled RENEWAL leaves the
+     * months the subscriber did pay for. Only acts when the row still holds
+     * `tier` and has an end date; dropping to or past now downgrades to free.
+     */
+    retract(email: string, tier: "plus" | "pro", days: number, now: Date): Promise<UserRecord | null>;
     /** Record that a renewal reminder was sent for the current term. */
     markRenewalReminded(email: string, now: Date): Promise<UserRecord | null>;
     findByReferralCode(code: string): Promise<UserRecord | null>;
@@ -121,10 +137,25 @@ export interface Db {
     /** Most-recent orders first, for the owner's reconciliation view. */
     recent(limit: number): Promise<OrderRecord[]>;
     /**
-     * Idempotent pending→paid. Returns the order ONLY on the call that actually
-     * flipped it, so a replayed IPN grants exactly once; null on any later call.
+     * Idempotent claim of an unsettled order. Returns the order ONLY on the call
+     * that actually flipped it, so a replayed IPN grants exactly once; null on
+     * any later call. The claimable states are an explicit ALLOW-list of
+     * 'pending' and 'failed' — money that lands after the abandonment sweep is
+     * still money — and never 'paid' or 'revoked', so a replay cannot re-grant
+     * an order the owner took back.
      */
     markPaid(id: string, providerRef: string, now: Date): Promise<OrderRecord | null>;
+    /**
+     * Fail every pending order created STRICTLY before `createdBefore`, and
+     * return how many. Idempotent: a second sweep of the same window finds
+     * nothing pending left to fail.
+     */
+    expirePending(createdBefore: Date): Promise<number>;
+    /**
+     * Idempotent paid→revoked, the mirror of `markPaid`. Returns the order ONLY
+     * on the call that flipped it, so the entitlement is taken back once.
+     */
+    markRevoked(id: string, now: Date): Promise<OrderRecord | null>;
   };
   magicTokens: {
     insert(t: NewMagicToken, now: Date): Promise<void>;
@@ -192,6 +223,37 @@ export interface Db {
     /** The oldest instant recorded, so the UI can say when history starts. */
     firstAt(series: string): Promise<number | null>;
   };
+  /**
+   * The daily brief, kept as it was published.
+   *
+   * The live brief is composed from feeds that only report "now", so it cannot
+   * be reconstructed after the fact — yesterday's page would silently show
+   * today's numbers. Each session is therefore snapshotted once and read back
+   * verbatim, which is also what makes one URL per trading day honest.
+   */
+  briefs: {
+    /**
+     * Store the day's brief, replacing one already stored for that date.
+     * Idempotent by `day`, so a cron re-run republishes rather than duplicates.
+     */
+    put(day: string, data: unknown, now: Date): Promise<void>;
+    get(day: string): Promise<BriefRecord | null>;
+    /** Newest first, without the documents — for an index and the sitemap. */
+    recent(limit: number): Promise<BriefStub[]>;
+  };
+}
+
+export interface BriefRecord {
+  /** `YYYY-MM-DD`, the trading day in Asia/Ho_Chi_Minh. */
+  day: string;
+  data: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface BriefStub {
+  day: string;
+  updatedAt: Date;
 }
 
 export class DbUnavailableError extends Error {}

@@ -7,6 +7,7 @@
  */
 import type { Locale } from "../types.ts";
 import { getDict } from "../i18n/index.ts";
+import { mailFrom } from "../brand.ts";
 
 export type MailDriver = "console" | "resend" | "none";
 
@@ -51,7 +52,7 @@ export async function sendMagicLink({ to, url, locale }: { to: string; url: stri
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: process.env.MAIL_FROM ?? "VN Terminal <onboarding@resend.dev>",
+      from: mailFrom(),
       to: [to],
       subject: dict.auth.mailSubject,
       text: `${dict.auth.mailBody}\n\n${url}\n`,
@@ -81,7 +82,7 @@ export async function sendEmail({ to, subject, text }: { to: string; subject: st
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: process.env.MAIL_FROM ?? "VN Terminal <onboarding@resend.dev>",
+      from: mailFrom(),
       to: [to],
       subject,
       text,

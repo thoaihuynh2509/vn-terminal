@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/editorial";
 import { StatTile } from "@/components/ui";
 import { EmptyState } from "@/components/layout";
 import { ConfirmPaidButton } from "@/components/ConfirmPaidButton";
+import { RevokeButton } from "@/components/RevokeButton";
 import { vnd } from "@/lib/format";
 import { getDict } from "@/lib/i18n";
 import { INVESTED_KINDS, investedStats } from "@/lib/retention/invested";
@@ -11,7 +12,9 @@ import type { Locale } from "@/lib/types";
 /**
  * Owner-only reconciliation over the orders ledger. Rendered only after the
  * page has checked `isAdmin`; it takes already-fetched rows and shows revenue,
- * paid/pending counts and the recent orders — read-only, no controls.
+ * paid/pending counts and the recent orders. Payment is a static QR with no
+ * gateway, so settlement happens here: the owner confirms a transfer they can
+ * see, and revokes one they confirmed by mistake.
  */
 export function AdminView({ locale, orders, census = [] }: {
   locale: Locale;
@@ -26,9 +29,12 @@ export function AdminView({ locale, orders, census = [] }: {
   const invested = investedStats(census);
 
   const status = (s: OrderRecord["status"]) =>
-    s === "paid" ? dict.admin.sPaid : s === "pending" ? dict.admin.sPending : dict.admin.sFailed;
+    s === "paid" ? dict.admin.sPaid
+      : s === "pending" ? dict.admin.sPending
+      : s === "revoked" ? dict.admin.sRevoked
+      : dict.admin.sFailed;
   const statusClass = (s: OrderRecord["status"]) =>
-    s === "paid" ? "text-up" : s === "failed" ? "text-down" : "text-muted";
+    s === "paid" ? "text-up" : s === "failed" || s === "revoked" ? "text-down" : "text-muted";
   const fmtDate = (d: Date) =>
     new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-US", {
       day: "2-digit",
@@ -85,12 +91,23 @@ export function AdminView({ locale, orders, census = [] }: {
                   <td className={`px-3 py-2 font-medium ${statusClass(o.status)}`}>
                     <span className="inline-flex items-center gap-2">
                       {status(o.status)}
-                      {o.status === "pending" && (
+                      {/* A failed order is only one the sweep stopped waiting
+                          for; a transfer that lands late is still claimable. */}
+                      {(o.status === "pending" || o.status === "failed") && (
                         <ConfirmPaidButton
                           orderId={o.id}
                           label={dict.admin.confirmPaid}
                           busyLabel={dict.admin.confirming}
                           failLabel={dict.admin.confirmFailed}
+                        />
+                      )}
+                      {o.status === "paid" && (
+                        <RevokeButton
+                          orderId={o.id}
+                          label={dict.admin.revoke}
+                          armLabel={dict.admin.revokeArm}
+                          busyLabel={dict.admin.revoking}
+                          failLabel={dict.admin.revokeFailed}
                         />
                       )}
                     </span>

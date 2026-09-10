@@ -7,6 +7,7 @@ import { cronAuthorized } from "@/lib/retention/cron-auth";
 import { recordGoldSeries } from "@/lib/retention/record-series";
 import { getGold } from "@/lib/providers/gold";
 import { renewalDue, renewalEmail } from "@/lib/retention/run";
+import { expireAbandonedOrders } from "@/lib/billing/expire";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
@@ -58,7 +59,16 @@ export async function GET(req: Request) {
     } catch {
       /* a dead gold feed costs today's point, never the reminders */
     }
-    return NextResponse.json({ ok: true, data: { usersChecked: users.length, reminded, series } });
+    // Abandoned checkouts ride along on the same daily job. Isolated for the
+    // same reason as the gold point: a sweep that fails must not cost the
+    // renewal reminders this job exists for.
+    let expired = 0;
+    try {
+      expired = await expireAbandonedOrders(db, now);
+    } catch {
+      /* the stale pending rows keep until tomorrow's run */
+    }
+    return NextResponse.json({ ok: true, data: { usersChecked: users.length, reminded, series, expired } });
   } catch (err) {
     if (err instanceof DbUnavailableError) {
       return NextResponse.json({ ok: false, error: "cron_not_configured" }, { status: 501 });

@@ -6,6 +6,7 @@ import { ChartViewed } from "@/components/chart/ChartViewed";
 import { PageHeader } from "@/components/editorial";
 import { FeedBanner } from "@/components/FeedBanner";
 import { JsonLd } from "@/components/JsonLd";
+import { SymbolNarrative } from "@/components/SymbolNarrative";
 import { PageShell } from "@/components/layout";
 import { breadcrumbLd, symbolTrail } from "@/lib/seo";
 import { siteUrl } from "@/lib/site";
@@ -20,7 +21,7 @@ import { freeAsksToShow } from "@/lib/ask/meter";
 import { dateOnly, equityPrice } from "@/lib/format";
 import { rsi } from "@/lib/ta/indicators";
 import { getDict, PATHS, type Dict } from "@/lib/i18n";
-import { getBoard, getTimeframeBars } from "@/lib/providers/vnstock";
+import { getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
 import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import { getCorpEvents } from "@/lib/providers/events";
@@ -254,9 +255,12 @@ export async function TerminalView({
   // to the bars by trading DAY (sources keep different epochs for the same day).
   const foreignReady = foreignFlowAvailable();
   let foreign: CompareSeries | null = null;
+  /** Kept for the prose below, which must never trigger a fetch of its own. */
+  let foreignDays: { date: string; netVal: number }[] = [];
   if (fr && canCompare && foreignReady && !view.intraday) {
     const flow = await getForeignFlow(sym, 250).catch(() => []);
     if (flow.length) {
+      foreignDays = flow;
       const byDate = new Map(flow.map((f) => [f.date, f.netVal]));
       const isoDay = (t: number) =>
         new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(t * 1000));
@@ -429,6 +433,26 @@ export async function TerminalView({
         )}
       </div>
       </ChartSyncProvider>
+
+      {/* Sixty VN30 chart URLs are the long-tail play and, until now, none of
+          them had a sentence to read. Equities only, and daily bars only: the
+          canonical URL carries no timeframe, so this is what a crawler sees. */}
+      {source.kind === "equity" && !view.intraday && (
+        <SymbolNarrative
+          dict={dict}
+          input={{
+            symbol: sym,
+            locale,
+            bars,
+            exchange: exchangeOf(sym),
+            band,
+            vn30: (VN30 as readonly string[]).includes(sym),
+            ...(typeof rsiNow === "number" ? { rsi14: rsiNow } : {}),
+            foreign: foreignDays,
+            events,
+          }}
+        />
+      )}
 
     </PageShell>
   );

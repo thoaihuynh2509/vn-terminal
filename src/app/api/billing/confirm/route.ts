@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { isAdmin } from "@/lib/auth/admin";
+import { sameOrigin } from "@/lib/auth/same-origin";
 import { dbAvailable, getDb, DbUnavailableError } from "@/lib/db";
 import { grantForOrder } from "@/lib/billing/settle";
 
@@ -15,8 +16,9 @@ export const revalidate = 0;
  */
 export async function POST(req: Request) {
   const session = await getSession();
-  if (!isAdmin(session?.email)) {
-    // Never reveal the endpoint to a non-admin.
+  // One 404 for both: never reveal the endpoint to a non-admin, and never tell
+  // a prober which of the two checks their request tripped.
+  if (!sameOrigin(req) || !isAdmin(session?.email)) {
     return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
   }
   if (!dbAvailable()) {

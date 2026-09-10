@@ -1,6 +1,6 @@
 import type { Coin, GoldRow, GoldSnapshot, Locale, Quote } from "./types";
-import { num, pct, usd, vnd, volume as fmtVol } from "./format";
-import { breadthDivergence, sectorStats, SECTOR_LABEL, turnoverLeaders } from "./sectors";
+import { num, pct, usd, vnd, volume as fmtVol } from "./format.ts";
+import { breadthDivergence, sectorStats, SECTOR_LABEL, turnoverLeaders } from "./sectors.ts";
 
 /**
  * Composes the daily market brief.

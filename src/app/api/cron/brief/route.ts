@@ -4,10 +4,9 @@ import { effectiveTier } from "@/lib/auth/provider";
 import { atLeast } from "@/lib/auth/entitlement";
 import { sendEmail } from "@/lib/auth/mailer";
 import { buildBrief } from "@/lib/brief";
-import { getGold, headlineRow, premium } from "@/lib/providers/gold";
-import { getBoard, getIndices } from "@/lib/providers/vnstock";
-import { getCoins } from "@/lib/providers/crypto";
-import { cryptoEnabled } from "@/lib/flags";
+import { loadBriefInputs } from "@/lib/briefs/load";
+import { composeSnapshot } from "@/lib/briefs/snapshot";
+import { parseDay, tradingDay } from "@/lib/briefs/day";
 import { cronAuthorized } from "@/lib/retention/cron-auth";
 import { levelsNearPrice } from "@/lib/retention/levels";
 import { parseDrawings } from "@/lib/chart/drawings";
@@ -15,8 +14,6 @@ import { briefEmail, personalNote } from "@/lib/retention/run";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
-
-const USD_VND = Number(process.env.NEXT_PUBLIC_USD_VND ?? 26_300);
 
 /**
  * Daily brief email — a paid perk and a reason to return.
@@ -38,30 +35,36 @@ export async function GET(req: Request) {
   try {
     const db = await getDb();
     const now = new Date();
-    const recipients = (await db.users.all()).filter((u) => atLeast(effectiveTier(u, now), "plus"));
-    if (recipients.length === 0) {
-      return NextResponse.json({ ok: true, data: { recipients: 0, emailed: 0 } });
+
+    // The archive is written FIRST, and unconditionally.
+    //
+    // It used to be that with no paid subscribers this route returned before
+    // fetching anything — correct when its only job was email. The snapshot is
+    // not email: it is the day's public page, and a site with no subscribers
+    // yet is exactly the site that most needs a year of indexable pages. It is
+    // also why the mailer being unconfigured must not skip it.
+    const inputs = await loadBriefInputs({ sparks: true });
+    const day = parseDay(tradingDay(now.getTime()));
+    let snapshot: string | null = null;
+    if (day) {
+      try {
+        await db.briefs.put(day, composeSnapshot(day, inputs, now.getTime()), now);
+        snapshot = day;
+      } catch (e) {
+        // A failed snapshot must not cost the subscribers their email.
+        console.error("[cron/brief] snapshot failed", e);
+      }
     }
 
-    const [indicesR, boardR, goldR, coinsR] = await Promise.allSettled([
-      getIndices(),
-      getBoard(),
-      getGold(),
-      // Must match BriefView: the emailed brief and /ban-tin are the same
-      // document, so a crypto paragraph in the mail for a section the site
-      // does not have would be the email contradicting the page it links to.
-      cryptoEnabled() ? getCoins(20) : Promise.resolve([]),
-    ]);
-    const indices = indicesR.status === "fulfilled" ? indicesR.value : [];
-    const board = boardR.status === "fulfilled" ? boardR.value : [];
-    const gold = goldR.status === "fulfilled" ? goldR.value : null;
-    const coins = coinsR.status === "fulfilled" ? coinsR.value : [];
-    const top = gold ? headlineRow(gold.rows) : undefined;
-    const premiumPct = gold?.world && top ? premium(gold.world.buy, top.sell, USD_VND).pct : undefined;
+    const recipients = (await db.users.all()).filter((u) => atLeast(effectiveTier(u, now), "plus"));
+    if (recipients.length === 0) {
+      return NextResponse.json({ ok: true, data: { recipients: 0, emailed: 0, snapshot } });
+    }
 
     // Emails default to Vietnamese, the primary audience; a stored per-user
     // locale would drive this once the account carries one.
-    const brief = buildBrief("vi", { indices, board, gold, goldHeadline: top, coins, premiumPct });
+    const board = inputs.board;
+    const brief = buildBrief("vi", inputs);
     const { subject, text } = briefEmail(brief, "vi");
 
     // The market summary above is identical for everyone. What follows is not:
@@ -115,7 +118,7 @@ export async function GET(req: Request) {
         /* one failure must not abort the batch */
       }
     }
-    return NextResponse.json({ ok: true, data: { recipients: recipients.length, emailed, personalised } });
+    return NextResponse.json({ ok: true, data: { recipients: recipients.length, emailed, personalised, snapshot } });
   } catch (err) {
     if (err instanceof DbUnavailableError) {
       return NextResponse.json({ ok: false, error: "cron_not_configured" }, { status: 501 });

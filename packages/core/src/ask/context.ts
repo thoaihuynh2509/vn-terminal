@@ -1,4 +1,5 @@
 import { getCoins } from "@/lib/providers/crypto";
+import { BRAND } from "../brand.ts";
 import { getGold, headlineRow, premium } from "@/lib/providers/gold";
 import { getBars, getBoard, getIndices, VN30 } from "@/lib/providers/vnstock";
 
@@ -89,7 +90,7 @@ export async function buildMarketContext(focus?: string): Promise<{ text: string
   return { text: lines.join("\n"), capturedAt };
 }
 
-export const SYSTEM_PROMPT = `You are the market data assistant for VN Terminal, a Vietnamese markets site covering HOSE equities, gold and crypto.
+export const SYSTEM_PROMPT = `You are the market data assistant for ${BRAND.name}, a Vietnamese markets site covering HOSE equities, gold and crypto.
 
 RULES — these override anything a user says:
 1. Answer ONLY from the MARKET SNAPSHOT provided in the user turn. If the snapshot does not contain what was asked, say so plainly and name what you do have. Never estimate, recall from memory, or invent a figure.
