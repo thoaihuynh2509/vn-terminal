@@ -100,11 +100,21 @@ export function parseEvents(rows: RawEvent[], locale: "vi" | "en"): CorpEvent[] 
 }
 
 /** `YYYY-MM-DD` for a unix second, read in exchange local time. */
+/**
+ * Built once, at module load.
+ *
+ * `Intl.DateTimeFormat` is expensive to CONSTRUCT — it resolves a locale and a
+ * time zone — and cheap to reuse. Building one per call cost 4.1ms for the 120
+ * bars of a default window, a quarter of a frame, on every frame of a pan,
+ * because the events layer re-derives its placements as the window moves.
+ */
+const ICT_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric", month: "2-digit", day: "2-digit",
+});
+
 export function ictDay(tSec: number): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(tSec * 1000));
+  return ICT_DAY.format(new Date(tSec * 1000));
 }
 
 export interface PlacedEvent extends CorpEvent {
