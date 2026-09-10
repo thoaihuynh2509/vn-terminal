@@ -462,14 +462,19 @@ export function ChartPro({
   const saved = useMemo(() => {
     const parsed = parseSettings(storedSettings);
     if (!parsed) return null;
-    const usable = restorable(parsed, limit, (id) => INDICATORS.some((d) => d.id === id));
+    // Both questions — is this a real indicator, and may this reader have it —
+    // go to `restorable`, which knows that a stored token is not an id. Asking
+    // the second one out here, of the token, is what dropped every tuned
+    // indicator from a free or signed-out reader's restored chart.
+    const usable = restorable(
+      parsed,
+      limit,
+      (id) => INDICATORS.some((d) => d.id === id),
+      (id) => unlocked || !!INDICATORS.find((d) => d.id === id)?.free,
+    );
     return {
       type: usable.type,
-      // An indicator saved on Plus must not come back after the subscription
-      // lapsed — the stored setup is a preference, never an entitlement.
-      indicators: usable.indicators.filter(
-        (id) => unlocked || INDICATORS.find((d) => d.id === id)?.free,
-      ),
+      indicators: usable.indicators,
       scale: usable.scale,
       paneRatio: usable.paneRatio,
     };

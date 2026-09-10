@@ -109,15 +109,33 @@ export function serializeSettings(s: ChartSettings): string {
  * with the first two, not a silently over-budget one that the next toggle then
  * refuses to change.
  */
-export function restorable(s: ChartSettings, indicatorLimit: number, known: (id: string) => boolean): ChartSettings {
+export function restorable(
+  s: ChartSettings,
+  indicatorLimit: number,
+  known: (id: string) => boolean,
+  /**
+   * Whether this reader may have that indicator at all. An indicator saved on
+   * Plus must not come back after the subscription lapsed — the stored setup is
+   * a preference, never an entitlement.
+   *
+   * It lives here rather than in the caller because the caller got it wrong:
+   * ChartPro filtered the RESULT of this function by token instead of by id, so
+   * `rsi:21` matched no definition and every tuned indicator was dropped from
+   * the restored chart. One question, asked once, in the place that already
+   * knows tokens are not ids.
+   */
+  entitled: (id: string) => boolean = () => true,
+): ChartSettings {
   return {
     type: s.type,
     scale: s.scale,
     paneRatio: s.paneRatio,
-    // `known` answers about an indicator, so it is asked about the id — passing
-    // the whole `rsi:21` token would make every tuned indicator look unknown.
+    // Both predicates answer about an INDICATOR, so both are asked about the
+    // id — passing the whole `rsi:21` token would make every tuned indicator
+    // look unknown. Applied before the slice, so an indicator the reader may
+    // not have does not silently eat one of their slots.
     indicators: s.indicators
-      .filter((t) => { const r = parseRef(t); return !!r && known(r.id); })
+      .filter((t) => { const r = parseRef(t); return !!r && known(r.id) && entitled(r.id); })
       .slice(0, Math.max(0, indicatorLimit)),
   };
 }

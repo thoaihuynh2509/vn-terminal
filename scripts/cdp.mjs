@@ -429,6 +429,24 @@ try {
       console.log(`  ${row.pass === "PASS" ? "✓" : "✗"} ${name}${detail ? ` — ${detail}` : ""}`);
     };
 
+    /**
+     * A check that could not be reached, recorded as neither pass nor fail.
+     *
+     * Without this, a block that needs a session ran anyway against a signed-out
+     * one: the drawing checks asserted free-tier behaviour while every tool was
+     * locked behind "sign in to draw", so fourteen of them failed for a reason
+     * that had nothing to do with the drawing tools — and three more PASSED
+     * vacuously, because "the drawing was deleted" and "undo restored it
+     * unchanged" are both trivially true when nothing was ever drawn. A suite
+     * that cannot reach a state has to say so, not guess at it.
+     */
+    const skip = (name, reason) => {
+      results.push({ name, pass: "SKIP", detail: reason });
+      console.log(`  ⊘ ${name} — ${reason}`);
+    };
+    const NEEDS_SESSION = "needs AUTH_SECRET: a signed-out reader cannot draw";
+    const NEEDS_SLOT = "needs AUTH_SECRET: a signed-out reader gets one indicator slot";
+
     // Hermetic start — the Chrome profile dir persists between runs. The
     // watchlist checks below assert the anonymous round trip, so the session
     // cookie has to be gone by intent, not because it expired with the browser.
@@ -668,12 +686,21 @@ try {
         `.find(b => b.textContent.trim().startsWith(${JSON.stringify(label)}))?.click()`,
       );
     };
-    await clickInd("RSI (14)"); await sleep(400);
-    const afterRsi = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
-    check("adding an oscillator adds a pane", afterRsi > panesBefore, `${panesBefore} → ${afterRsi}`);
-    await clickInd("RSI (14)"); await sleep(400);
-    const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
-    check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
+    // A second indicator needs a second slot, and a signed-out reader has one:
+    // the menu shows SMA (20) on and every other row padlocked, so the click is
+    // correctly refused and the pane count cannot move. Asserting free-tier
+    // behaviour here tested the gate and called it a broken oscillator.
+    if (!secret) {
+      skip("adding an oscillator adds a pane", NEEDS_SLOT);
+      skip("removing it removes the pane", NEEDS_SLOT);
+    } else {
+      await clickInd("RSI (14)"); await sleep(400);
+      const afterRsi = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
+      check("adding an oscillator adds a pane", afterRsi > panesBefore, `${panesBefore} → ${afterRsi}`);
+      await clickInd("RSI (14)"); await sleep(400);
+      const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
+      check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
+    }
 
     // ── load more history (P2-16) ─────────────────────────────────
     {
@@ -819,11 +846,14 @@ try {
     }
 
     // ── the gate is explained where it is hit (P3-1) ──────────────
-    {
+    if (!secret) {
+      for (const n of ["the free drawing cap actually holds", "hitting it explains why, in place",
+        "and offers the way past it", "it never blocks the chart behind it"]) skip(n, NEEDS_SESSION);
+    } else {
       // Every ceiling emitted an event and then refused silently, which is
       // indistinguishable from a broken tool. Free gets 3 drawings.
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
-      if (secret) await asTier("free");
+      await asTier("free");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
       await sleep(400);
       const r = JSON.parse(await s.evaluate(`(() => {
@@ -857,7 +887,7 @@ try {
       check("it never blocks the chart behind it",
         (await s.evaluate(`!!document.querySelector('svg[role=img]')`)) === true);
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
-      if (secret) await asTier("pro");
+      await asTier("pro");
     }
 
     // ── pinch to zoom on a phone (P2-15) ──────────────────────────
@@ -958,7 +988,16 @@ try {
     }
 
     // ── select, move, undo/redo, new tools (P2-12) ────────────────
-    {
+    if (!secret) {
+      for (const label of ["Tia", "Đường dọc", "Hình chữ nhật", "Ghi chú", "Đo"]) {
+        skip(`the rail offers "${label}"`, NEEDS_SESSION);
+      }
+      for (const n of ["a ray is stored as its own kind", "clicking a drawing selects it instead of deleting it",
+        "a selected drawing shows grab handles", "the selected drawing can be deleted",
+        "undo restores a deleted drawing", "undo restores it unchanged", "redo takes it away again"]) {
+        skip(n, NEEDS_SESSION);
+      }
+    } else {
       const dr = () => s.evaluate(`localStorage.getItem('drawings:VNM') || '[]'`);
       const count = async () => JSON.parse(await dr()).length;
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
@@ -1994,6 +2033,11 @@ try {
 
     console.table(results);
     const failed = results.filter((r) => r.pass === "FAIL");
+    const skipped = results.filter((r) => r.pass === "SKIP");
+    // Skips are printed even when the run is green: a suite that quietly stops
+    // covering a third of the chart is worse than one that fails, because
+    // nothing about the output says so.
+    if (skipped.length) console.error(`SKIPPED: ${skipped.length} — ${[...new Set(skipped.map((r) => r.detail))].join("; ")}`);
     if (failed.length) { console.error("FAILURES:", failed.length); process.exitCode = 1; }
     else console.log("all interaction checks passed");
   }

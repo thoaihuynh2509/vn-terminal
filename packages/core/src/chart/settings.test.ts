@@ -87,6 +87,36 @@ test("restorable asks about the indicator, not the whole token", () => {
   );
 });
 
+test("entitlement is asked about the indicator, not the whole token", () => {
+  // The bug this covers: the caller filtered restorable()'s RESULT by token, so
+  // a lookup for `rsi:21` found no definition, `?.free` was undefined, and a
+  // reader without the full library lost every TUNED indicator on reload — on
+  // the one tier where retuning a period is advertised as free.
+  const known = () => true;
+  const freeOnly = (id: string) => id === "rsi";
+  assert.deepEqual(
+    restorable({ type: "candle", indicators: ["rsi:21", "adx:7"], scale: "lin" as const, paneRatio: null }, 8, known, freeOnly).indicators,
+    ["rsi:21"],
+  );
+  // A reader who may have everything keeps the tuned token untouched.
+  assert.deepEqual(
+    restorable({ type: "candle", indicators: ["rsi:21", "adx:7"], scale: "lin" as const, paneRatio: null }, 8, known).indicators,
+    ["rsi:21", "adx:7"],
+  );
+});
+
+test("an indicator the reader may not have does not eat one of their slots", () => {
+  // Entitlement is applied BEFORE the limit: filtering after it would spend a
+  // slot on something that is then dropped, leaving a free reader with a blank
+  // chart when their first saved indicator happened to be a paid one.
+  const known = () => true;
+  const freeOnly = (id: string) => id === "sma";
+  assert.deepEqual(
+    restorable({ type: "candle", indicators: ["adx:7", "sma:20"], scale: "lin" as const, paneRatio: null }, 1, known, freeOnly).indicators,
+    ["sma:20"],
+  );
+});
+
 test("stored settings drop a malformed token instead of trusting it", () => {
   const s = parseSettings(JSON.stringify({ type: "candle", indicators: ["rsi:21", "rsi:0", 7, "x y"], scale: "lin" as const, paneRatio: null }));
   assert.deepEqual(s?.indicators, ["rsi:21"]);
