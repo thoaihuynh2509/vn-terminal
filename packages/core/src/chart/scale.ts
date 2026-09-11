@@ -106,3 +106,58 @@ export function padRange(id: ScaleId, min: number, max: number, frac = 0.06): { 
   const pad = (max - min) * frac || Math.abs(max) * 0.02 || 1;
   return { min: min - pad, max: max + pad };
 }
+
+/** Lowest and highest value found, and how many non-null values were seen. */
+export interface Extent { lo: number; hi: number; n: number }
+
+/**
+ * The extent of one or more series, with `Math.min`/`Math.max` semantics but
+ * none of their calling convention.
+ *
+ * `Math.min(...values)` passes every value as a function ARGUMENT. A price
+ * pane at "Tất cả" with a dozen overlays spread about 42,000 of them, twice per
+ * render — slow, and close enough to the engine's argument ceiling that a
+ * longer series would throw instead of drawing. A loop has no ceiling.
+ *
+ * The semantics are the ones the spreads had, deliberately, so this is a
+ * refactor and not a behaviour change: `null` is a hole and is skipped, while
+ * `NaN` poisons the result exactly as it poisons `Math.min`. An empty input is
+ * `{ lo: Infinity, hi: -Infinity, n: 0 }`, which is what `Math.min()` and
+ * `Math.max()` return.
+ */
+export function seriesExtent(series: readonly (readonly (number | null)[])[]): Extent {
+  let lo = Infinity, hi = -Infinity, n = 0, poisoned = false;
+  for (const s of series) {
+    for (const v of s) {
+      if (v === null) continue;
+      n++;
+      if (v !== v) { poisoned = true; continue; }
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  return poisoned ? { lo: NaN, hi: NaN, n } : { lo, hi, n };
+}
+
+/**
+ * The price pane's domain: the bars' lows and highs, every overlay's values,
+ * and any extra levels (reference lines) that must stay on screen.
+ *
+ * Lows feed only the bottom and highs only the top, so a `NaN` low poisons the
+ * low alone — the same asymmetry `Math.min(...lows)` / `Math.max(...highs)` had.
+ */
+export function priceExtent(
+  bars: readonly { l: number; h: number }[],
+  series: readonly (readonly (number | null)[])[],
+  extra: readonly number[],
+): Extent {
+  let lo = Infinity, hi = -Infinity, loNaN = false, hiNaN = false;
+  for (const b of bars) {
+    if (b.l !== b.l) loNaN = true; else if (b.l < lo) lo = b.l;
+    if (b.h !== b.h) hiNaN = true; else if (b.h > hi) hi = b.h;
+  }
+  const s = seriesExtent([...series, extra]);
+  if (s.lo !== s.lo) { loNaN = true; hiNaN = true; }
+  else if (s.n) { if (s.lo < lo) lo = s.lo; if (s.hi > hi) hi = s.hi; }
+  return { lo: loNaN ? NaN : lo, hi: hiNaN ? NaN : hi, n: bars.length + s.n };
+}

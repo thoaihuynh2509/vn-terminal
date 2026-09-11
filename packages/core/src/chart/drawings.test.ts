@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MAX_TEXT_LEN, anchorsOf, channelOffset, channelPrices, distanceToChannel, distanceToFib, distanceToHLine, distanceToRay, distanceToRect, distanceToTrend, fibLevels, hitAnchor, hitTest, moveAnchor, parseDrawings, serializeDrawings, storageKey, translate, trendPriceAt, type Drawing, type TrendLine,
+  MAX_TEXT_LEN, anchorsOf, channelOffset, channelPrices, distanceToChannel, distanceToFib, distanceToHLine, distanceToRay, distanceToRect, distanceToTrend, fibLevels, hitAnchor, hitTest, moveAnchor, parseDrawings, sameDrawing, serializeDrawings, storageKey, translate, trendPriceAt, withDraft, type Drawing, type TrendLine,
 } from "./drawings.ts";
 
 const trend: TrendLine = { id: "a", kind: "trend", t1: 0, p1: 10, t2: 100, p2: 20 };
@@ -364,4 +364,24 @@ test("an over-long note is refused rather than truncated on read", () => {
 test("a malformed new-kind drawing is dropped, not half-read", () => {
   assert.deepEqual(parseDrawings('[{"id":"v","kind":"vline"}]'), []);
   assert.deepEqual(parseDrawings('[{"id":"r","kind":"ray","t1":1,"p1":2}]'), []);
+});
+
+test("a drag's in-flight copy replaces only the drawing being dragged", () => {
+  const other: Drawing = { id: "b", kind: "hline", price: 5 };
+  const moved: TrendLine = { ...trend, p2: 25 };
+  const out = withDraft([trend, other], moved);
+  assert.deepEqual(out, [moved, other]);
+  assert.equal(out[1], other, "untouched drawings keep their identity");
+});
+
+test("with nothing in flight the stored list comes back as itself", () => {
+  // Identity, not a copy: the pane memoizes its geometry on this array, and a
+  // fresh copy on every render would quietly defeat that.
+  const list: Drawing[] = [trend];
+  assert.equal(withDraft(list, null), list);
+});
+
+test("an edit that lands where it started is not a change", () => {
+  assert.equal(sameDrawing(trend, { ...trend }), true);
+  assert.equal(sameDrawing(trend, translate(trend, 0, 1)), false);
 });

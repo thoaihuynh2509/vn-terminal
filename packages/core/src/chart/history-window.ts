@@ -85,6 +85,23 @@ export function atLeftEdge(total: number, range: number, offset: number, margin 
 }
 
 /**
+ * Whether the chart should reach for older bars right now.
+ *
+ * `atLeftEdge` answers a geometric question, and counts a window showing every
+ * loaded bar as "at the edge". That is right for a default window larger than
+ * what is loaded — a monthly chart, a new listing — which should extend itself.
+ * It is wrong for a reader who CHOSE "Tất cả": that asks to see what is loaded,
+ * not to load more. Answering it with a fetch pulled a page of older bars, after
+ * which the fixed bar count covered only the newest half — the reader asked for
+ * everything and got less than they had.
+ */
+export function wantsOlder(
+  { fitAll, total, range, offset }: { fitAll: boolean; total: number; range: number; offset: number },
+): boolean {
+  return !fitAll && atLeftEdge(total, range, offset);
+}
+
+/**
  * What a failed history request means.
  *
  * The distinction the chart has to make is between "the feed has nothing older

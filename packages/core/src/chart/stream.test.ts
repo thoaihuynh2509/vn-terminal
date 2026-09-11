@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { POLL_INTERVAL_MS, applyUpdate, pollStream, type BarUpdate } from "./stream.ts";
+import { POLL_INTERVAL_MS, applyUpdate, pollStream, sameBar, type BarUpdate } from "./stream.ts";
 import type { Bar } from "../types.ts";
 
 const DAY = 86_400;
@@ -122,4 +122,11 @@ test("unsubscribing stops the polling", async () => {
 
 test("the default interval is stated, not scattered", () => {
   assert.equal(POLL_INTERVAL_MS, 30_000);
+});
+
+test("an unchanged forming bar is not news", () => {
+  const b = bar(DAY, 10, 12, 9, 11, 100);
+  assert.equal(sameBar(b, { ...b }), true);
+  assert.equal(sameBar(b, { ...b, c: 11.5 }), false);
+  assert.equal(sameBar(b, { ...b, v: 101 }), false, "a trade at the same price still moves volume");
 });

@@ -107,3 +107,14 @@ export function pollStream(
     },
   };
 }
+
+/**
+ * Whether a polled bar says anything new.
+ *
+ * Between trades a poll returns the forming bar unchanged. Treating that as a
+ * new bar re-derived the whole series — and with it every indicator, which is
+ * computed over the full history — every 30 seconds, to draw the same pixels.
+ */
+export function sameBar(a: Bar, b: Bar): boolean {
+  return a.t === b.t && a.o === b.o && a.h === b.h && a.l === b.l && a.c === b.c && a.v === b.v;
+}

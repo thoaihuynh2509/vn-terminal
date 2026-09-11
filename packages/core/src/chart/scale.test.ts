@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_SCALE, SCALES, denorm, effectiveScale, isScale, norm, padRange, pctOf,
-  scaleTicks, usable,
+  priceExtent, scaleTicks, seriesExtent, usable,
 } from "./scale.ts";
 
 const close = (a: number, b: number, eps = 1e-9) =>
@@ -128,4 +128,45 @@ test("only the three known scales are accepted", () => {
   assert.ok(isScale("lin") && isScale("log") && isScale("pct"));
   assert.ok(!isScale("renko") && !isScale("") && !isScale(null));
   assert.equal(DEFAULT_SCALE, "lin");
+});
+
+test("seriesExtent agrees with the spread it replaces", () => {
+  const a = [3, null, -2, 7.5], b = [null, 12, 0];
+  const vals = [...a, ...b].filter((v): v is number => v !== null);
+  assert.deepEqual(seriesExtent([a, b]), { lo: Math.min(...vals), hi: Math.max(...vals), n: vals.length });
+});
+
+test("seriesExtent keeps Math.min's edge cases rather than inventing new ones", () => {
+  // Empty is what Math.min() and Math.max() return, so callers' guards still hold.
+  assert.deepEqual(seriesExtent([]), { lo: Infinity, hi: -Infinity, n: 0 });
+  assert.deepEqual(seriesExtent([[null, null]]), { lo: Infinity, hi: -Infinity, n: 0 });
+  // NaN poisons, exactly as it poisons Math.min — a refactor, not a silent fix.
+  const r = seriesExtent([[1, NaN, 5]]);
+  assert.ok(Number.isNaN(r.lo) && Number.isNaN(r.hi));
+  assert.equal(r.n, 3);
+});
+
+test("seriesExtent survives a series the spread cannot even be called with", () => {
+  // The reason this exists: spreading passes every value as an argument, and
+  // past the engine's ceiling the chart would throw instead of drawing.
+  const huge = Array.from({ length: 1_000_000 }, (_, i) => (i % 1000) - 500);
+  assert.throws(() => Math.min(...huge), RangeError);
+  assert.deepEqual(seriesExtent([huge]), { lo: -500, hi: 499, n: 1_000_000 });
+});
+
+test("priceExtent is the price pane's old domain, lows to highs plus overlays and levels", () => {
+  const bars = [{ l: 10, h: 14 }, { l: 9, h: 13 }, { l: 11, h: 16 }];
+  const overlays = [[12, null, 17]];
+  const refs = [8.5];
+  const vals = overlays.flat().filter((v): v is number => v !== null);
+  const r = priceExtent(bars, overlays, refs);
+  assert.equal(r.lo, Math.min(...bars.map((b) => b.l), ...vals, ...refs));
+  assert.equal(r.hi, Math.max(...bars.map((b) => b.h), ...vals, ...refs));
+});
+
+test("a broken low poisons only the bottom of the price domain", () => {
+  // The same asymmetry the spreads had: lows only ever fed Math.min.
+  const r = priceExtent([{ l: NaN, h: 14 }, { l: 9, h: 13 }], [], []);
+  assert.ok(Number.isNaN(r.lo));
+  assert.equal(r.hi, 14);
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DAILY_FLOOR_ISO, INTRADAY_FLOOR_DAYS, atLeftEdge, grew, historyFailure, mergeBars, olderWindow } from "./history-window.ts";
+import { DAILY_FLOOR_ISO, INTRADAY_FLOOR_DAYS, atLeftEdge, grew, historyFailure, mergeBars, olderWindow, wantsOlder } from "./history-window.ts";
 import type { Bar } from "../types.ts";
 
 const DAY = 86_400;
@@ -118,4 +118,19 @@ test("a refusal that will repeat forever stops the asking", () => {
   assert.equal(historyFailure(400), "stop"); // malformed range
   assert.equal(historyFailure(402), "stop"); // intraday needs a paid tier
   assert.equal(historyFailure(404), "stop");
+});
+
+test("choosing Tất cả is a request to see what is loaded, not to load more", () => {
+  // The bug this pins: ALL resolved to bars.length, which atLeftEdge reads as
+  // "at the edge", so picking it fetched a page of older bars — after which the
+  // same count covered only the newest half of the series.
+  assert.equal(wantsOlder({ fitAll: true, total: 433, range: 433, offset: 0 }), false);
+  assert.equal(wantsOlder({ fitAll: true, total: 434, range: 433, offset: 0 }), false, "a bar appended while fitted");
+});
+
+test("a default window larger than what is loaded still extends itself", () => {
+  // A monthly chart or a new listing: nobody chose to stop there.
+  assert.equal(wantsOlder({ fitAll: false, total: 50, range: 120, offset: 0 }), true);
+  assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 100, offset: 890 }), true, "panned to the edge");
+  assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 100, offset: 0 }), false);
 });

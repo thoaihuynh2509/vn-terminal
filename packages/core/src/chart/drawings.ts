@@ -472,3 +472,25 @@ export function parseDrawings(raw: string | null): Drawing[] {
 export function serializeDrawings(drawings: Drawing[]): string {
   return JSON.stringify(drawings);
 }
+
+/**
+ * The drawings as they should be DRAWN mid-gesture: the stored list with the
+ * one being dragged replaced by its in-flight copy.
+ *
+ * A drag used to write the whole list back to storage on every pointer move —
+ * a synchronous localStorage write, a re-read, a re-parse of every drawing and
+ * several full serialisations, per event. The in-flight copy lives in
+ * component state instead and is committed once, on release.
+ *
+ * With nothing in flight this hands back the stored array ITSELF, not a copy:
+ * the price pane memoizes its geometry on that identity.
+ */
+export function withDraft(drawings: Drawing[], draft: Drawing | null): Drawing[] {
+  if (!draft) return drawings;
+  return drawings.map((d) => (d.id === draft.id ? draft : d));
+}
+
+/** Whether an edit changed a drawing — comparing that one, not the whole list. */
+export function sameDrawing(a: Drawing, b: Drawing): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
