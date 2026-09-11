@@ -4,22 +4,28 @@ import { num, volume as fmtVol } from "@/lib/format";
 import type { Dict } from "@/lib/i18n";
 import { COLOR_VAR, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { labelFor, shortFor } from "@/lib/ta/params";
-import type { Bar, Locale } from "@/lib/types";
-import { stamp } from "./chartShared";
+import type { Locale } from "@/lib/types";
+import { stamp, useChartSeries } from "./chartShared";
 import { PeriodChip } from "./PeriodChip";
+import { useHoverIndex } from "./crosshair";
 
 /**
  * Status line: symbol + OHLC + indicator values, the way a terminal reports
  * the bar under the cursor.
  */
 export function StatusLine({
-  symbol, activeBar, activeChange, groups, idx, locale, digits, intraday, dict, setPeriod, toggle,
+  symbol, groups, locale, digits, intraday, dict, setPeriod, toggle,
 }: {
-  symbol: string; activeBar: Bar; activeChange: number;
-  groups: { def: IndicatorDef; period: number | null; plots: Plot[] }[]; idx: number;
+  symbol: string;
+  groups: { def: IndicatorDef; period: number | null; plots: Plot[] }[];
   locale: Locale; digits: number; intraday: boolean; dict: Dict;
   setPeriod: (def: IndicatorDef, period: number) => void; toggle: (def: IndicatorDef) => void;
 }) {
+  // The bar under the crosshair, else the last one.
+  const { view } = useChartSeries();
+  const idx = useHoverIndex(view.length) ?? view.length - 1;
+  const activeBar = view[idx];
+  const activeChange = activeBar.c - (idx > 0 ? view[idx - 1].c : activeBar.o);
   return (
     <dl className="tnum mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-page px-2.5 py-1.5 text-[12px]">
       <div className="flex gap-1.5"><dt className="sr-only">{dict.chart.symbol}</dt><dd className="font-bold tracking-tight">{symbol}</dd></div>

@@ -6,6 +6,7 @@ import { COLOR_VAR, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { labelFor, shortFor } from "@/lib/ta/params";
 import { PaneCanvas } from "./PaneCanvas";
 import { PlotLayer } from "./panLayers";
+import { CrosshairLine, useHoverIndex } from "./crosshair";
 import { useChartColors } from "./chartColors";
 import { drawSeries, drawSignedBars, drawVolume } from "./canvasLayers";
 import { seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
@@ -16,7 +17,7 @@ import { useChartSeries, type PaneGeom } from "./chartShared";
 const NONE: (number | null)[] = [];
 
 export function VolumePane({
-  lead, bleedPx, drawCols, plotW, width, band, x, PAD, maxCols, hover, locale,
+  lead, bleedPx, drawCols, plotW, width, band, x, PAD, maxCols, locale,
 }: PaneGeom & { locale: Locale }) {
   const H = 56;
   const { view, drawView } = useChartSeries();
@@ -51,7 +52,7 @@ export function VolumePane({
       </PlotLayer>
       <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={`Volume`} className="relative block">
         {barLayer}
-        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+        <CrosshairLine x={x} height={H} length={view.length} />
         <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">VOL {fmtVol(maxV, locale)}</text>
       </svg>
     </div>
@@ -65,7 +66,7 @@ export function VolumePane({
  * simply has no bar; nothing is drawn as a fake zero.
  */
 export function ForeignPane({
-  width, band, x, PAD, maxCols, hover, label, lead, bleedPx, drawCols, plotW,
+  width, band, x, PAD, maxCols, label, lead, bleedPx, drawCols, plotW,
 }: PaneGeom & { label: string; locale: Locale }) {
   const H = 54;
   const foreign = useChartSeries().foreign;
@@ -112,7 +113,7 @@ export function ForeignPane({
       <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="relative block">
         {!colors && <line x1={PAD.left} x2={PAD.left + (width - PAD.left - PAD.right)} y1={mid} y2={mid} stroke="var(--grid)" strokeWidth={1} />}
         {barLayer}
-        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+        <CrosshairLine x={x} height={H} length={net.length} />
         <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
       </svg>
     </div>
@@ -130,7 +131,7 @@ const breadthY = (v: number) => 8 + (BREADTH_H - 16) - (v / 100) * (BREADTH_H - 
  * the market participating), not a threshold someone picked.
  */
 export function BreadthPane({
-  width, x, PAD, maxCols, hover, label, lead, bleedPx, drawCols, plotW,
+  width, x, PAD, maxCols, label, lead, bleedPx, drawCols, plotW,
 }: PaneGeom & { label: string; locale: Locale }) {
   const H = BREADTH_H;
   const breadth = useChartSeries().breadth;
@@ -161,7 +162,7 @@ export function BreadthPane({
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="relative block">
       {!colors && <line x1={PAD.left} x2={PAD.left + plotW} y1={y(50)} y2={y(50)} stroke="var(--grid)" strokeWidth={1} strokeDasharray="2 3" />}
       {d && <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />}
-      {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+      <CrosshairLine x={x} height={H} length={pct.length} />
       <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
       {last !== undefined && (
         <text x={PAD.left + plotW - 2} y={10} fontSize={9} textAnchor="end" fill="var(--muted)" className="tnum">
@@ -174,11 +175,11 @@ export function BreadthPane({
 }
 
 export function OscillatorPane({
-  def, period, plots, drawPlots, width, band, x, PAD, maxCols, hover, idx, locale, lead, bleedPx, drawCols, plotW,
+  def, period, plots, drawPlots, width, band, x, PAD, maxCols, locale, lead, bleedPx, drawCols, plotW,
 }: PaneGeom & {
   def: IndicatorDef; period: number | null; plots: Plot[];
   /** `plots` over `drawView`: what is drawn, where `plots` sets the scale and the read-out. */
-  drawPlots: Plot[]; idx: number; locale: Locale;
+  drawPlots: Plot[]; locale: Locale;
 }) {
   const H = 96;
   const xd = useCallback((j: number) => x(j - lead), [x, lead]);
@@ -232,12 +233,7 @@ export function OscillatorPane({
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={labelFor(def, period)} className="relative block">
       {/* The plot labels already name the indicator; printing `def.short` too
           produced "RSI RSI 14". */}
-      <text x={PAD.left} y={11} fontSize={10} fill="var(--muted)">
-        {plots
-          .map((p) => (p.series[idx] === null ? null : `${p.label} ${num(p.series[idx]!, locale, 2)}`))
-          .filter(Boolean)
-          .join("   ") || shortFor(def, period)}
-      </text>
+      <OscReadout plots={plots} def={def} period={period} locale={locale} x={PAD.left} />
 
       {(def.guides ?? []).map((g) => (
         <g key={g}>
@@ -248,8 +244,24 @@ export function OscillatorPane({
 
       {plotLayer}
 
-      {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+      <CrosshairLine x={x} height={H} length={plots[0]?.series.length ?? 0} />
     </svg>
     </div>
+  );
+}
+
+/** An oscillator's values at the crosshair, else at the last bar. */
+function OscReadout({ plots, def, period, locale, x }: {
+  plots: Plot[]; def: IndicatorDef; period: number | null; locale: Locale; x: number;
+}) {
+  const n = plots[0]?.series.length ?? 0;
+  const idx = useHoverIndex(n) ?? n - 1;
+  return (
+    <text x={x} y={11} fontSize={10} fill="var(--muted)">
+      {plots
+        .map((p) => (p.series[idx] === null ? null : `${p.label} ${num(p.series[idx]!, locale, 2)}`))
+        .filter(Boolean)
+        .join("   ") || shortFor(def, period)}
+    </text>
   );
 }

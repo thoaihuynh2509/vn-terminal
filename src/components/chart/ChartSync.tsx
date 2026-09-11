@@ -10,10 +10,10 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
  * resolves the moment against its own series (`linkedIndex`) and shows nothing
  * if it has no bar there.
  *
- * A single chart is not wrapped in a provider at all, so the default context is
- * inert: `useChartSync` returns nulls and every cell behaves exactly as it did
- * before. That keeps the one-up chart, which is what most readers use, free of
- * this feature entirely.
+ * The terminal wraps even a single chart in the provider. What keeps that cheap
+ * is that each chart reads this context in one leaf (`CrosshairSync`, in
+ * `ChartPro`), so a change re-renders that leaf rather than the chart. Outside
+ * any provider the default context is inert and `useChartSync` returns nulls.
  */
 interface ChartSyncValue {
   /** Unix seconds under the pointer, in whichever cell is driving. */

@@ -393,7 +393,8 @@ export async function TerminalView({
 
       {/* One provider around the whole grid: the cells share the hovered MOMENT,
           so a crosshair on one lands on the same session in every other. A
-          single chart is not wrapped, so the common case pays nothing. */}
+          single chart sits inside it too; only ChartPro's `CrosshairSync` leaf
+          reads the shared state, so a hover re-renders nothing else. */}
       <ChartSyncProvider>
       <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
         <div className="card min-w-0 p-5">

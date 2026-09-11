@@ -5,17 +5,18 @@ import { barTime, dateOnly } from "@/lib/format";
 import type { Locale } from "@/lib/types";
 import { stamp, useChartSeries } from "./chartShared";
 import { PlotLayer } from "./panLayers";
+import { useHoverIndex } from "./crosshair";
 
 export function XAxis({
-  lead, bleedPx, plotW, PAD, fromEnd, width, x, xStep, locale, hover, intraday,
+  lead, bleedPx, plotW, PAD, fromEnd, width, x, xStep, locale, intraday,
 }: {
   lead: number; bleedPx: number; plotW: number;
   PAD: { left: number; right: number };
   /** How many bars `drawView[0]` sits before the newest bar. */
   fromEnd: number;
-  width: number; x: (i: number) => number; xStep: number; locale: Locale; hover: number | null; intraday: boolean;
+  width: number; x: (i: number) => number; xStep: number; locale: Locale; intraday: boolean;
 }) {
-  const { view, drawView } = useChartSeries();
+  const { drawView } = useChartSeries();
   // An intraday axis that printed only the clock would repeat "09:00" at every
   // tick once the window spans more than a day, which tells the reader nothing.
   // Ticks that open a new trading day carry the date; ticks inside a day carry
@@ -52,15 +53,23 @@ export function XAxis({
         </svg>
       </PlotLayer>
       <svg width="100%" height={20} viewBox={`0 0 ${width} 20`} aria-hidden="true" className="relative block">
-        {hover !== null && (
-          <g>
-            <rect x={Math.max(0, x(hover) - (intraday ? 34 : 26))} y={1} width={intraday ? 68 : 52} height={16} rx={2} fill="var(--ink)" />
-            <text x={Math.max(intraday ? 34 : 26, x(hover))} y={12.5} fontSize={9.5} textAnchor="middle" fill="var(--page)" className="tnum">
-              {stamp(view[hover].t, locale, intraday)}
-            </text>
-          </g>
-        )}
+        <AxisHoverTag x={x} locale={locale} intraday={intraday} />
       </svg>
     </div>
+  );
+}
+
+/** The hovered bar's date, pinned to the axis. */
+function AxisHoverTag({ x, locale, intraday }: { x: (i: number) => number; locale: Locale; intraday: boolean }) {
+  const { view } = useChartSeries();
+  const hover = useHoverIndex(view.length);
+  if (hover === null) return null;
+  return (
+    <g>
+      <rect x={Math.max(0, x(hover) - (intraday ? 34 : 26))} y={1} width={intraday ? 68 : 52} height={16} rx={2} fill="var(--ink)" />
+      <text x={Math.max(intraday ? 34 : 26, x(hover))} y={12.5} fontSize={9.5} textAnchor="middle" fill="var(--page)" className="tnum">
+        {stamp(view[hover].t, locale, intraday)}
+      </text>
+    </g>
   );
 }

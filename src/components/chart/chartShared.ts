@@ -21,7 +21,7 @@ export function stamp(t: number, locale: Locale, intraday: boolean): string {
 
 export interface PaneGeom {
   width: number; band: number; x: (i: number) => number;
-  PAD: { left: number; right: number }; hover: number | null;
+  PAD: { left: number; right: number };
   /** Columns the plot can resolve; see `maxColumnsFor`. One value for every pane. */
   maxCols: number;
   intraday: boolean;

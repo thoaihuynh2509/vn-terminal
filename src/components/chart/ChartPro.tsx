@@ -1,13 +1,13 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dict } from "@/lib/i18n";
 import { INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { clampPeriod, effectivePeriod, formatRef, parseRef, sameIndicator } from "@/lib/ta/params";
 import { GateHint, type Gate } from "./GateHint";
 import { INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
 import { MAX_TEXT_LEN, hitAnchor, hitTest, moveAnchor, newId, translate, type Drawing, type DrawingKind, sameDrawing, withDraft } from "@/lib/chart/drawings";
-import { clampHover, maxOffset, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
+import { maxOffset, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { FIRST_CHART_KEY } from "@/components/OnboardingWatchlist";
 import { maxColumnsFor } from "@/lib/chart/paths";
@@ -21,7 +21,7 @@ import { DEFAULT_SETTINGS, SETTINGS_KEY, parseSettings, restorable, serializeSet
 import { track } from "@/lib/analytics/posthog";
 import { parseAlerts, STORAGE_KEY as ALERTS_KEY } from "@/lib/alerts/alerts";
 import type { Bar, Locale, Tier } from "@/lib/types";
-import { ChartSeriesContext, type ChartSeries, type ChartType, TOOL_POINTS, type RefLine, type CompareSeries } from "./chartShared";
+import { ChartSeriesContext, useChartSeries, type ChartSeries, type ChartType, TOOL_POINTS, type RefLine, type CompareSeries } from "./chartShared";
 import { Toolbar } from "./ChartToolbar";
 import { PricePane } from "./PricePane";
 import { VolumePane, ForeignPane, BreadthPane, OscillatorPane } from "./SubPanes";
@@ -32,6 +32,7 @@ import { StatusLine } from "./StatusLine";
 import { useDrawingStore } from "./useDrawingStore";
 import { useSeriesBars } from "./useSeriesBars";
 import { PanLayersContext, createPanLayers } from "./panLayers";
+import { CrosshairContext, createCrosshair, useOwnHover } from "./crosshair";
 
 /**
  * Plot margins. Module scope, not per render: a fresh object each render gave
@@ -149,16 +150,13 @@ export function ChartPro({
   // How far back the window sits, in bars. See `lib/chart/pan`.
   const [offset, setOffset] = useState(0);
   const [activeChoice, setActiveChoice] = useState<string[] | null>(null);
-  const [hover, setHoverLocal] = useState<number | null>(null);
-  const sync = useChartSync();
+  // The crosshair lives in a store rather than here: as chart state it
+  // re-rendered every pane on every pointer move. See `crosshair.tsx`.
+  const [crosshair] = useState(createCrosshair);
   // Stable per mount and unique per cell: two cells showing the SAME symbol in
   // a grid must still be told apart, so the symbol is not enough.
   const cellId = useId();
 
-  const setHover = setHoverLocal;
-  // The pointer's own height, so the crosshair can answer "what price is my
-  // cursor at" rather than only "what did this candle close at".
-  const [cursorY, setCursorY] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
   const [full, setFull] = useState(false);
 
@@ -689,50 +687,9 @@ export function ChartPro({
   const barAtX = useCallback((px: number) =>
     Math.max(0, Math.min(view.length - 1, Math.round((px - PAD.left) / band - 0.5))), [view.length, band]);
 
-  /**
-   * Tell the grid which MOMENT this cell's pointer is on.
-   *
-   * Done in an effect rather than inside the pointer handler so it cannot fire
-   * during a state update, and keyed on the bar's timestamp so moving within
-   * one bar publishes nothing — a pointer crossing a candle emits dozens of
-   * events, and each would otherwise re-render every other cell.
-   */
-  const hoverT = hover !== null ? (view[hover]?.t ?? null) : null;
-  const publish = sync.publish;
-  const isSource = sync.sourceId === cellId;
-  useEffect(() => {
-    // Only the cell that owns the crosshair may clear it. Without this, a
-    // companion — which has no hover of its own — publishes null on the very
-    // render the source's hover caused, and erases it.
-    if (hoverT === null && !isSource) return;
-    publish(cellId, hoverT);
-  }, [publish, cellId, hoverT, isSource]);
-
-  const linked = useMemo(
-    () => (hover !== null || sync.sourceId === cellId ? null : linkedIndex(view, sync.hoverT)),
-    [hover, sync.hoverT, sync.sourceId, cellId, view],
-  );
   if (!view.length) {
     return <p className="py-16 text-center text-[13px] text-muted">{dict.common.noData}</p>;
   }
-
-  /**
-   * The crosshair, which may belong to a sibling cell.
-   *
-   * This cell's own pointer wins when it has one. Otherwise the grid's hovered
-   * MOMENT is resolved against this symbol's own bars, and resolves to nothing
-   * when this symbol has no bar there — a companion that did not trade at that
-   * moment shows no crosshair rather than one parked on the nearest day.
-   */
-  // Clamped, because the hover was picked against a window that a zoom may
-  // since have re-sliced: four handlers change `range` and none of them own the
-  // hover. Reading `view[idx - 1].c` for a bar that is no longer there is the
-  // crash a reader sees on an ordinary zoom.
-  const shownHover = clampHover(hover ?? linked, view.length);
-  const idx = shownHover ?? view.length - 1;
-  const activeBar = view[idx];
-  const prevClose = idx > 0 ? view[idx - 1].c : activeBar.o;
-  const activeChange = activeBar.c - prevClose;
 
   const onPriceClick = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!canDraw) return;
@@ -1005,21 +962,16 @@ export function ChartPro({
         if (Math.abs(panLive.current - panShown.current) * band > bleedPx / 2) recenter();
         if (panRest.current !== null) clearTimeout(panRest.current);
         panRest.current = setTimeout(() => { panRest.current = null; recenter(); }, PAN_REST_MS);
-        setHover((h) => (h === null ? h : null));
-        setCursorY((v) => (v === null ? v : null));
+        crosshair.set({ hover: null, cursorY: null });
         return;
       }
     }
     const rect = e.currentTarget.getBoundingClientRect();
     const i = Math.round((e.clientX - rect.left - PAD.left) / band - 0.5);
     const next = Math.max(0, Math.min(view.length - 1, i));
-    // Moving a pixel inside the same candle changed nothing but still re-rendered
-    // every pane. Returning the identical value makes React skip the update.
-    setHover((h) => (h === next ? h : next));
-    // Rounded: a sub-pixel change moves nothing a reader can see but would
-    // re-render every pane.
-    const py = Math.round(e.clientY - rect.top);
-    setCursorY((v) => (v === py ? v : py));
+    // Rounded: a sub-pixel change moves nothing a reader can see. A move that
+    // changes neither value notifies nobody.
+    crosshair.set({ hover: next, cursorY: Math.round(e.clientY - rect.top) });
   };
   const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
     // Undo/redo on the platform's own chord, so it works without being taught.
@@ -1067,17 +1019,18 @@ export function ChartPro({
     }
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
-      setHover((h) => {
-        const base = h ?? view.length - 1;
-        return Math.max(0, Math.min(view.length - 1, base + (e.key === "ArrowRight" ? 1 : -1)));
-      });
-    } else if (e.key === "Escape") { setHover(null); setCursorY(null); }
+      const base = crosshair.get().hover ?? view.length - 1;
+      crosshair.set({ hover: Math.max(0, Math.min(view.length - 1, base + (e.key === "ArrowRight" ? 1 : -1))) });
+    } else if (e.key === "Escape") { crosshair.set({ hover: null, cursorY: null }); }
   };
 
   const xStep = Math.max(1, Math.floor(view.length / 6));
   const drawn = { lead, bleedPx, drawCols, plotW };
 
   return (
+    <ChartSeriesContext.Provider value={series}>
+    <CrosshairContext.Provider value={crosshair}>
+    <CrosshairSync cellId={cellId} />
     <div className={full ? "fixed inset-0 z-50 overflow-auto bg-page p-4" : ""}>
       <Toolbar
         dict={dict} locale={locale} unlocked={unlocked} limit={limit}
@@ -1123,7 +1076,7 @@ export function ChartPro({
       </div>
 
       <StatusLine
-        symbol={symbol} activeBar={activeBar} activeChange={activeChange} groups={computed.groups} idx={idx}
+        symbol={symbol} groups={computed.groups}
         locale={locale} digits={digits} intraday={intraday} dict={dict} setPeriod={setPeriod} toggle={toggle}
       />
 
@@ -1152,17 +1105,15 @@ export function ChartPro({
               axis labels under it both looks broken and repaints every move. */}
           <div ref={wrapRef} className="min-w-0 flex-1 select-none">
           <PanLayersContext.Provider value={pan}>
-          <ChartSeriesContext.Provider value={series}>
           <PricePane
             intraday={intraday}
             {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols}
             drawOverlays={drawPlots.price}
-            type={type} overlays={computed.price} hover={shownHover} idx={idx} H={priceH}
+            type={type} overlays={computed.price} H={priceH}
             refLines={refLines} alerts={alertLines} compareView={compareView} placedEvents={placed} geom={priceGeom} selectedId={selectedId}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={shownDrawings} pending={pending} mode={mode} onClick={onDown}
-            onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
-            cursorY={cursorY}
+            onMove={onMove} onLeave={() => crosshair.set({ hover: null, cursorY: null })} onKey={onKey} onUp={onUp} canPan={canPan}
           />
           {/* The divider between the price pane and everything below it.
               `separator` with a value is what a screen reader needs to say what
@@ -1188,16 +1139,16 @@ export function ChartPro({
           >
             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-line group-hover:bg-accent group-focus:bg-accent" />
           </div>
-          <VolumePane {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday} locale={locale} />
+          <VolumePane {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} intraday={intraday} locale={locale} />
           {breadthView && (
             <BreadthPane
-              {...drawn} intraday={intraday} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover}
+              {...drawn} intraday={intraday} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols}
               label={breadth?.label ?? ""} locale={locale}
             />
           )}
           {foreignView && (
             <ForeignPane
-              {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday}
+              {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} intraday={intraday}
               label={foreign?.label ?? "Khối ngoại"} locale={locale}
             />
           )}
@@ -1205,15 +1156,55 @@ export function ChartPro({
             <OscillatorPane
               intraday={intraday} {...drawn}
               key={def.id} def={def} period={period} plots={plots} drawPlots={drawPlots.panes[i] ?? plots} width={width}
-              band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} idx={idx} locale={locale}
+              band={band} x={x} PAD={PAD} maxCols={maxCols} locale={locale}
             />
           ))}
-          <XAxis {...drawn} PAD={PAD} fromEnd={bars.length - 1 - dStart} width={width} x={x} xStep={xStep} locale={locale} hover={shownHover} intraday={intraday} />
-          </ChartSeriesContext.Provider>
+          <XAxis {...drawn} PAD={PAD} fromEnd={bars.length - 1 - dStart} width={width} x={x} xStep={xStep} locale={locale} intraday={intraday} />
           </PanLayersContext.Provider>
           </div>
         </div>
       )}
     </div>
+    </CrosshairContext.Provider>
+    </ChartSeriesContext.Provider>
   );
+}
+
+/**
+ * The crosshair's link to the rest of a chart grid, in a leaf of its own.
+ *
+ * The grid's shared state changes on every bar a pointer crosses, and a chart
+ * that read it directly re-rendered in full each time — a single chart too,
+ * since the terminal wraps it in the same provider. Here that re-renders only
+ * this.
+ *
+ * It publishes which MOMENT this cell's pointer is on: from an effect, so it
+ * cannot fire during a state update, and keyed on the bar's timestamp so moving
+ * within one bar publishes nothing. And it resolves a sibling's moment against
+ * this symbol's own bars, which resolves to nothing when this symbol has no bar
+ * there — a companion that did not trade at that moment shows no crosshair
+ * rather than one parked on the nearest day. This cell's own pointer, when it
+ * has one, wins; see `useHoverIndex`.
+ */
+function CrosshairSync({ cellId }: { cellId: string }) {
+  const sync = useChartSync();
+  const crosshair = useContext(CrosshairContext);
+  const { view } = useChartSeries();
+  const hover = useOwnHover();
+  const hoverT = hover !== null ? (view[hover]?.t ?? null) : null;
+  const isSource = sync.sourceId === cellId;
+  const { publish } = sync;
+  useEffect(() => {
+    // Only the cell that owns the crosshair may clear it. Without this, a
+    // companion — which has no hover of its own — publishes null on the very
+    // render the source's hover caused, and erases it.
+    if (hoverT === null && !isSource) return;
+    publish(cellId, hoverT);
+  }, [publish, cellId, hoverT, isSource]);
+  const linked = useMemo(
+    () => (isSource ? null : linkedIndex(view, sync.hoverT)),
+    [isSource, view, sync.hoverT],
+  );
+  useLayoutEffect(() => { crosshair?.set({ linked }); }, [crosshair, linked]);
+  return null;
 }

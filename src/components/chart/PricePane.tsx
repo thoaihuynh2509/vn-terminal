@@ -6,6 +6,7 @@ import type { Dict } from "@/lib/i18n";
 import { COLOR_VAR, type Plot } from "@/lib/ta/registry";
 import { PaneCanvas } from "./PaneCanvas";
 import { PlotLayer } from "./panLayers";
+import { useCursorY, useHoverIndex } from "./crosshair";
 import { useChartColors } from "./chartColors";
 import { dashList, drawArea, drawCandles, drawSeries } from "./canvasLayers";
 import { columnsFor } from "@/lib/chart/geometry";
@@ -26,14 +27,14 @@ function dashGlyph(i: number): string {
 }
 
 export function PricePane({
-  width, plotW, band, x, PAD, maxCols, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
+  width, plotW, band, x, PAD, maxCols, type, overlays, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, cursorY, placedEvents, geom, selectedId,
+  refLines, alerts, compareView, placedEvents, geom, selectedId,
   lead, bleedPx, drawCols, drawOverlays,
 }: PaneGeom & {
   /** `overlays` over the drawn window rather than the visible one. */
   drawOverlays: Plot[];
-  H: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
+  H: number; type: ChartType; overlays: Plot[]; locale: Locale; digits: number;
   symbol: string; dict: Dict;
   refLines: RefLine[]; alerts: PriceAlert[];
   /** Corporate events, already placed on the drawn window's indices. */
@@ -42,7 +43,6 @@ export function PricePane({
   geom: { sc: ScaleId; yMin: number; yMax: number };
   selectedId: string | null;
   compareView: { label: string; series: (number | null)[] }[];
-  cursorY: number | null;
   drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
   onClick: (e: React.PointerEvent<SVGSVGElement>) => void;
   onMove: (e: React.PointerEvent<SVGSVGElement>) => void; onLeave: () => void;
@@ -627,40 +627,7 @@ export function PricePane({
 
         {lastPriceLayer}
 
-        {/* The horizontal half of the crosshair, at the POINTER rather than at the
-            candle: reading a level off a chart means "what price is here", and
-            answering only with the close makes the reader estimate the rest. */}
-        {cursorY !== null && cursorY > 8 && cursorY < H - 8 && (() => {
-          const atCursor = yMin + (1 - (cursorY - 10) / (H - 20)) * (yMax - yMin);
-          const lastC = view[view.length - 1]?.c;
-          const delta = lastC ? ((atCursor - lastC) / lastC) * 100 : 0;
-          return (
-            <g>
-              <line x1={PAD.left} x2={PAD.left + plotW} y1={cursorY} y2={cursorY}
-                stroke="var(--axis)" strokeWidth={1} strokeDasharray="3 3" />
-              <rect x={PAD.left + plotW + 2} y={cursorY - 8} width={PAD.right - 4} height={16} rx={2}
-                fill="var(--ink-2)" />
-              <text x={PAD.left + plotW + PAD.right / 2} y={cursorY + 4} fontSize={10} textAnchor="middle"
-                fill="var(--page)" className="tnum">{num(atCursor, locale, digits)}</text>
-              {/* Signed, so the distance from the last close reads without colour. */}
-              <text x={PAD.left + plotW - 4} y={cursorY - 5} fontSize={10} textAnchor="end"
-                fill="var(--muted)" className="tnum">
-                {delta >= 0 ? "+" : ""}{num(delta, locale, 2)}%
-              </text>
-            </g>
-          );
-        })()}
-
-        {hover !== null && (
-          <g>
-            <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />
-            {/* Price of the hovered bar, pinned to the axis. */}
-            <rect x={PAD.left + plotW + 2} y={y(view[hover].c) - 8} width={PAD.right - 4} height={16} rx={2}
-              fill="var(--ink)" />
-            <text x={PAD.left + plotW + PAD.right / 2} y={y(view[hover].c) + 4} fontSize={10} textAnchor="middle"
-              fill="var(--page)" className="tnum">{num(view[hover].c, locale, digits)}</text>
-          </g>
-        )}
+        <PriceCrosshair x={x} y={y} H={H} PAD={PAD} plotW={plotW} yMin={yMin} yMax={yMax} locale={locale} digits={digits} />
 
         {handleLayer}
       </svg>
@@ -672,13 +639,70 @@ export function PricePane({
         </div>
       )}
 
+      <HoverReadout x={x} width={width} locale={locale} digits={digits} intraday={intraday} />
+    </div>
+  );
+}
+
+/** The crosshair's two halves and their axis tags: all a pointer move redraws in this pane. */
+function PriceCrosshair({ x, y, H, PAD, plotW, yMin, yMax, locale, digits }: {
+  x: (i: number) => number; y: (v: number) => number; H: number;
+  PAD: { left: number; right: number }; plotW: number; yMin: number; yMax: number; locale: Locale; digits: number;
+}) {
+  const { view } = useChartSeries();
+  const hover = useHoverIndex(view.length);
+  const cursorY = useCursorY();
+  return (
+    <>
+      {/* The horizontal half of the crosshair, at the POINTER rather than at the
+          candle: reading a level off a chart means "what price is here", and
+          answering only with the close makes the reader estimate the rest. */}
+      {cursorY !== null && cursorY > 8 && cursorY < H - 8 && (() => {
+        const atCursor = yMin + (1 - (cursorY - 10) / (H - 20)) * (yMax - yMin);
+        const lastC = view[view.length - 1]?.c;
+        const delta = lastC ? ((atCursor - lastC) / lastC) * 100 : 0;
+        return (
+          <g>
+            <line x1={PAD.left} x2={PAD.left + plotW} y1={cursorY} y2={cursorY}
+              stroke="var(--axis)" strokeWidth={1} strokeDasharray="3 3" />
+            <rect x={PAD.left + plotW + 2} y={cursorY - 8} width={PAD.right - 4} height={16} rx={2}
+              fill="var(--ink-2)" />
+            <text x={PAD.left + plotW + PAD.right / 2} y={cursorY + 4} fontSize={10} textAnchor="middle"
+              fill="var(--page)" className="tnum">{num(atCursor, locale, digits)}</text>
+            {/* Signed, so the distance from the last close reads without colour. */}
+            <text x={PAD.left + plotW - 4} y={cursorY - 5} fontSize={10} textAnchor="end"
+              fill="var(--muted)" className="tnum">
+              {delta >= 0 ? "+" : ""}{num(delta, locale, 2)}%
+            </text>
+          </g>
+        );
+      })()}
+
       {hover !== null && (
-        <div role="status" className="pointer-events-none absolute top-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] shadow-sm"
-          style={{ left: Math.min(Math.max(x(hover) - 55, 0), Math.max(0, width - 120)) }}>
-          <div className="font-medium">{stamp(view[idx].t, locale, intraday)}</div>
-          <div className="tnum text-ink-2">{num(view[idx].c, locale, digits)}</div>
-        </div>
+        <g>
+          <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />
+          {/* Price of the hovered bar, pinned to the axis. */}
+          <rect x={PAD.left + plotW + 2} y={y(view[hover].c) - 8} width={PAD.right - 4} height={16} rx={2}
+            fill="var(--ink)" />
+          <text x={PAD.left + plotW + PAD.right / 2} y={y(view[hover].c) + 4} fontSize={10} textAnchor="middle"
+            fill="var(--page)" className="tnum">{num(view[hover].c, locale, digits)}</text>
+        </g>
       )}
+    </>
+  );
+}
+
+function HoverReadout({ x, width, locale, digits, intraday }: {
+  x: (i: number) => number; width: number; locale: Locale; digits: number; intraday: boolean;
+}) {
+  const { view } = useChartSeries();
+  const hover = useHoverIndex(view.length);
+  if (hover === null) return null;
+  return (
+    <div role="status" className="pointer-events-none absolute top-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] shadow-sm"
+      style={{ left: Math.min(Math.max(x(hover) - 55, 0), Math.max(0, width - 120)) }}>
+      <div className="font-medium">{stamp(view[hover].t, locale, intraday)}</div>
+      <div className="tnum text-ink-2">{num(view[hover].c, locale, digits)}</div>
     </div>
   );
 }
