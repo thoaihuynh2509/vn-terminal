@@ -85,6 +85,20 @@ export function atLeftEdge(total: number, range: number, offset: number, margin 
 }
 
 /**
+ * How far ahead of the oldest loaded bar older history is asked for: two
+ * windows, and never fewer than 120 bars.
+ *
+ * A page takes one to two seconds to arrive from the server, and a reader
+ * swiping into the past crosses about a window a second. Asked for 10 bars
+ * from the edge, every page arrived after the reader had already hit the wall
+ * and the drag stopped dead until it came; asked for two windows out, it lands
+ * while there is still loaded history to pan through.
+ */
+export function olderLead(range: number): number {
+  return Math.max(120, Math.round(range * 2));
+}
+
+/**
  * Whether the chart should reach for older bars right now.
  *
  * `atLeftEdge` answers a geometric question, and counts a window showing every
@@ -98,7 +112,7 @@ export function atLeftEdge(total: number, range: number, offset: number, margin 
 export function wantsOlder(
   { fitAll, total, range, offset }: { fitAll: boolean; total: number; range: number; offset: number },
 ): boolean {
-  return !fitAll && atLeftEdge(total, range, offset);
+  return !fitAll && atLeftEdge(total, range, offset, olderLead(range));
 }
 
 /**

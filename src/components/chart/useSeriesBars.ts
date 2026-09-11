@@ -108,7 +108,9 @@ export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isB
   }, [barsProp, history.bars, live, symbol, tf]);
 
   /**
-   * Whether the window has reached the left edge of what is loaded.
+   * Whether the window is near enough the oldest loaded bar to ask for older
+   * history — two windows ahead, see `olderLead` — so a page lands before the
+   * reader reaches the edge.
    *
    * Derived here, and depended on as a BOOLEAN, because `offset` itself changes
    * sixty times a second during a drag. With `offset` in the effect's

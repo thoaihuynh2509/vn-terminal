@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DAILY_FLOOR_ISO, INTRADAY_FLOOR_DAYS, atLeftEdge, grew, historyFailure, mergeBars, olderWindow, wantsOlder } from "./history-window.ts";
+import { DAILY_FLOOR_ISO, INTRADAY_FLOOR_DAYS, atLeftEdge, grew, historyFailure, mergeBars, olderLead, olderWindow, wantsOlder } from "./history-window.ts";
 import type { Bar } from "../types.ts";
 
 const DAY = 86_400;
@@ -133,4 +133,15 @@ test("a default window larger than what is loaded still extends itself", () => {
   assert.equal(wantsOlder({ fitAll: false, total: 50, range: 120, offset: 0 }), true);
   assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 100, offset: 890 }), true, "panned to the edge");
   assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 100, offset: 0 }), false);
+});
+
+test("older history is asked for two windows ahead, so a page lands before the reader reaches it", () => {
+  // 1000 bars loaded, 100 shown: 200 bars left of the window is inside the lead, 201 is not.
+  assert.equal(olderLead(100), 200);
+  assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 100, offset: 700 }), true);
+  assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 100, offset: 699 }), false);
+  // A narrow window still leads by at least 120 bars.
+  assert.equal(olderLead(20), 120);
+  assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 20, offset: 860 }), true);
+  assert.equal(wantsOlder({ fitAll: false, total: 1000, range: 20, offset: 859 }), false);
 });
