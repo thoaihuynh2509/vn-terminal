@@ -112,6 +112,38 @@ class Session {
     }
     await sleep(700);
   }
+  /**
+   * Click the way a reader does: a real press at the element's centre.
+   *
+   * `element.click()` is not equivalent, and the difference is not academic.
+   * Every route now streams into a Suspense boundary behind `loading.tsx`, and
+   * a scripted click dispatched while that boundary is still hydrating is
+   * DROPPED — React replays trusted input across hydration, not synthetic
+   * events. Measured on a freshly loaded board: the scripted click landed 2
+   * times in 4, and no amount of waiting fixed it (gating on the target's own
+   * React props made it 0 in 4, by firing earlier). A real press landed every
+   * time, in under 30ms.
+   *
+   * `pick` is a JS expression that evaluates to the element.
+   */
+  async click(pick) {
+    const box = await this.evaluate(`(() => {
+      const el = ${pick};
+      if (!el) return null;
+      el.scrollIntoView({ block: "center", behavior: "instant" });
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    })()`);
+    if (!box) throw new Error(`click target missing or not visible: ${pick}`);
+    const { x, y } = JSON.parse(box);
+    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+      await this.send("Input.dispatchMouseEvent", {
+        type, x, y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1,
+        buttons: type === "mouseReleased" ? 0 : type === "mousePressed" ? 1 : 0,
+      });
+    }
+  }
   async shot(name, fullPage = true) {
     mkdirSync(OUT, { recursive: true });
     const { data } = await this.send("Page.captureScreenshot", {
@@ -485,7 +517,7 @@ try {
     // ── sortable board ────────────────────────────────────────────
     await s.goto(BASE + "/vi/chung-khoan", { scheme: "light" });
     const firstBefore = await s.evaluate(`document.querySelector('tbody tr td:nth-child(2) a')?.textContent`);
-    await s.evaluate(`[...document.querySelectorAll('thead th button')].find(b=>/Mã/.test(b.textContent)).click()`);
+    await s.click(`[...document.querySelectorAll('thead th button')].find(b=>/Mã/.test(b.textContent))`);
     await sleep(300);
     const firstAfter = await s.evaluate(`document.querySelector('tbody tr td:nth-child(2) a')?.textContent`);
     check("board re-sorts on header click", firstBefore !== firstAfter, `${firstBefore} → ${firstAfter}`);
@@ -493,16 +525,16 @@ try {
     check("aria-sort reflects sort state", /descending|ascending/.test(ariaSort ?? ""), String(ariaSort));
 
     // ── watchlist round trip ──────────────────────────────────────
-    await s.evaluate(`document.querySelector('tbody tr button[aria-pressed]').click()`);
+    await s.click(`document.querySelector('tbody tr button[aria-pressed]')`);
     await sleep(300);
     const stored = await s.evaluate("localStorage.getItem('watchlist')");
     check("star writes to watchlist", !!stored && JSON.parse(stored).length === 1, String(stored));
     const symbol = stored ? JSON.parse(stored)[0] : null;
-    await s.evaluate(`document.querySelector('tbody tr button[aria-pressed="true"]').click()`);
+    await s.click(`document.querySelector('tbody tr button[aria-pressed="true"]')`);
     await sleep(300);
     const cleared = await s.evaluate("localStorage.getItem('watchlist')");
     check("star toggles back off", cleared === null, String(cleared));
-    await s.evaluate(`document.querySelector('tbody tr button[aria-pressed]').click()`);
+    await s.click(`document.querySelector('tbody tr button[aria-pressed]')`);
     await sleep(300);
     await s.goto(BASE + "/vi/theo-doi", { scheme: "light" });
     await sleep(1600);
