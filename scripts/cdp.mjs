@@ -5,6 +5,7 @@
  *
  *   node scripts/cdp.mjs shots   → write screenshots
  *   node scripts/cdp.mjs actions → run the interaction suite
+ *   node scripts/cdp.mjs smoke   → read-only check of a deployed chart (BASE, default production)
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -43,11 +44,11 @@ const LINE_DRAWN = `(document.querySelector('canvas[data-layer="line"], canvas[d
 async function launch() {
   const proc = spawn(CHROME, [
     "--headless=new", `--remote-debugging-port=${PORT}`,
-    // Off by default, as it always was. PERF_GPU=1 turns it on, because the
+    // Off by default, as it always was. PERF_GPU=1 and `smoke` turn it on, because the
     // two render paths do not rasterise alike without a GPU: SVG is rasterised
     // in tiles on worker threads, an unaccelerated canvas on the MAIN thread —
     // so a GPU-less run favours SVG in a way a reader's browser does not.
-    ...(process.env.PERF_GPU === "1" ? ["--ignore-gpu-blocklist", "--enable-gpu-rasterization"] : ["--disable-gpu"]),
+    ...(process.env.PERF_GPU === "1" || process.argv[2] === "smoke" ? ["--ignore-gpu-blocklist", "--enable-gpu-rasterization"] : ["--disable-gpu"]),
     // macOS tracks window occlusion even for headless Chrome, and when the
     // display sleeps or locks it reports every window occluded — so the page
     // turns "hidden" mid-run, animation frames stop, and a perf run measures
@@ -69,7 +70,7 @@ async function launch() {
 }
 
 class Session {
-  #ws; #id = 0; #pending = new Map();
+  #ws; #id = 0; #pending = new Map(); #listeners = new Map();
   static async open() {
     // Drive the tab Chrome launched with. A tab made through /json/new is
     // created in the BACKGROUND, and this headless Chrome keeps it there even
@@ -89,6 +90,8 @@ class Session {
         s.#pending.delete(m.id);
         if (m.error) p.rej(new Error(m.error.message));
         else p.res(m.result);
+      } else if (m.method) {
+        s.#listeners.get(m.method)?.(m.params);
       }
     };
     s.targetId = t.id;
@@ -124,6 +127,8 @@ class Session {
       });
     });
   }
+  /** One handler per CDP event; the domain must be enabled to receive it. */
+  on(method, fn) { this.#listeners.set(method, fn); }
   /** Resolve when `expr` returns truthy, or throw after `timeoutMs`. */
   async waitFor(expr, { timeoutMs = 20000, every = 200 } = {}) {
     const deadline = Date.now() + timeoutMs;
@@ -731,6 +736,169 @@ try {
       r.bodyOverflowX || !r.lang);
     if (bad.length) { console.error("A11Y ISSUES on:", bad.map(b => b.page).join(", ")); process.exitCode = 1; }
     else console.log("all accessibility checks passed");
+  }
+
+  // Read-only check of a deployed chart: a fresh anonymous reader, no sign-in,
+  // nothing written server-side.
+  if (mode === "smoke") {
+    const target = process.env.BASE ?? (await import("../packages/core/src/brand.ts")).BRAND.defaultOrigin;
+    const results = [];
+    const check = (name, pass, detail = "") => {
+      results.push(pass);
+      console.log(`  ${pass ? "✓" : "✗"} ${name}${detail ? ` — ${detail}` : ""}`);
+    };
+    const errors = [], requests = [];
+    s.on("Runtime.exceptionThrown", (p) =>
+      errors.push(`exception: ${(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text ?? "").split("\n")[0]}`));
+    s.on("Runtime.consoleAPICalled", (p) => {
+      if (p.type === "error") errors.push(`console.error: ${p.args.map((a) => a.value ?? a.description ?? "").join(" ").slice(0, 160)}`);
+    });
+    s.on("Network.requestWillBeSent", (p) => {
+      if (p.type === "Fetch" || p.type === "XHR") requests.push({ t: Date.now(), url: new URL(p.request.url) });
+    });
+    const fmt = (f) => `${f.n} frames, p95 ${f.p95.toFixed(1)}ms, worst ${f.worst.toFixed(1)}ms, ${f.dropped} over 25ms`;
+    const fsButton = `[...document.querySelectorAll('button[aria-pressed]')].find((b) => /⛶|⤢/.test(b.textContent))`;
+    const state = async () => JSON.parse(await s.evaluate(`JSON.stringify((() => {
+      const c = document.querySelector('canvas[data-layer]');
+      const m = (document.querySelector('main')?.innerText ?? '').match(/([0-9.,]+)\\s*nến/);
+      return { win: c?.dataset.window, pill: m ? Number(m[1].replace(/[.,]/g, '')) : null };
+    })())`));
+    const panes = async () => JSON.parse(await s.evaluate(`JSON.stringify((() => {
+      const svgs = [...document.querySelectorAll('svg[role=img]')];
+      const canvases = [...document.querySelectorAll('canvas[data-pane-layer]')];
+      const notCrisp = canvases.filter((c) => { const r = c.getBoundingClientRect();
+        return c.width !== Math.round(r.width * devicePixelRatio) || c.height !== Math.round(r.height * devicePixelRatio); }).length;
+      const blank = canvases.filter((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        for (let i = 3; i < d.length; i += 4 * 97) if (d[i]) return false; return true; }).length;
+      return { panes: svgs.length, withCanvas: svgs.filter((sv) => sv.parentElement?.querySelector('canvas[data-pane-layer]')).length,
+        canvases: canvases.length, notCrisp, blank };
+    })())`));
+    const box = async () => JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }); })()`));
+    const key = async (k) => {
+      await s.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, text: k });
+      await s.send("Input.dispatchKeyEvent", { type: "keyUp", key: k });
+      await sleep(250);
+    };
+    const drag = async (x, y, dx, steps) => {
+      await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+      await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+      for (let i = 1; i <= steps; i++) {
+        await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + i * dx, y, button: "left", buttons: 1 });
+        await sleep(16);
+      }
+      await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x + steps * dx, y, button: "left", buttons: 0, clickCount: 1 });
+    };
+    const frames = async (fn) => {
+      await s.evaluate(`window.__ft = []; window.__on = true; (() => { let last = performance.now();
+        const f = (t) => { __ft.push(t - last); last = t; if (__on) requestAnimationFrame(f); }; requestAnimationFrame(f); })()`);
+      await fn();
+      return JSON.parse(await s.evaluate(`(() => { __on = false; const g = __ft.slice(1).sort((a, b) => a - b);
+        return JSON.stringify({ n: g.length, p95: g[Math.floor(g.length * 0.95)] ?? 0, worst: g[g.length - 1] ?? 0, dropped: g.filter((x) => x > 25).length }); })()`));
+    };
+
+    try {
+      await s.send("Runtime.enable");
+      await s.send("Network.enable");
+      await s.send("Storage.clearDataForOrigin", { origin: new URL(target).origin, storageTypes: "all" });
+      const gpu = await s.evaluate(`(() => { const g = document.createElement('canvas').getContext('webgl');
+        const d = g && g.getExtension('WEBGL_debug_renderer_info'); return d ? g.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'none'; })()`);
+      console.log(`smoke: ${target} at 1728×1117 @2x, GPU ${gpu}`);
+
+      const t0 = Date.now();
+      await s.goto(`${target}/vi/bieu-do/VNM?tf=1D&ind=sma20,rsi,macd`, { width: 1728, height: 1117 });
+      const drawn = await s.waitFor("!!document.querySelector('canvas[data-layer]')", { timeoutMs: 30000 });
+      check("the chart opens and the price canvas draws", !!drawn, `${Date.now() - t0}ms`);
+      if (!drawn) throw new Error(`${target} never drew a chart canvas`);
+      await sleep(1500);
+      check("no error boundary on the page", !(await s.evaluate(`/Something went wrong|Application error/.test(document.body.innerText)`)));
+      let st = await panes();
+      check("every pane has a canvas", st.panes > 0 && st.withCanvas === st.panes, `${st.withCanvas}/${st.panes} panes`);
+      check("canvases are sharp at 2x", st.notCrisp === 0, `${st.notCrisp} of ${st.canvases} off`);
+      check("no canvas is blank", st.blank === 0, `${st.blank} of ${st.canvases} blank`);
+
+      const s0 = await state();
+      await s.evaluate("document.querySelector('svg[role=img]').focus()");
+      await key("+"); await key("+");
+      const s1 = await state();
+      check("keyboard + zooms in and the canvas redraws", s1.pill < s0.pill && s1.win !== s0.win, `${s0.pill} → ${s1.pill} bars`);
+
+      let b = await box();
+      const pan = await frames(() => drag(b.x - 150, b.y - b.h / 4, 8, 40));
+      await sleep(300);
+      const s2 = await state();
+      check("a mouse drag pans into the past", s2.win !== s1.win, `${s1.win} → ${s2.win}`);
+      check("the pan holds 60fps", pan.dropped === 0, fmt(pan));
+
+      // A pan near the left edge may page in history; let it land before counting.
+      await sleep(1500);
+      const mark = Date.now();
+      await s.click(`[...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Tất cả')`);
+      await sleep(2500);
+      const s3 = await state();
+      const older = requests.filter((r) => r.t >= mark && r.url.pathname === "/api/bars" && r.url.searchParams.has("before")).length;
+      check("\"Tất cả\" fits every loaded bar", s3.pill >= s2.pill && s3.win !== s2.win, `${s2.pill} → ${s3.pill} bars`);
+      check("\"Tất cả\" fetches no older history", older === 0, `${older} /api/bars?before= requests`);
+
+      await s.click(fsButton);
+      await sleep(1500);
+      st = await panes();
+      const opened = await s.evaluate(`${fsButton}?.getAttribute('aria-pressed') ?? null`);
+      check("fullscreen opens and canvases resize sharp", opened === "true" && st.notCrisp === 0 && st.blank === 0,
+        `${st.canvases} canvases, ${st.notCrisp} off, ${st.blank} blank`);
+      b = await box();
+      const sweep = await frames(async () => {
+        for (let i = 0; i < 60; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: b.x - b.w / 3 + i * 10, y: b.y });
+          await sleep(16);
+        }
+      });
+      check("the fullscreen crosshair holds 60fps", sweep.dropped === 0, fmt(sweep));
+      await s.evaluate("document.querySelector('svg[role=img]').focus()");
+      await key("+"); await key("+"); await key("+");
+      const panMark = Date.now();
+      const fpan = await frames(() => drag(b.x - 200, b.y - b.h / 4, 8, 40));
+      const paged = requests.filter((r) => r.t >= panMark && r.url.searchParams.has("before")).length;
+      check("the fullscreen pan holds 60fps", fpan.dropped === 0, `${fmt(fpan)}, ${paged} history fetch during the pan`);
+      console.log(`  screenshot: ${await s.shot("smoke-fullscreen", false)}`);
+
+      const hash = `(() => { const d = document.querySelector('canvas[data-layer]').toDataURL(); let h = 0;
+        for (let i = 0; i < d.length; i += 7) h = (h * 31 + d.charCodeAt(i)) | 0; return h; })()`;
+      const light = await s.evaluate(hash);
+      await s.evaluate(`document.documentElement.setAttribute('data-theme', 'dark')`);
+      await sleep(800);
+      check("the canvas repaints on a theme switch", (await s.evaluate(hash)) !== light);
+      await s.evaluate(`document.documentElement.setAttribute('data-theme', 'light')`);
+      await sleep(600);
+      await s.click(fsButton);
+      await sleep(800);
+      check("fullscreen closes again", (await s.evaluate(`${fsButton}?.getAttribute('aria-pressed') ?? null`)) === "false");
+
+      // Captured in the page rather than downloaded: the export reuses the day's
+      // filename, so a rerun overwrites the last file and a new-file test misses it.
+      await s.evaluate(`(() => {
+        const make = URL.createObjectURL.bind(URL);
+        URL.createObjectURL = (blob) => { window.__export = { blob }; return make(blob); };
+        const click = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+          if (this.download && window.__export) { window.__export.name = this.download; return; }
+          return click.call(this);
+        };
+      })()`);
+      await s.click(`[...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Lưu ảnh')`);
+      const name = await s.waitFor("window.__export?.name ?? null", { timeoutMs: 10000 });
+      const png = name ? JSON.parse(await s.evaluate(`(async () => { const b = new Uint8Array(await window.__export.blob.arrayBuffer());
+        return JSON.stringify({ size: b.length, sig: b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 }); })()`)) : null;
+      check("\"Lưu ảnh\" produces a PNG", !!png?.sig && png.size > 0, png ? `${name}, ${png.size} bytes` : "no export");
+
+      const uniq = [...new Set(errors)];
+      check("no console errors or exceptions", uniq.length === 0, uniq.slice(0, 5).join(" | "));
+    } catch (e) {
+      check("the smoke run completes", false, String(e.message ?? e).slice(0, 160));
+    }
+    const failed = results.filter((x) => !x).length;
+    console.log(`${results.length - failed}/${results.length} smoke checks passed`);
+    if (failed) process.exitCode = 1;
   }
 
   if (mode === "actions") {
