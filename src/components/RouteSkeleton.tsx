@@ -1,27 +1,26 @@
 import { Card, SkeletonBar } from "@/components/ui";
 
 /**
- * The instant loading state for every route under /:locale.
+ * The instant loading state a route shows while the server renders it.
  *
- * Its job is not to look like any one page — the routes below it are a board,
- * a chart, an article and a pricing table — but to hold the page's SHAPE while
- * the server renders: a heading block, then the wide content column the board,
- * the heatmap and the brief all share. Anything more specific would swap into
- * the wrong thing on four routes out of five.
+ * Its job is not to look like any one page — the routes that use it are a
+ * board, an index, an article list and a pricing table — but to hold the
+ * page's SHAPE: a heading block, then the wide content column they share.
+ * Anything more specific would swap into the wrong thing on most of them.
  *
- * A SERVER component, deliberately. `loading.tsx` takes no params, so showing
- * a translated "loading" label here would mean `"use client"` and `useParams`
- * — and that adds a client boundary around every page in the app, whose
- * hydration and swap cost the first interaction on the route: with a client
- * version of this file in place, the board's own test suite could sort a
- * board it had just loaded only in the first fraction of a second.
+ * Nothing here is announced. There is nothing to say that the router does not
+ * already say — the App Router names the new page on navigation — so the bars
+ * are hidden from assistive tech as the scaffolding they are.
  *
- * Nothing here is announced, because there is nothing to say that the router
- * does not already say: the App Router announces the new page on navigation.
- * The bars are scaffolding, so they are hidden from assistive tech rather than
- * described to it.
+ * WHERE THIS MAY BE USED, and why it is not simply at `[locale]/loading.tsx`:
+ * a route that renders this has begun streaming, and a response that has begun
+ * streaming has already sent its status. `notFound()` and `permanentRedirect()`
+ * can then only change the markup, never the code. So every segment that can
+ * answer something other than 200 — the symbol charts, the brief archive, the
+ * old symbol URLs that 308 to the terminal — is deliberately left outside the
+ * boundary, and each segment that cannot opts in for itself.
  */
-export default function Loading() {
+export function RouteSkeleton() {
   return (
     <div aria-hidden="true">
       {/* Heading block: eyebrow, title, standfirst. */}
