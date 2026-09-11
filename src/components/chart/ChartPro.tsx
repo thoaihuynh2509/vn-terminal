@@ -8,12 +8,16 @@ import { clampPeriod, effectivePeriod, formatRef, labelFor, parseRef, sameIndica
 import { IndicatorMenu } from "./IndicatorMenu";
 import { GateHint, type Gate } from "./GateHint";
 import { ShareMenu } from "./ShareMenu";
+import { PaneCanvas } from "./PaneCanvas";
+import { useChartColors } from "./chartColors";
+import { dashList, drawArea, drawCandles, drawSeries, drawSignedBars, drawVolume } from "./canvasLayers";
+import { columnsFor } from "@/lib/chart/geometry";
 import { useDismiss } from "@/lib/ui/use-dismiss";
 import { DRAWING_LIMIT, INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
 import {
   MAX_TEXT_LEN, anchorsOf, channelParallel, fibLevels, hitAnchor, hitTest, moveAnchor,
   newId, parseDrawings, serializeDrawings, storageKey, translate, trendPriceAt,
-  type Drawing, type DrawingKind,
+  type Drawing, type DrawingKind, sameDrawing, withDraft,
 } from "@/lib/chart/drawings";
 import { clampHover, maxOffset, nearestIndex, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
@@ -26,13 +30,13 @@ import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { FIRST_CHART_KEY } from "@/components/OnboardingWatchlist";
 import { candlePaths, maxColumnsFor, seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { linkedIndex } from "@/lib/chart/sync";
-import { atLeftEdge, grew, historyFailure, mergeBars, olderWindow } from "@/lib/chart/history-window";
-import { POLL_INTERVAL_MS, applyUpdate } from "@/lib/chart/stream";
+import { grew, historyFailure, mergeBars, olderWindow, wantsOlder } from "@/lib/chart/history-window";
+import { POLL_INTERVAL_MS, applyUpdate, sameBar } from "@/lib/chart/stream";
 import { isSessionOpen } from "@/lib/chart/session";
 import { useChartSync } from "./ChartSync";
 import { RANGE_PRESETS, barsForPreset, presetForBars, type RangePreset } from "@/lib/chart/ranges";
 import { DEFAULT_VIEW, mergeViewIntoQuery, type ChartView } from "@/lib/chart/view-state";
-import { DEFAULT_SCALE, denorm, effectiveScale, norm, padRange, pctOf, scaleTicks, SCALES, type ScaleId } from "@/lib/chart/scale";
+import { DEFAULT_SCALE, denorm, effectiveScale, norm, padRange, pctOf, scaleTicks, SCALES, type ScaleId, priceExtent, seriesExtent } from "@/lib/chart/scale";
 import { dashFor } from "@/lib/chart/compare";
 import { useStored, writeStored } from "@/lib/browser-store";
 import { useSyncedDoc } from "@/lib/use-synced-doc";
@@ -67,6 +71,13 @@ const TOOL_GLYPH: Record<"cursor" | DrawingKind, string> = {
  * retry would spend the next token on the same "no".
  */
 const HISTORY_RETRY_MS = 8_000;
+
+/**
+ * Plot margins. Module scope, not per render: a fresh object each render gave
+ * every closure built from it a fresh identity, so a memo keyed on those
+ * closures could never hit.
+ */
+const PAD = { left: 6, right: 58 } as const;
 
 /** How many clicks each tool needs before it becomes a drawing. */
 const TOOL_POINTS: Record<DrawingKind, number> = {
@@ -163,6 +174,14 @@ export function ChartPro({
   const [scaleChoice, setScaleChoice] = useState<ScaleId | null>(null);
   const [ratioChoice, setRatioChoice] = useState<number | null>(null);
   const [range, setRange] = useState<number>(DEFAULT_RANGE);
+  /**
+   * Whether the reader chose "Tất cả". Held as intent rather than as a bar
+   * count: a count goes stale the moment a bar is appended, and "everything
+   * loaded" should keep meaning that. Any zoom returns to a counted window.
+   */
+  const [fitAll, setFitAll] = useState(initialView.range === "ALL");
+  /** The window the chart actually shows; 0 is "every loaded bar". */
+  const shownRange = fitAll ? 0 : range;
   // Applied once, from the link, before the reader touches anything.
   const seededRange = useRef(false);
   // How far back the window sits, in bars. See `lib/chart/pan`.
@@ -307,6 +326,19 @@ export function ChartPro({
   const edit = useRef<
     { id: string; anchor: number; t: number; price: number; before: Drawing[]; moved: boolean } | null
   >(null);
+  /**
+   * The drawing being dragged, as it stands mid-gesture.
+   *
+   * Committed ONCE, on release. Writing it back on every pointer move was a
+   * synchronous localStorage write per event — which fired the store event,
+   * re-read and re-parsed every drawing and serialised the list several more
+   * times — and then re-rendered the chart. The ref carries the latest copy
+   * between frames; the state is what the pane draws, at most once a frame.
+   */
+  const [draft, setDraft] = useState<Drawing | null>(null);
+  const draftRef = useRef<Drawing | null>(null);
+  const draftFrame = useRef<number | null>(null);
+  const shownDrawings = useMemo(() => withDraft(drawings, draft), [drawings, draft]);
 
   const stepHistory = useCallback((dir: "undo" | "redo") => {
     const before = hist.current;
@@ -408,6 +440,20 @@ export function ChartPro({
    * for no information.
    */
   const [live, setLive] = useState<Bar | null>(null);
+  // An unchanged bar keeps the previous object, so `bars` keeps its identity
+  // and nothing downstream — every indicator included — recomputes for it.
+  const takeLive = useCallback((next: Bar) => {
+    setLive((prev) => (prev && sameBar(prev, next) ? prev : next));
+  }, []);
+  /**
+   * A polled bar that arrived mid-gesture, applied on release.
+   *
+   * A new bar recomputes every indicator over the full series (`allPlots` keys
+   * on `bars`), so one landing during a drag was a guaranteed spike in the
+   * middle of the gesture. It waits for the pointer to lift instead: the same
+   * values, at most one gesture later.
+   */
+  const heldLive = useRef<Bar | null>(null);
 
     /** What the chart actually draws: the server's window plus anything pulled in. */
   const bars = useMemo(() => {
@@ -479,11 +525,19 @@ export function ChartPro({
     setRange(barsForPreset(bars, initialView.range));
   }, [initialView.range, bars]);
 
-  const effectiveRange = range === 0 || range > bars.length ? bars.length : range;
+  const effectiveRange = fitAll || range === 0 || range > bars.length ? bars.length : range;
   const activePreset = useMemo(
     () => presetForBars(bars, effectiveRange),
     [bars, effectiveRange],
   );
+  /**
+   * A preset from the toolbar. "Tất cả" is recorded as a choice, not as its
+   * count, so it keeps covering everything as the series changes under it.
+   */
+  const pickPreset = useCallback((id: RangePreset, count: number) => {
+    setFitAll(id === "ALL");
+    setRange(count);
+  }, []);
 
 
 
@@ -640,7 +694,7 @@ export function ChartPro({
    * them, and the 429 that followed used to be permanent (see below). This
    * flips once, when the reader arrives, and then holds still.
    */
-  const nearEdge = atLeftEdge(bars.length, range, offset);
+  const nearEdge = wantsOlder({ fitAll, total: bars.length, range, offset });
 
   /**
    * Pull in older history when the window reaches the left edge.
@@ -722,7 +776,11 @@ export function ChartPro({
         if (!res.ok || stopped) return;
         const body = (await res.json()) as { data?: Bar[] } | Bar[];
         const page = Array.isArray(body) ? body : (body.data ?? []);
-        if (page.length) setLive(page[page.length - 1]);
+        if (page.length) {
+          const next = page[page.length - 1];
+          if (drag.current || edit.current || gesture.current) heldLive.current = next;
+          else takeLive(next);
+        }
       } catch {
         /* a failed poll is a missed tick, never an error the reader sees */
       }
@@ -730,9 +788,9 @@ export function ChartPro({
     const timer = setInterval(poll, POLL_INTERVAL_MS);
     void poll();
     return () => { stopped = true; clearInterval(timer); };
-  }, [symbol, tf, barsProp.length]);
+  }, [symbol, tf, barsProp.length, takeLive]);
 
-  const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, range, offset), [bars.length, range, offset]);
+  const [wStart, wEnd] = useMemo(() => windowBounds(bars.length, shownRange, offset), [bars.length, shownRange, offset]);
   const view = useMemo(() => bars.slice(wStart, wEnd), [bars, wStart, wEnd]);
   // The compare series is aligned to the full bars, so slice it by the same
   // window as the visible candles.
@@ -749,7 +807,7 @@ export function ChartPro({
     () => (foreign ? foreign.series.slice(wStart, wEnd) : null),
     [foreign, wStart, wEnd],
   );
-  const canPan = range > 0 && range < bars.length;
+  const canPan = shownRange > 0 && shownRange < bars.length;
   const drag = useRef<{ x: number; offset: number; moved: boolean } | null>(null);
   // A pointer can fire many moves per frame; the chart can only paint once.
   const panFrame = useRef<number | null>(null);
@@ -846,10 +904,17 @@ export function ChartPro({
     track("chart_indicator_tuned", { id: def.id, period: p, tier });
   }, [persistSettings, tier]);
 
-  const PAD = { left: 6, right: 58 };
   const plotW = width - PAD.left - PAD.right;
   const band = plotW / Math.max(1, view.length);
-  const x = (i: number) => PAD.left + band * (i + 0.5);
+  // `band` holds still during a pan (it is the plot width over the bar count),
+  // so `x` keeps its identity for the whole gesture and only changes on a zoom
+  // or a resize — which is what lets the panes memoize geometry built from it.
+  const x = useCallback((i: number) => PAD.left + band * (i + 0.5), [band]);
+  // How many columns this plot can actually resolve. Past it, neighbouring
+  // bars share a pixel and the extra geometry is invisible work — the browser
+  // still parses and rasterises every byte of it on each pan frame. Derived
+  // once here; every pane used to derive it again from the same width.
+  const maxCols = maxColumnsFor(plotW);
 
   // Inverses of the price pane's scales, so a click becomes a (time, price)
   // pair rather than a pixel that would drift on the next zoom.
@@ -873,26 +938,25 @@ export function ChartPro({
       const fraction = (e.clientX - rect.left - PAD.left) / plot;
       const next = zoomAt({
         total: bars.length,
-        range, offset, fraction,
+        range: shownRange, offset, fraction,
         direction: e.deltaY > 0 ? 1 : -1,
       });
+      setFitAll(false);
       setRange(next.range);
       setOffset(next.offset);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [bars.length, range, offset, plotW, PAD.left]);
+  }, [bars.length, shownRange, offset, plotW]);
 
   // Reference-line prices join the domain so a ceiling above every high is still
-  // on screen; PricePane repeats this exact fold, so the crosshair inverse here
-  // and the drawn scale stay identical. A stable string key drives the memo.
+  // on screen. PricePane draws from this same object, so the crosshair inverse
+  // here and the drawn scale cannot disagree. A stable string key drives the memo.
   const refKey = refLines.map((r) => r.price).join(",");
   const priceGeom = useMemo(() => {
     if (!view.length) return { yMin: 0, yMax: 1, H: priceH, sc: "lin" as ScaleId };
     const refPrices = refKey ? refKey.split(",").map(Number) : [];
-    const overlayVals = computed.price.flatMap((o) => o.series.filter((v): v is number => v !== null));
-    const min = Math.min(...view.map((b) => b.l), ...overlayVals, ...refPrices);
-    const max = Math.max(...view.map((b) => b.h), ...overlayVals, ...refPrices);
+    const { lo: min, hi: max } = priceExtent(view, computed.price.map((o) => o.series), refPrices);
     // The requested scale is only honoured if the data supports it; a series
     // touching zero has no logarithm, and falling back beats a broken axis.
     const sc = effectiveScale(scale, min, max, view[0].c);
@@ -907,7 +971,7 @@ export function ChartPro({
   }, [priceGeom]);
 
   const barAtX = useCallback((px: number) =>
-    Math.max(0, Math.min(view.length - 1, Math.round((px - PAD.left) / band - 0.5))), [view.length, band, PAD.left]);
+    Math.max(0, Math.min(view.length - 1, Math.round((px - PAD.left) / band - 0.5))), [view.length, band]);
 
   /**
    * Tell the grid which MOMENT this cell's pointer is on.
@@ -1093,6 +1157,8 @@ export function ChartPro({
   };
 
   const onUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    // The gesture is over, so a bar that arrived during it can land now.
+    if (heldLive.current) { takeLive(heldLive.current); heldLive.current = null; }
     if (e.pointerType === "touch") {
       touches.current.delete(e.pointerId);
       // Lifting one finger of a pinch ends the gesture rather than silently
@@ -1107,14 +1173,22 @@ export function ChartPro({
     const ed = edit.current;
     edit.current = null;
     if (ed) {
+      // The drag's last frame may still be queued; the release is final.
+      if (draftFrame.current !== null) {
+        cancelAnimationFrame(draftFrame.current);
+        draftFrame.current = null;
+      }
+      const final = draftRef.current;
+      draftRef.current = null;
+      setDraft(null);
       // A press that never moved is a selection, already applied on down. Only
       // an actual edit becomes an undo step, so tapping a drawing to look at it
-      // does not fill the stack.
-      if (ed.moved) {
-        const after = drawings.find((d) => d.id === ed.id);
-        if (after) track("chart_drawing_edited", { kind: after.kind, anchor: ed.anchor, symbol });
-        applyHist(histPush(hist.current, drawings,
-          (a, b) => serializeDrawings(a) === serializeDrawings(b)));
+      // does not fill the stack. A CANCELLED gesture — the browser taking the
+      // pointer back — leaves the drawing where it was, not where it was
+      // abandoned.
+      if (ed.moved && final && e.type !== "pointercancel") {
+        track("chart_drawing_edited", { kind: final.kind, anchor: ed.anchor, symbol });
+        commitDrawings(withDraft(drawings, final));
       }
       return;
     }
@@ -1143,6 +1217,7 @@ export function ChartPro({
         // Two fingers also PAN: the midpoint moving is a drag, so a reader can
         // zoom and reposition in one gesture instead of two.
         const mid = (a.x + b.x) / 2;
+        setFitAll(false);
         setRange(next.range);
         setOffset(offsetFromDrag(next.offset, mid - g.cx, plotW / Math.max(1, next.range), bars.length, next.range));
         return;
@@ -1153,20 +1228,27 @@ export function ChartPro({
       const rect = e.currentTarget.getBoundingClientRect();
       const t = view[barAtX(e.clientX - rect.left)].t;
       const price = priceAtY(e.clientY - rect.top);
-      const next = drawings.map((d) => {
-        if (d.id !== ed.id) return d;
-        return ed.anchor >= 0
-          ? moveAnchor(d, ed.anchor, t, price)
-          : translate(d, t - ed.t, price - ed.price);
-      });
-      // Written without recording a step: one drag is one undo, pushed on
-      // release, not one per frame.
-      if (serializeDrawings(next) !== serializeDrawings(drawings)) {
+      // The drawing as it stands mid-gesture: the in-flight copy once there is one.
+      const cur = draftRef.current ?? drawings.find((d) => d.id === ed.id);
+      if (!cur) return;
+      const moved = ed.anchor >= 0
+        ? moveAnchor(cur, ed.anchor, t, price)
+        : translate(cur, t - ed.t, price - ed.price);
+      // Neither stored nor recorded here: one drag is one undo step and one
+      // write, both on release. Only the edited drawing is compared.
+      if (!sameDrawing(moved, cur)) {
         ed.moved = true;
         // Translation is relative, so the origin has to travel with the pointer
         // or the drawing accelerates away from it.
         if (ed.anchor < 0) { ed.t = t; ed.price = price; }
-        saveDrawings(next);
+        draftRef.current = moved;
+        // A pointer can fire many moves per frame; the pane paints once.
+        if (draftFrame.current === null) {
+          draftFrame.current = requestAnimationFrame(() => {
+            draftFrame.current = null;
+            setDraft(draftRef.current);
+          });
+        }
       }
       return;
     }
@@ -1234,9 +1316,10 @@ export function ChartPro({
     if (e.key === "+" || e.key === "=" || e.key === "-") {
       e.preventDefault();
       const next = zoomAt({
-        total: bars.length, range, offset, fraction: 0.5,
+        total: bars.length, range: shownRange, offset, fraction: 0.5,
         direction: e.key === "-" ? 1 : -1,
       });
+      setFitAll(false);
       setRange(next.range);
       setOffset(next.offset);
       return;
@@ -1256,7 +1339,7 @@ export function ChartPro({
     <div className={full ? "fixed inset-0 z-50 overflow-auto bg-page p-4" : ""}>
       <Toolbar
         dict={dict} locale={locale} unlocked={unlocked} limit={limit}
-        type={type} setType={chooseType} scale={scale} setScale={chooseScale} setRange={setRange}
+        type={type} setType={chooseType} scale={scale} setScale={chooseScale} pickPreset={pickPreset}
         presets={presets} activePreset={activePreset} barCount={effectiveRange}
         getPanes={getPanes} symbol={symbol} tf={tf}
         exportSite={can(tier, "sync:docs") ? null : undefined}
@@ -1458,11 +1541,11 @@ export function ChartPro({
           <div ref={wrapRef} className="min-w-0 flex-1">
           <PricePane
             intraday={intraday}
-            view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD}
+            view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD} maxCols={maxCols}
             type={type} overlays={computed.price} hover={shownHover} idx={idx} H={priceH}
-            refLines={refLines} alerts={alertLines} compareView={compareView} events={events} scale={scale} selectedId={selectedId}
+            refLines={refLines} alerts={alertLines} compareView={compareView} events={events} geom={priceGeom} selectedId={selectedId}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
-            drawings={drawings} pending={pending} mode={mode} onClick={onDown}
+            drawings={shownDrawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
             cursorY={cursorY}
           />
@@ -1490,16 +1573,16 @@ export function ChartPro({
           >
             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-line group-hover:bg-accent group-focus:bg-accent" />
           </div>
-          <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} hover={shownHover} intraday={intraday} locale={locale} />
+          <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday} locale={locale} />
           {breadthView && (
             <BreadthPane
-              view={view} intraday={intraday} width={width} band={band} x={x} PAD={PAD} hover={shownHover}
+              view={view} intraday={intraday} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover}
               pct={breadthView} label={breadth?.label ?? ""} locale={locale}
             />
           )}
           {foreignView && (
             <ForeignPane
-              view={view} width={width} band={band} x={x} PAD={PAD} hover={shownHover} intraday={intraday}
+              view={view} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday}
               net={foreignView} label={foreign?.label ?? "Khối ngoại"} locale={locale}
             />
           )}
@@ -1507,7 +1590,7 @@ export function ChartPro({
             <OscillatorPane
               intraday={intraday}
               key={def.id} def={def} period={period} plots={plots} width={width}
-              band={band} x={x} PAD={PAD} hover={shownHover} idx={idx} locale={locale}
+              band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} idx={idx} locale={locale}
             />
           ))}
           <XAxis view={view} width={width} x={x} xStep={xStep} locale={locale} hover={shownHover} intraday={intraday} />
@@ -1521,13 +1604,13 @@ export function ChartPro({
 /* ─── toolbar ─────────────────────────────────────────────────────────────── */
 
 function Toolbar({
-  dict, locale, unlocked, limit, type, setType, scale, setScale, setRange, active, toggle, asTable, setAsTable,
+  dict, locale, unlocked, limit, type, setType, scale, setScale, pickPreset, active, toggle, asTable, setAsTable,
   full, toggleFull, canDraw, presets, activePreset, barCount, getPanes, symbol, tf, exportSite,
 }: {
   dict: Dict; locale: Locale; unlocked: boolean; limit: number;
   type: ChartType; setType: (t: ChartType) => void;
   scale: ScaleId; setScale: (s: ScaleId) => void;
-  setRange: (r: number) => void;
+  pickPreset: (id: RangePreset, count: number) => void;
   presets: { id: RangePreset; count: number }[];
   activePreset: RangePreset | null;
   barCount: number;
@@ -1561,7 +1644,7 @@ function Toolbar({
       {/* Zoom is the wheel and +/−; the one button left is the way back out. */}
       <div role="group" aria-label={dict.chart.range} className="flex shrink-0 rounded-lg border border-line">
         {presets.map((p) => (
-          <button key={p.id} type="button" onClick={() => setRange(p.count)}
+          <button key={p.id} type="button" onClick={() => pickPreset(p.id, p.count)}
             aria-pressed={activePreset === p.id}
             className={`${seg} first:rounded-l last:rounded-r ${
               activePreset === p.id ? "bg-page text-ink" : "text-ink-2 hover:text-ink"
@@ -1652,6 +1735,8 @@ function stamp(t: number, locale: Locale, intraday: boolean): string {
 interface PaneGeom {
   view: Bar[]; width: number; band: number; x: (i: number) => number;
   PAD: { left: number; right: number }; hover: number | null;
+  /** Columns the plot can resolve; see `maxColumnsFor`. One value for every pane. */
+  maxCols: number;
   intraday: boolean;
 }
 
@@ -1746,13 +1831,15 @@ function PeriodChip({
 }
 
 function PricePane({
-  view, width, plotW, band, x, PAD, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
+  view, width, plotW, band, x, PAD, maxCols, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, cursorY, events, scale, selectedId,
+  refLines, alerts, compareView, cursorY, events, geom, selectedId,
 }: PaneGeom & {
   H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
-  refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[]; scale: ScaleId;
+  refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[];
+  /** The parent's `priceGeom`: the one price domain every layer maps through. */
+  geom: { sc: ScaleId; yMin: number; yMax: number };
   selectedId: string | null;
   compareView: { label: string; series: (number | null)[] }[];
   cursorY: number | null;
@@ -1762,19 +1849,24 @@ function PricePane({
   onUp: (e: React.PointerEvent<SVGSVGElement>) => void; canPan: boolean;
   onKey: (e: React.KeyboardEvent<SVGSVGElement>) => void;
 }) {
-  const overlayVals = overlays.flatMap((o) => o.series.filter((v): v is number => v !== null));
-  const refPrices = refLines.map((r) => r.price);
-  const min = Math.min(...view.map((b) => b.l), ...overlayVals, ...refPrices);
-  const max = Math.max(...view.map((b) => b.h), ...overlayVals, ...refPrices);
+  // The domain comes from the parent's `priceGeom`. This pane used to fold the
+  // same bars, overlays and levels a second time on every render — with spread
+  // arguments, tens of thousands of them at "Tất cả" — to reach identical numbers.
+  const { sc, yMin, yMax } = geom;
+  // Null until the client can read computed styles. The server render and the
+  // hydration render therefore draw the dense layers as SVG — a chart arrives
+  // with its candles before any script runs, and hydration cannot mismatch —
+  // and canvas takes over the moment the colours resolve.
+  const colors = useChartColors();
+  const onCanvas = colors !== null;
   // Percent change is measured from the first VISIBLE bar, so panning moves the
   // baseline — which is what "how far has it come" means for the window a
-  // reader is actually looking at.
-  const base = view[0]?.c ?? min;
-  const sc = effectiveScale(scale, min, max, base);
-  const { min: yMin, max: yMax } = padRange(sc, min, max);
+  // reader is actually looking at. Never empty here: the parent renders no
+  // panes for an empty window.
+  const base = view[0].c;
   // One mapping for candles, drawings, alert levels, reference lines and the
   // crosshair, so switching the axis cannot move some of them and not others.
-  const y = (v: number) => 10 + (H - 20) - norm(sc, v, yMin, yMax) * (H - 20);
+  const y = useCallback((v: number) => 10 + (H - 20) - norm(sc, v, yMin, yMax) * (H - 20), [sc, yMin, yMax, H]);
 
   // Compare line: its OWN min/max mapped to the pane's pixel band, so it shows
   // relative SHAPE without touching the price scale, candles or crosshair.
@@ -1782,24 +1874,20 @@ function PricePane({
   // pixel band, so relative SHAPE is comparable even when an index at 1,300 and
   // a share at 27 sit on the chart together — and none of them touch the price
   // scale, the candles or the crosshair.
-  // How many columns this plot can actually resolve. Past it, neighbouring
-  // bars share a pixel and the extra geometry is invisible work — the browser
-  // still parses and rasterises every byte of it on each pan frame.
-  const maxCols = maxColumnsFor(plotW);
 
-  const comparePaths = compareView.map((c) => {
-    const vals = c.series.filter((v): v is number => v !== null);
-    const lo = vals.length ? Math.min(...vals) : 0;
-    const hi = vals.length ? Math.max(...vals) : 1;
+  const compareScaled = useMemo(() => compareView.map((c) => {
+    const e = seriesExtent([c.series]);
+    const lo = e.n ? e.lo : 0;
+    const hi = e.n ? e.hi : 1;
     const cy = (v: number) => 10 + (H - 20) - ((v - lo) / ((hi - lo) || 1)) * (H - 20);
-    return { label: c.label, d: seriesPath(c.series, x, cy, maxCols) };
-  }).filter((c) => c.d);
+    return { label: c.label, series: c.series, cy };
+    // A series with no finite value draws nothing, and is not named in the legend.
+  }).filter((c) => c.series.some((v) => v !== null && Number.isFinite(v))), [compareView, H]);
+  const comparePaths = useMemo(
+    () => (onCanvas ? [] : compareScaled.map((c) => ({ label: c.label, d: seriesPath(c.series, x, c.cy, maxCols) }))),
+    [onCanvas, compareScaled, x, maxCols],
+  );
 
-  // Only built when it is drawn: in candle mode this was a full pass over every
-  // visible bar whose result was thrown away.
-  const linePath = type === "line" || type === "area"
-    ? seriesPath(view.map((b) => b.c), x, y, maxCols)
-    : "";
 
   /**
    * Marker placements, held across renders.
@@ -1810,360 +1898,490 @@ function PricePane({
    */
   const placedEvents = useMemo(() => placeEvents(view, events), [view, events]);
 
+  /**
+   * The price pane's dense layer on canvas, in the order the SVG drew it: grid,
+   * series, indicator overlays, compare lines. Only geometry moves here; labels,
+   * levels, drawings and the crosshair stay in the SVG above it.
+   */
+  const drawPrice = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!colors) return;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = colors.grid;
+    for (const v of scaleTicks(sc, yMin, yMax)) {
+      ctx.beginPath(); ctx.moveTo(PAD.left, y(v)); ctx.lineTo(PAD.left + plotW, y(v)); ctx.stroke();
+    }
+    if (type === "candle") {
+      drawCandles(ctx, view, { x, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) }, maxCols, colors);
+    } else {
+      const closes = view.map((b) => b.c);
+      if (type === "area") drawArea(ctx, closes, x, y, maxCols, H - 10, colors.accent, 0.10);
+      drawSeries(ctx, closes, x, y, maxCols, { color: colors.accent, width: 2, join: "round" });
+    }
+    for (const o of overlays) {
+      const isBand = o.style === "band";
+      drawSeries(ctx, o.series, x, y, maxCols, {
+        color: colors[o.color], width: isBand ? 1 : 1.5, dash: isBand ? [3, 3] : undefined, alpha: isBand ? 0.8 : 1,
+      });
+    }
+    compareScaled.forEach((c, i) => drawSeries(ctx, c.series, x, c.cy, maxCols, {
+      color: colors.muted, width: 1.5, dash: dashList(dashFor(i)), alpha: 0.85,
+    }));
+  }, [colors, sc, yMin, yMax, PAD, y, plotW, type, view, x, band, maxCols, H, overlays, compareScaled]);
+
+  /**
+   * The pane's geometry, held across renders as ready-made elements.
+   *
+   * A crosshair move re-renders this pane on every pointer event, and nothing
+   * below depends on the crosshair — yet every path string was rebuilt each
+   * time: at "Tất cả" with every indicator on, on the order of a megabyte of
+   * path data per pointer move. When a memo hands back the SAME element object,
+   * React skips reconciling that subtree: no rebuild, no attribute writes, same
+   * DOM, same pixels. What keeps it honest: nothing here may depend on `hover`,
+   * `cursorY` or `idx` — those stay live in the markup below.
+   */
+  const gridLayer = useMemo(() => (
+    <>
+      {scaleTicks(sc, yMin, yMax).map((v) => (
+        <g key={v}>
+          {!onCanvas && <line x1={PAD.left} x2={PAD.left + plotW} y1={y(v)} y2={y(v)} stroke="var(--grid)" strokeWidth={1} />}
+          {/* On a percent axis the reader asked for distance travelled, so
+              that is what the axis prints — signed, and glyphed like every
+              other direction in this app. */}
+          <text x={PAD.left + plotW + 6} y={y(v) + 3.5} fontSize={10} fill="var(--muted)" className="tnum">
+            {sc === "pct"
+              ? `${pctOf(v, base) >= 0 ? "+" : ""}${num(pctOf(v, base), locale, 1)}%`
+              : num(v, locale, digits)}
+          </text>
+        </g>
+      ))}
+    </>
+  ), [onCanvas, sc, yMin, yMax, y, plotW, base, locale, digits, PAD]);
+  const seriesLayer = useMemo(() => {
+    if (onCanvas) return null;
+    // Only built when it is drawn: in candle mode this was a full pass over
+    // every visible bar whose result was thrown away.
+    const linePath = type === "line" || type === "area" ? seriesPath(view.map((b) => b.c), x, y, maxCols) : "";
+    return (
+      <>
+    {type === "area" && (
+      <path
+        d={`${linePath} L${x(view.length - 1)},${H - 10} L${x(0)},${H - 10} Z`}
+        fill="var(--accent)" opacity={0.10}
+      />
+    )}
+    {(type === "line" || type === "area") && (
+      <path d={linePath} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
+    )}
+    {/* Four paths rather than three nodes per candle. hollow = up,
+        filled = down: direction without relying on hue. */}
+    {type === "candle" && (() => {
+      const p = candlePaths(view, { x, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) }, maxCols);
+      return (
+        <g>
+          <path d={p.upWick} stroke="var(--up)" strokeWidth={1} fill="none" />
+          <path d={p.downWick} stroke="var(--down)" strokeWidth={1} fill="none" />
+          <path d={p.upBody} fill="var(--surface)" stroke="var(--up)" strokeWidth={1} />
+          <path d={p.downBody} fill="var(--down)" stroke="var(--down)" strokeWidth={1} />
+        </g>
+      );
+    })()}
+      </>
+    );
+  }, [onCanvas, type, view, x, y, band, maxCols, H]);
+  const overlayLayer = useMemo(() => onCanvas ? null : (
+    <>
+      {overlays.map((o) => {
+        const d = seriesPath(o.series, x, y, maxCols);
+        return (
+          <path key={o.key} d={d} fill="none" stroke={COLOR_VAR[o.color]}
+            strokeWidth={o.style === "band" ? 1 : 1.5} strokeDasharray={o.style === "band" ? "3 3" : undefined}
+            opacity={o.style === "band" ? 0.8 : 1} />
+        );
+      })}
+    </>
+  ), [onCanvas, overlays, x, y, maxCols]);
+  const refLayer = useMemo(() => (
+    <>
+      {/* VN ceiling/floor reference levels (trần/sàn), on the price scale. */}
+      {refLines.map((r) => (
+        <g key={r.label}>
+          <line
+            x1={PAD.left} x2={PAD.left + plotW} y1={y(r.price)} y2={y(r.price)}
+            className={r.dir === "up" ? "text-up" : "text-down"}
+            stroke="currentColor" strokeWidth={1} strokeDasharray="2 4" opacity={0.7}
+          />
+          <text
+            x={PAD.left + 4} y={y(r.price) - 3} fontSize={10}
+            className={`tnum ${r.dir === "up" ? "text-up" : "text-down"}`} fill="currentColor"
+          >
+            {r.label} {num(r.price, locale, digits)}
+          </text>
+        </g>
+      ))}
+    </>
+  ), [refLines, y, plotW, locale, digits, PAD]);
+  const alertLayer = useMemo(() => (
+    <>
+      {/* Armed price alerts, so the chart shows what it is watching for.
+          Deliberately NOT folded into the price domain the way ceiling/floor
+          are: an alert set far from the current price would squash every
+          candle into a band to keep a line visible that the reader already
+          knows about. One outside the visible range is simply not drawn. */}
+      {alerts.map((a) => {
+        if (a.price < yMin || a.price > yMax) return null;
+        const rising = a.condition === "above" || a.condition === "cross_up";
+        return (
+          <g key={a.id} opacity={a.triggeredAt ? 0.45 : 0.9}>
+            <line
+              x1={PAD.left} x2={PAD.left + plotW} y1={y(a.price)} y2={y(a.price)}
+              stroke="var(--accent)" strokeWidth={1} strokeDasharray="1 5"
+            />
+            {/* The glyph carries the direction, so the level is not colour-alone. */}
+            <text
+              x={PAD.left + plotW - 4} y={y(a.price) - 3} fontSize={10} textAnchor="end"
+              className="tnum" fill="var(--accent)"
+            >
+              {rising ? "▲" : "▼"} {num(a.price, locale, digits)}
+            </text>
+          </g>
+        );
+      })}
+    </>
+  ), [alerts, y, yMin, yMax, plotW, locale, digits, PAD]);
+  const compareLayer = useMemo(() => (
+    <>
+      {/* Overlays: normalised shape only, never the price scale. Each gets its
+          own dash pattern so they are told apart without relying on colour,
+          and the legend repeats that pattern rather than a colour swatch. */}
+      {comparePaths.map((c, i) => (
+        <path key={c.label} d={c.d} fill="none" stroke="var(--muted)" strokeWidth={1.5}
+          strokeDasharray={dashFor(i)} opacity={0.85} />
+      ))}
+      {compareScaled.length > 0 && (
+        <text x={PAD.left + 4} y={H - 8} fontSize={10} fill="var(--muted)">
+          {compareScaled.map((c, i) => `${i === 0 ? "" : "   "}${dashGlyph(i)} ${c.label}`).join("")}
+        </text>
+      )}
+    </>
+  ), [comparePaths, compareScaled, H, PAD]);
+  const eventLayer = useMemo(() => (
+    <>
+      {/* Corporate events on the session they went ex.
+
+          Deliberately understated: a dotted riser and a lettered badge on the
+          axis, never a band across the plot. The series is back-adjusted, so
+          there is no gap here for a dividend to explain — the marker answers
+          "was I holding when this paid, and how much", and the label says the
+          amount without implying it caused anything. */}
+      {placedEvents.map((ev) => {
+        const cx = x(ev.i);
+        const label = ev.kind === "cash" ? dict.chart.eventCash
+          : ev.kind === "stock" ? dict.chart.eventStock : dict.chart.eventRights;
+        const amount = ev.cash !== null
+          ? ` · ${num(ev.cash, locale, 0)} ₫/cp`
+          : ev.ratio !== null ? ` · ${num(ev.ratio, locale, 1)}%` : "";
+        return (
+          <g key={`${ev.exDate}-${ev.kind}-${ev.cash ?? ""}`}>
+            <title>{`${label}${amount} · ${dict.chart.eventExDate} ${ev.exDate}${ev.note ? ` · ${ev.note}` : ""}`}</title>
+            <line x1={cx} x2={cx} y1={H - 22} y2={H - 12}
+              stroke="var(--muted)" strokeWidth={1} strokeDasharray="1 2" opacity={0.8} />
+            <circle cx={cx} cy={H - 7} r={6} fill="var(--surface-2)" stroke="var(--muted)" strokeWidth={0.75} />
+            {/* A letter, not a colour: D/S/R survive greyscale and colour blindness. */}
+            <text x={cx} y={H - 4} fontSize={8} textAnchor="middle" fill="var(--ink-2)" fontWeight={600}>
+              {EVENT_GLYPH[ev.kind]}
+            </text>
+          </g>
+        );
+      })}
+    </>
+  ), [placedEvents, x, H, dict, locale]);
+  const tradeLayer = useMemo(() => (
+    <>
+      {/* Trade markers: an entry level, a marker at the session the shares
+          become sellable (VN settles T+2, credited after lunch — "T+2.5"),
+          and the unrealised move. No global tool models this, and it is the
+          first thing a VN holder wants from a chart of something they own. */}
+      {drawings.map((d) => {
+        if (d.kind !== "trade") return null;
+        const yEntry = y(d.price);
+        if (!Number.isFinite(yEntry)) return null;
+        const last = view[view.length - 1]?.c ?? d.price;
+        const move = unrealisedPct(d.price, last);
+        const settleAt = settlementDate(d.t);
+        const settled = isSettled(d.t, view[view.length - 1]?.t ?? d.t);
+        const iEntry = nearestIndex(view, d.t);
+        const iSettle = nearestIndex(view, settleAt);
+        return (
+          <g key={d.id}>
+            <line x1={PAD.left} x2={PAD.left + plotW} y1={yEntry} y2={yEntry}
+              stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="6 2" opacity={0.8} />
+            {/* Where the position was opened. */}
+            <path d={`M${x(iEntry)},${yEntry - 5} L${x(iEntry) + 5},${yEntry} L${x(iEntry)},${yEntry + 5} L${x(iEntry) - 5},${yEntry} Z`}
+              fill="var(--ink-2)" />
+            {/* Until this line the shares cannot be sold at all. Solid once
+                they have settled, dashed while they are still locked. */}
+            {iSettle > iEntry && (
+              <line x1={x(iSettle)} x2={x(iSettle)} y1={8} y2={H - 8}
+                stroke="var(--ink-2)" strokeWidth={1}
+                strokeDasharray={settled ? undefined : "2 4"} opacity={0.55} />
+            )}
+            {/* Signed and glyphed, so the move never rides on colour alone. */}
+            <text x={PAD.left + 4} y={yEntry - 4} fontSize={10} className="tnum"
+              fill="var(--ink-2)">
+              {move >= 0 ? "▲" : "▼"} {move >= 0 ? "+" : ""}{num(move, locale, 2)}% · {num(d.price, locale, digits)}
+            </text>
+          </g>
+        );
+      })}
+    </>
+  ), [drawings, view, x, y, plotW, H, locale, digits, PAD]);
+  const drawingLayer = useMemo(() => (
+    <>
+      {/* Drawings map from data space through the same scales as the bars,
+          so they stay pinned when the range changes. */}
+      {drawings.map((d) => {
+        if (d.kind === "hline") {
+          return (
+            <g key={d.id}>
+              <line x1={PAD.left} x2={PAD.left + plotW} y1={y(d.price)} y2={y(d.price)}
+                stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
+              <text x={PAD.left + plotW + 6} y={y(d.price) + 3.5} fontSize={10} fill="var(--accent)" className="tnum">
+                {num(d.price, locale, digits)}
+              </text>
+            </g>
+          );
+        }
+        // Binary search, not a scan: this runs for every endpoint of every
+        // drawing on every frame of a pan.
+        const iOf = (t: number) => nearestIndex(view, t);
+        if (d.kind === "trade") return null; // drawn separately, below
+
+        // A moment worth marking, with no price of its own.
+        if (d.kind === "vline") {
+          return (
+            <line key={d.id} x1={x(iOf(d.t))} x2={x(iOf(d.t))} y1={8} y2={H - 8}
+              stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
+          );
+        }
+
+        // A note anchored to a bar and a price, so it travels with the data.
+        if (d.kind === "text") {
+          const tx = x(iOf(d.t)), ty = y(d.price);
+          return (
+            <g key={d.id}>
+              <circle cx={tx} cy={ty} r={2.5} fill="var(--accent)" />
+              <text x={tx + 5} y={ty - 4} fontSize={11} fill="var(--accent)">{d.text}</text>
+            </g>
+          );
+        }
+
+        const i1 = iOf(d.t1), i2 = iOf(d.t2);
+
+        // A box over a region: a range, a consolidation, an event window.
+        if (d.kind === "rect") {
+          const x1 = Math.min(x(i1), x(i2)), x2 = Math.max(x(i1), x(i2));
+          const y1 = Math.min(y(d.p1), y(d.p2)), y2 = Math.max(y(d.p1), y(d.p2));
+          return (
+            <rect key={d.id} x={x1} y={y1} width={Math.max(1, x2 - x1)} height={Math.max(1, y2 - y1)}
+              fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={1} />
+          );
+        }
+
+        // A ray keeps going past its second point, which is the whole reason
+        // a reader picks one over a segment.
+        if (d.kind === "ray") {
+          const last = view.length - 1;
+          const endT = view[last].t;
+          // Extended along its own slope to the right edge rather than to the
+          // second point, so the line stays true as the window moves.
+          const endP = trendPriceAt(d, Math.max(endT, d.t2));
+          const xEnd = x(Math.max(i2, last));
+          return (
+            <g key={d.id}>
+              <line x1={x(i1)} y1={y(d.p1)} x2={xEnd} y2={y(endP)} stroke="var(--accent)" strokeWidth={1.5} />
+              <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
+            </g>
+          );
+        }
+
+        // A measurement states what it measured: price move, percent, and how
+        // many sessions it took — the three numbers the tool exists for.
+        if (d.kind === "measure") {
+          const dp = d.p2 - d.p1;
+          const pctMove = d.p1 ? (dp / d.p1) * 100 : 0;
+          const bars = Math.abs(i2 - i1);
+          const mx = (x(i1) + x(i2)) / 2;
+          const my = Math.min(y(d.p1), y(d.p2)) - 6;
+          return (
+            <g key={d.id}>
+              <rect x={Math.min(x(i1), x(i2))} y={Math.min(y(d.p1), y(d.p2))}
+                width={Math.max(1, Math.abs(x(i2) - x(i1)))} height={Math.max(1, Math.abs(y(d.p2) - y(d.p1)))}
+                fill={dp >= 0 ? "var(--up)" : "var(--down)"} fillOpacity={0.10} />
+              <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
+                stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="3 2" />
+              <text x={mx} y={my} fontSize={10} textAnchor="middle" className="tnum" fill="var(--ink-2)">
+                {dp >= 0 ? "▲" : "▼"} {dp >= 0 ? "+" : ""}{num(dp, locale, digits)} ({dp >= 0 ? "+" : ""}{num(pctMove, locale, 2)}%) · {bars}
+              </text>
+            </g>
+          );
+        }
+
+        if (d.kind === "channel") {
+          const par = channelParallel(d);
+          const ya = y(trendPriceAt(d, view[i1].t)), yb = y(trendPriceAt(d, view[i2].t));
+          const pa = y(trendPriceAt(par, view[i1].t)), pb = y(trendPriceAt(par, view[i2].t));
+          const i3 = iOf(d.t3);
+          return (
+            <g key={d.id}>
+              {/* The band is what a channel is FOR — the two lines alone leave
+                  the reader to infer which side of each one matters. */}
+              <polygon points={`${x(i1)},${ya} ${x(i2)},${yb} ${x(i2)},${pb} ${x(i1)},${pa}`}
+                fill="var(--accent)" fillOpacity={0.08} />
+              <line x1={x(i1)} y1={ya} x2={x(i2)} y2={yb} stroke="var(--accent)" strokeWidth={1.5} />
+              <line x1={x(i1)} y1={pa} x2={x(i2)} y2={pb} stroke="var(--accent)" strokeWidth={1.5} />
+              <circle cx={x(i1)} cy={ya} r={3} fill="var(--accent)" />
+              <circle cx={x(i2)} cy={yb} r={3} fill="var(--accent)" />
+              <circle cx={x(i3)} cy={y(d.p3)} r={3} fill="var(--accent)" />
+            </g>
+          );
+        }
+
+        if (d.kind === "fib" || d.kind === "fibext") {
+          const from = Math.min(x(i1), x(i2));
+          return (
+            <g key={d.id}>
+              {/* The swing being measured, drawn faintly: without it the
+                  levels are just lines with no visible origin. */}
+              <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
+                stroke="var(--muted)" strokeWidth={1} strokeDasharray="2 2" />
+              {fibLevels(d).map((l) => {
+                // 50% and 61.8% are the levels traders actually watch; the
+                // rest are context and recede so the pair stays findable.
+                const key = l.ratio === 0.5 || l.ratio === 0.618;
+                const text = `${(l.ratio * 100).toFixed(1).replace(/[.]0$/, "")}% · ${num(l.price, locale, digits)}`;
+                // The line starts AFTER the label. Running it underneath reads
+                // as a strikethrough through the number it is labelling.
+                const w = text.length * 5.1;
+                const gap = from + w + 8;
+                return (
+                  <g key={l.ratio}>
+                    <line x1={Math.min(gap, PAD.left + plotW)} x2={PAD.left + plotW} y1={y(l.price)} y2={y(l.price)}
+                      stroke="var(--accent)" strokeWidth={key ? 1.4 : 1} strokeOpacity={key ? 0.9 : 0.45} />
+                    {/* A moving average or a candle wick crossing the label
+                        reads as a strikethrough through the price. */}
+                    <rect x={from} y={y(l.price) - 6} width={w + 4} height={12} rx={2}
+                      fill="var(--page)" fillOpacity={0.85} />
+                    <text x={from + 2} y={y(l.price) + 3} fontSize={9}
+                      fill="var(--accent)" fillOpacity={key ? 1 : 0.75} className="tnum">
+                      {text}
+                    </text>
+                  </g>
+                );
+              })}
+              <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
+              <circle cx={x(i2)} cy={y(d.p2)} r={3} fill="var(--accent)" />
+            </g>
+          );
+        }
+
+        if (d.kind !== "trend") return null;
+        return (
+          <g key={d.id}>
+            <line x1={x(i1)} y1={y(trendPriceAt(d, view[i1].t))} x2={x(i2)} y2={y(trendPriceAt(d, view[i2].t))}
+              stroke="var(--accent)" strokeWidth={1.5} />
+            <circle cx={x(i1)} cy={y(trendPriceAt(d, view[i1].t))} r={3} fill="var(--accent)" />
+            <circle cx={x(i2)} cy={y(trendPriceAt(d, view[i2].t))} r={3} fill="var(--accent)" />
+          </g>
+        );
+      })}
+      {pending.map((pt, i) => (
+        <circle key={`${pt.t}-${i}`} cx={x(nearestIndex(view, pt.t))} cy={y(pt.p)} r={4}
+          fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="2 2" />
+      ))}
+    </>
+  ), [drawings, pending, view, x, y, plotW, H, locale, digits, PAD]);
+  const lastPriceLayer = useMemo(() => (
+    <>
+      {/* Last-price tag: the standard terminal affordance for "where is it
+          right now" without hunting along the axis. */}
+      {(() => {
+        const lastBar = view[view.length - 1];
+        const up = lastBar.c >= (view[view.length - 2]?.c ?? lastBar.o);
+        const ly = y(lastBar.c);
+        return (
+          <g>
+            <line x1={PAD.left} x2={PAD.left + plotW} y1={ly} y2={ly}
+              stroke={up ? "var(--up)" : "var(--down)"} strokeWidth={1} strokeDasharray="2 3" opacity={0.6} />
+            <rect x={PAD.left + plotW + 2} y={ly - 8} width={PAD.right - 4} height={16} rx={2}
+              fill={up ? "var(--up)" : "var(--down)"} />
+            <text x={PAD.left + plotW + PAD.right / 2} y={ly + 4} fontSize={10} textAnchor="middle"
+              fill="#fff" className="tnum">{num(lastBar.c, locale, digits)}</text>
+          </g>
+        );
+      })()}
+    </>
+  ), [view, y, plotW, locale, digits, PAD]);
+  const handleLayer = useMemo(() => (
+    <>
+      {/* Handles for the selected drawing, drawn last so they sit above every
+          drawing they might overlap. A hollow ring, not a filled dot: the
+          filled circles already mean "anchor of a channel", and two meanings
+          for one shape is how a reader learns to distrust the chart. */}
+      {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
+        <g key={`sel-${d.id}`}>
+          {anchorsOf(d).map((a, i) => {
+            // An anchor without a time is drawn at the left edge, where the
+            // reader can always reach it whatever the window shows.
+            const hx = a.axis === "price" ? PAD.left + 10 : x(nearestIndex(view, a.t));
+            const hy = a.axis === "time" ? H / 2 : y(a.p);
+            if (!Number.isFinite(hx) || !Number.isFinite(hy)) return null;
+            return (
+              <circle key={i} cx={hx} cy={hy} r={4.5}
+                fill="var(--page)" stroke="var(--accent)" strokeWidth={2} />
+            );
+          })}
+        </g>
+      ))}
+    </>
+  ), [selectedId, drawings, view, x, y, H, PAD]);
+
   return (
     <div className="relative">
+      {onCanvas && (
+        <PaneCanvas
+          width={width} height={H} draw={drawPrice}
+          layer={type === "candle" ? "candles" : type}
+          columns={type === "candle" ? columnsFor(view.length, maxCols) : undefined}
+          windowKey={`${view[0].t}:${view[view.length - 1].t}`}
+          compareDashes={compareScaled.map((_, i) => dashFor(i))}
+        />
+      )}
       <svg
         width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" tabIndex={0}
         aria-label={`${symbol} ${dict.stocks.chartTitle}. ${dict.common.tableView}.`}
         onPointerMove={onMove} onPointerLeave={onLeave} onKeyDown={onKey}
         onPointerDown={onClick} onPointerUp={onUp} onPointerCancel={onUp}
-        className={mode !== "cursor" ? "cursor-crosshair touch-pan-y" : canPan ? "cursor-grab touch-pan-y active:cursor-grabbing" : "touch-pan-y"}
+        className={`relative ${mode !== "cursor" ? "cursor-crosshair touch-pan-y" : canPan ? "cursor-grab touch-pan-y active:cursor-grabbing" : "touch-pan-y"}`}
       >
-        {scaleTicks(sc, yMin, yMax).map((v) => (
-          <g key={v}>
-            <line x1={PAD.left} x2={PAD.left + plotW} y1={y(v)} y2={y(v)} stroke="var(--grid)" strokeWidth={1} />
-            {/* On a percent axis the reader asked for distance travelled, so
-                that is what the axis prints — signed, and glyphed like every
-                other direction in this app. */}
-            <text x={PAD.left + plotW + 6} y={y(v) + 3.5} fontSize={10} fill="var(--muted)" className="tnum">
-              {sc === "pct"
-                ? `${pctOf(v, base) >= 0 ? "+" : ""}${num(pctOf(v, base), locale, 1)}%`
-                : num(v, locale, digits)}
-            </text>
-          </g>
-        ))}
+        {gridLayer}
 
-        {type === "area" && (
-          <path
-            d={`${linePath} L${x(view.length - 1)},${H - 10} L${x(0)},${H - 10} Z`}
-            fill="var(--accent)" opacity={0.10}
-          />
-        )}
-        {(type === "line" || type === "area") && (
-          <path d={linePath} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
-        )}
-        {/* Four paths rather than three nodes per candle. hollow = up,
-            filled = down: direction without relying on hue. */}
-        {type === "candle" && (() => {
-          const p = candlePaths(view, { x, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) }, maxCols);
-          return (
-            <g>
-              <path d={p.upWick} stroke="var(--up)" strokeWidth={1} fill="none" />
-              <path d={p.downWick} stroke="var(--down)" strokeWidth={1} fill="none" />
-              <path d={p.upBody} fill="var(--surface)" stroke="var(--up)" strokeWidth={1} />
-              <path d={p.downBody} fill="var(--down)" stroke="var(--down)" strokeWidth={1} />
-            </g>
-          );
-        })()}
+        {seriesLayer}
 
-        {overlays.map((o) => {
-          const d = seriesPath(o.series, x, y, maxCols);
-          return (
-            <path key={o.key} d={d} fill="none" stroke={COLOR_VAR[o.color]}
-              strokeWidth={o.style === "band" ? 1 : 1.5} strokeDasharray={o.style === "band" ? "3 3" : undefined}
-              opacity={o.style === "band" ? 0.8 : 1} />
-          );
-        })}
+        {overlayLayer}
 
-        {/* VN ceiling/floor reference levels (trần/sàn), on the price scale. */}
-        {refLines.map((r) => (
-          <g key={r.label}>
-            <line
-              x1={PAD.left} x2={PAD.left + plotW} y1={y(r.price)} y2={y(r.price)}
-              className={r.dir === "up" ? "text-up" : "text-down"}
-              stroke="currentColor" strokeWidth={1} strokeDasharray="2 4" opacity={0.7}
-            />
-            <text
-              x={PAD.left + 4} y={y(r.price) - 3} fontSize={10}
-              className={`tnum ${r.dir === "up" ? "text-up" : "text-down"}`} fill="currentColor"
-            >
-              {r.label} {num(r.price, locale, digits)}
-            </text>
-          </g>
-        ))}
+        {refLayer}
 
-        {/* Armed price alerts, so the chart shows what it is watching for.
-            Deliberately NOT folded into the price domain the way ceiling/floor
-            are: an alert set far from the current price would squash every
-            candle into a band to keep a line visible that the reader already
-            knows about. One outside the visible range is simply not drawn. */}
-        {alerts.map((a) => {
-          if (a.price < yMin || a.price > yMax) return null;
-          const rising = a.condition === "above" || a.condition === "cross_up";
-          return (
-            <g key={a.id} opacity={a.triggeredAt ? 0.45 : 0.9}>
-              <line
-                x1={PAD.left} x2={PAD.left + plotW} y1={y(a.price)} y2={y(a.price)}
-                stroke="var(--accent)" strokeWidth={1} strokeDasharray="1 5"
-              />
-              {/* The glyph carries the direction, so the level is not colour-alone. */}
-              <text
-                x={PAD.left + plotW - 4} y={y(a.price) - 3} fontSize={10} textAnchor="end"
-                className="tnum" fill="var(--accent)"
-              >
-                {rising ? "▲" : "▼"} {num(a.price, locale, digits)}
-              </text>
-            </g>
-          );
-        })}
+        {alertLayer}
 
-        {/* Overlays: normalised shape only, never the price scale. Each gets its
-            own dash pattern so they are told apart without relying on colour,
-            and the legend repeats that pattern rather than a colour swatch. */}
-        {comparePaths.map((c, i) => (
-          <path key={c.label} d={c.d} fill="none" stroke="var(--muted)" strokeWidth={1.5}
-            strokeDasharray={dashFor(i)} opacity={0.85} />
-        ))}
-        {comparePaths.length > 0 && (
-          <text x={PAD.left + 4} y={H - 8} fontSize={10} fill="var(--muted)">
-            {comparePaths.map((c, i) => `${i === 0 ? "" : "   "}${dashGlyph(i)} ${c.label}`).join("")}
-          </text>
-        )}
+        {compareLayer}
 
-        {/* Corporate events on the session they went ex.
+        {eventLayer}
 
-            Deliberately understated: a dotted riser and a lettered badge on the
-            axis, never a band across the plot. The series is back-adjusted, so
-            there is no gap here for a dividend to explain — the marker answers
-            "was I holding when this paid, and how much", and the label says the
-            amount without implying it caused anything. */}
-        {placedEvents.map((ev) => {
-          const cx = x(ev.i);
-          const label = ev.kind === "cash" ? dict.chart.eventCash
-            : ev.kind === "stock" ? dict.chart.eventStock : dict.chart.eventRights;
-          const amount = ev.cash !== null
-            ? ` · ${num(ev.cash, locale, 0)} ₫/cp`
-            : ev.ratio !== null ? ` · ${num(ev.ratio, locale, 1)}%` : "";
-          return (
-            <g key={`${ev.exDate}-${ev.kind}-${ev.cash ?? ""}`}>
-              <title>{`${label}${amount} · ${dict.chart.eventExDate} ${ev.exDate}${ev.note ? ` · ${ev.note}` : ""}`}</title>
-              <line x1={cx} x2={cx} y1={H - 22} y2={H - 12}
-                stroke="var(--muted)" strokeWidth={1} strokeDasharray="1 2" opacity={0.8} />
-              <circle cx={cx} cy={H - 7} r={6} fill="var(--surface-2)" stroke="var(--muted)" strokeWidth={0.75} />
-              {/* A letter, not a colour: D/S/R survive greyscale and colour blindness. */}
-              <text x={cx} y={H - 4} fontSize={8} textAnchor="middle" fill="var(--ink-2)" fontWeight={600}>
-                {EVENT_GLYPH[ev.kind]}
-              </text>
-            </g>
-          );
-        })}
+        {tradeLayer}
 
-        {/* Trade markers: an entry level, a marker at the session the shares
-            become sellable (VN settles T+2, credited after lunch — "T+2.5"),
-            and the unrealised move. No global tool models this, and it is the
-            first thing a VN holder wants from a chart of something they own. */}
-        {drawings.map((d) => {
-          if (d.kind !== "trade") return null;
-          const yEntry = y(d.price);
-          if (!Number.isFinite(yEntry)) return null;
-          const last = view[view.length - 1]?.c ?? d.price;
-          const move = unrealisedPct(d.price, last);
-          const settleAt = settlementDate(d.t);
-          const settled = isSettled(d.t, view[view.length - 1]?.t ?? d.t);
-          const iEntry = nearestIndex(view, d.t);
-          const iSettle = nearestIndex(view, settleAt);
-          return (
-            <g key={d.id}>
-              <line x1={PAD.left} x2={PAD.left + plotW} y1={yEntry} y2={yEntry}
-                stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="6 2" opacity={0.8} />
-              {/* Where the position was opened. */}
-              <path d={`M${x(iEntry)},${yEntry - 5} L${x(iEntry) + 5},${yEntry} L${x(iEntry)},${yEntry + 5} L${x(iEntry) - 5},${yEntry} Z`}
-                fill="var(--ink-2)" />
-              {/* Until this line the shares cannot be sold at all. Solid once
-                  they have settled, dashed while they are still locked. */}
-              {iSettle > iEntry && (
-                <line x1={x(iSettle)} x2={x(iSettle)} y1={8} y2={H - 8}
-                  stroke="var(--ink-2)" strokeWidth={1}
-                  strokeDasharray={settled ? undefined : "2 4"} opacity={0.55} />
-              )}
-              {/* Signed and glyphed, so the move never rides on colour alone. */}
-              <text x={PAD.left + 4} y={yEntry - 4} fontSize={10} className="tnum"
-                fill="var(--ink-2)">
-                {move >= 0 ? "▲" : "▼"} {move >= 0 ? "+" : ""}{num(move, locale, 2)}% · {num(d.price, locale, digits)}
-              </text>
-            </g>
-          );
-        })}
+        {drawingLayer}
 
-        {/* Drawings map from data space through the same scales as the bars,
-            so they stay pinned when the range changes. */}
-        {drawings.map((d) => {
-          if (d.kind === "hline") {
-            return (
-              <g key={d.id}>
-                <line x1={PAD.left} x2={PAD.left + plotW} y1={y(d.price)} y2={y(d.price)}
-                  stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
-                <text x={PAD.left + plotW + 6} y={y(d.price) + 3.5} fontSize={10} fill="var(--accent)" className="tnum">
-                  {num(d.price, locale, digits)}
-                </text>
-              </g>
-            );
-          }
-          // Binary search, not a scan: this runs for every endpoint of every
-          // drawing on every frame of a pan.
-          const iOf = (t: number) => nearestIndex(view, t);
-          if (d.kind === "trade") return null; // drawn separately, below
-
-          // A moment worth marking, with no price of its own.
-          if (d.kind === "vline") {
-            return (
-              <line key={d.id} x1={x(iOf(d.t))} x2={x(iOf(d.t))} y1={8} y2={H - 8}
-                stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
-            );
-          }
-
-          // A note anchored to a bar and a price, so it travels with the data.
-          if (d.kind === "text") {
-            const tx = x(iOf(d.t)), ty = y(d.price);
-            return (
-              <g key={d.id}>
-                <circle cx={tx} cy={ty} r={2.5} fill="var(--accent)" />
-                <text x={tx + 5} y={ty - 4} fontSize={11} fill="var(--accent)">{d.text}</text>
-              </g>
-            );
-          }
-
-          const i1 = iOf(d.t1), i2 = iOf(d.t2);
-
-          // A box over a region: a range, a consolidation, an event window.
-          if (d.kind === "rect") {
-            const x1 = Math.min(x(i1), x(i2)), x2 = Math.max(x(i1), x(i2));
-            const y1 = Math.min(y(d.p1), y(d.p2)), y2 = Math.max(y(d.p1), y(d.p2));
-            return (
-              <rect key={d.id} x={x1} y={y1} width={Math.max(1, x2 - x1)} height={Math.max(1, y2 - y1)}
-                fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={1} />
-            );
-          }
-
-          // A ray keeps going past its second point, which is the whole reason
-          // a reader picks one over a segment.
-          if (d.kind === "ray") {
-            const last = view.length - 1;
-            const endT = view[last].t;
-            // Extended along its own slope to the right edge rather than to the
-            // second point, so the line stays true as the window moves.
-            const endP = trendPriceAt(d, Math.max(endT, d.t2));
-            const xEnd = x(Math.max(i2, last));
-            return (
-              <g key={d.id}>
-                <line x1={x(i1)} y1={y(d.p1)} x2={xEnd} y2={y(endP)} stroke="var(--accent)" strokeWidth={1.5} />
-                <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
-              </g>
-            );
-          }
-
-          // A measurement states what it measured: price move, percent, and how
-          // many sessions it took — the three numbers the tool exists for.
-          if (d.kind === "measure") {
-            const dp = d.p2 - d.p1;
-            const pctMove = d.p1 ? (dp / d.p1) * 100 : 0;
-            const bars = Math.abs(i2 - i1);
-            const mx = (x(i1) + x(i2)) / 2;
-            const my = Math.min(y(d.p1), y(d.p2)) - 6;
-            return (
-              <g key={d.id}>
-                <rect x={Math.min(x(i1), x(i2))} y={Math.min(y(d.p1), y(d.p2))}
-                  width={Math.max(1, Math.abs(x(i2) - x(i1)))} height={Math.max(1, Math.abs(y(d.p2) - y(d.p1)))}
-                  fill={dp >= 0 ? "var(--up)" : "var(--down)"} fillOpacity={0.10} />
-                <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
-                  stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="3 2" />
-                <text x={mx} y={my} fontSize={10} textAnchor="middle" className="tnum" fill="var(--ink-2)">
-                  {dp >= 0 ? "▲" : "▼"} {dp >= 0 ? "+" : ""}{num(dp, locale, digits)} ({dp >= 0 ? "+" : ""}{num(pctMove, locale, 2)}%) · {bars}
-                </text>
-              </g>
-            );
-          }
-
-          if (d.kind === "channel") {
-            const par = channelParallel(d);
-            const ya = y(trendPriceAt(d, view[i1].t)), yb = y(trendPriceAt(d, view[i2].t));
-            const pa = y(trendPriceAt(par, view[i1].t)), pb = y(trendPriceAt(par, view[i2].t));
-            const i3 = iOf(d.t3);
-            return (
-              <g key={d.id}>
-                {/* The band is what a channel is FOR — the two lines alone leave
-                    the reader to infer which side of each one matters. */}
-                <polygon points={`${x(i1)},${ya} ${x(i2)},${yb} ${x(i2)},${pb} ${x(i1)},${pa}`}
-                  fill="var(--accent)" fillOpacity={0.08} />
-                <line x1={x(i1)} y1={ya} x2={x(i2)} y2={yb} stroke="var(--accent)" strokeWidth={1.5} />
-                <line x1={x(i1)} y1={pa} x2={x(i2)} y2={pb} stroke="var(--accent)" strokeWidth={1.5} />
-                <circle cx={x(i1)} cy={ya} r={3} fill="var(--accent)" />
-                <circle cx={x(i2)} cy={yb} r={3} fill="var(--accent)" />
-                <circle cx={x(i3)} cy={y(d.p3)} r={3} fill="var(--accent)" />
-              </g>
-            );
-          }
-
-          if (d.kind === "fib" || d.kind === "fibext") {
-            const from = Math.min(x(i1), x(i2));
-            return (
-              <g key={d.id}>
-                {/* The swing being measured, drawn faintly: without it the
-                    levels are just lines with no visible origin. */}
-                <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
-                  stroke="var(--muted)" strokeWidth={1} strokeDasharray="2 2" />
-                {fibLevels(d).map((l) => {
-                  // 50% and 61.8% are the levels traders actually watch; the
-                  // rest are context and recede so the pair stays findable.
-                  const key = l.ratio === 0.5 || l.ratio === 0.618;
-                  const text = `${(l.ratio * 100).toFixed(1).replace(/[.]0$/, "")}% · ${num(l.price, locale, digits)}`;
-                  // The line starts AFTER the label. Running it underneath reads
-                  // as a strikethrough through the number it is labelling.
-                  const w = text.length * 5.1;
-                  const gap = from + w + 8;
-                  return (
-                    <g key={l.ratio}>
-                      <line x1={Math.min(gap, PAD.left + plotW)} x2={PAD.left + plotW} y1={y(l.price)} y2={y(l.price)}
-                        stroke="var(--accent)" strokeWidth={key ? 1.4 : 1} strokeOpacity={key ? 0.9 : 0.45} />
-                      {/* A moving average or a candle wick crossing the label
-                          reads as a strikethrough through the price. */}
-                      <rect x={from} y={y(l.price) - 6} width={w + 4} height={12} rx={2}
-                        fill="var(--page)" fillOpacity={0.85} />
-                      <text x={from + 2} y={y(l.price) + 3} fontSize={9}
-                        fill="var(--accent)" fillOpacity={key ? 1 : 0.75} className="tnum">
-                        {text}
-                      </text>
-                    </g>
-                  );
-                })}
-                <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
-                <circle cx={x(i2)} cy={y(d.p2)} r={3} fill="var(--accent)" />
-              </g>
-            );
-          }
-
-          if (d.kind !== "trend") return null;
-          return (
-            <g key={d.id}>
-              <line x1={x(i1)} y1={y(trendPriceAt(d, view[i1].t))} x2={x(i2)} y2={y(trendPriceAt(d, view[i2].t))}
-                stroke="var(--accent)" strokeWidth={1.5} />
-              <circle cx={x(i1)} cy={y(trendPriceAt(d, view[i1].t))} r={3} fill="var(--accent)" />
-              <circle cx={x(i2)} cy={y(trendPriceAt(d, view[i2].t))} r={3} fill="var(--accent)" />
-            </g>
-          );
-        })}
-        {pending.map((pt, i) => (
-          <circle key={`${pt.t}-${i}`} cx={x(nearestIndex(view, pt.t))} cy={y(pt.p)} r={4}
-            fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="2 2" />
-        ))}
-
-        {/* Last-price tag: the standard terminal affordance for "where is it
-            right now" without hunting along the axis. */}
-        {(() => {
-          const lastBar = view[view.length - 1];
-          const up = lastBar.c >= (view[view.length - 2]?.c ?? lastBar.o);
-          const ly = y(lastBar.c);
-          return (
-            <g>
-              <line x1={PAD.left} x2={PAD.left + plotW} y1={ly} y2={ly}
-                stroke={up ? "var(--up)" : "var(--down)"} strokeWidth={1} strokeDasharray="2 3" opacity={0.6} />
-              <rect x={PAD.left + plotW + 2} y={ly - 8} width={PAD.right - 4} height={16} rx={2}
-                fill={up ? "var(--up)" : "var(--down)"} />
-              <text x={PAD.left + plotW + PAD.right / 2} y={ly + 4} fontSize={10} textAnchor="middle"
-                fill="#fff" className="tnum">{num(lastBar.c, locale, digits)}</text>
-            </g>
-          );
-        })()}
+        {lastPriceLayer}
 
         {/* The horizontal half of the crosshair, at the POINTER rather than at the
             candle: reading a level off a chart means "what price is here", and
@@ -2200,25 +2418,7 @@ function PricePane({
           </g>
         )}
 
-        {/* Handles for the selected drawing, drawn last so they sit above every
-            drawing they might overlap. A hollow ring, not a filled dot: the
-            filled circles already mean "anchor of a channel", and two meanings
-            for one shape is how a reader learns to distrust the chart. */}
-        {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
-          <g key={`sel-${d.id}`}>
-            {anchorsOf(d).map((a, i) => {
-              // An anchor without a time is drawn at the left edge, where the
-              // reader can always reach it whatever the window shows.
-              const hx = a.axis === "price" ? PAD.left + 10 : x(nearestIndex(view, a.t));
-              const hy = a.axis === "time" ? H / 2 : y(a.p);
-              if (!Number.isFinite(hx) || !Number.isFinite(hy)) return null;
-              return (
-                <circle key={i} cx={hx} cy={hy} r={4.5}
-                  fill="var(--page)" stroke="var(--accent)" strokeWidth={2} />
-              );
-            })}
-          </g>
-        ))}
+        {handleLayer}
       </svg>
 
       {/* A three-click tool that says nothing after two clicks reads as broken. */}
@@ -2239,26 +2439,40 @@ function PricePane({
   );
 }
 
-function VolumePane({ view, width, band, x, PAD, hover, locale }: PaneGeom & { locale: Locale }) {
+function VolumePane({ view, width, band, x, PAD, maxCols, hover, locale }: PaneGeom & { locale: Locale }) {
   const H = 56;
-  const maxV = Math.max(...view.map((b) => b.v), 1);
+  const colors = useChartColors();
+  const maxV = useMemo(() => Math.max(seriesExtent([view.map((b) => b.v)]).hi, 1), [view]);
+  // Held across renders so a crosshair move does not rebuild every bar; see PricePane.
+  const barLayer = useMemo(() => {
+    if (colors) return null;
+    const p = volumePaths(view, {
+      x, barWidth: Math.max(1, Math.min(band * 0.62, 14)), height: H, maxVolume: maxV,
+    }, maxCols);
+    return (
+      <g opacity={0.32}>
+        <path d={p.up} fill="var(--up)" />
+        <path d={p.down} fill="var(--down)" />
+      </g>
+    );
+  }, [colors, view, x, band, maxV, maxCols]);
+  const drawBars = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!colors) return;
+    drawVolume(ctx, view, {
+      x, barWidth: Math.max(1, Math.min(band * 0.62, 14)), height: H, maxVolume: maxV,
+    }, maxCols, colors, 0.32);
+  }, [colors, view, x, band, maxV, maxCols]);
+  // After the hooks: returning above them would change the hook order.
   if (maxV <= 1) return null;
   return (
-    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={`Volume`} className="block">
-      {(() => {
-        const p = volumePaths(view, {
-          x, barWidth: Math.max(1, Math.min(band * 0.62, 14)), height: H, maxVolume: maxV,
-        }, maxColumnsFor(width - PAD.left - PAD.right));
-        return (
-          <g opacity={0.32}>
-            <path d={p.up} fill="var(--up)" />
-            <path d={p.down} fill="var(--down)" />
-          </g>
-        );
-      })()}
-      {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
-      <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">VOL {fmtVol(maxV, locale)}</text>
-    </svg>
+    <div className="relative">
+      {colors && <PaneCanvas width={width} height={H} draw={drawBars} />}
+      <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={`Volume`} className="relative block">
+        {barLayer}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+        <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">VOL {fmtVol(maxV, locale)}</text>
+      </svg>
+    </div>
   );
 }
 
@@ -2269,32 +2483,57 @@ function VolumePane({ view, width, band, x, PAD, hover, locale }: PaneGeom & { l
  * simply has no bar; nothing is drawn as a fake zero.
  */
 function ForeignPane({
-  width, band, x, PAD, hover, net, label,
+  width, band, x, PAD, maxCols, hover, net, label,
 }: PaneGeom & { net: (number | null)[]; label: string; locale: Locale }) {
   const H = 54;
   const mid = H / 2;
-  const vals = net.filter((v): v is number => v !== null);
-  const maxAbs = Math.max(1, ...vals.map((v) => Math.abs(v)));
+  const colors = useChartColors();
+  // The largest magnitude sits at one of the two extremes. An empty series is
+  // 1, as `Math.max(1)` was — not the infinity an empty extent would give.
+  const maxAbs = useMemo(() => {
+    const e = seriesExtent([net]);
+    return e.n ? Math.max(1, Math.abs(e.lo), Math.abs(e.hi)) : 1;
+  }, [net]);
   const bw = Math.max(1, Math.min(band * 0.62, 14));
+  // Held across renders so a crosshair move does not rebuild every bar; see PricePane.
+  const barLayer = useMemo(() => {
+    if (colors) return null;
+    const p = signedBarPaths(net, {
+      x, y: (v) => mid - (v / maxAbs) * (mid - 6), zeroY: mid, barWidth: bw,
+    }, maxCols);
+    return (
+      <g opacity={0.55}>
+        <path d={p.up} className="text-up" fill="currentColor" />
+        <path d={p.down} className="text-down" fill="currentColor" />
+      </g>
+    );
+  }, [colors, net, x, mid, maxAbs, bw, maxCols]);
+  // The zero line goes with the bars, so it stays beneath them.
+  const drawBars = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!colors) return;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = colors.grid;
+    ctx.beginPath(); ctx.moveTo(PAD.left, mid); ctx.lineTo(PAD.left + (width - PAD.left - PAD.right), mid); ctx.stroke();
+    drawSignedBars(ctx, net, {
+      x, y: (v) => mid - (v / maxAbs) * (mid - 6), zeroY: mid, barWidth: bw,
+    }, maxCols, colors, 0.55);
+  }, [colors, PAD, width, mid, net, x, maxAbs, bw, maxCols]);
   return (
-    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="block">
-      <line x1={PAD.left} x2={PAD.left + (width - PAD.left - PAD.right)} y1={mid} y2={mid} stroke="var(--grid)" strokeWidth={1} />
-      {(() => {
-        const p = signedBarPaths(net, {
-          x, y: (v) => mid - (v / maxAbs) * (mid - 6), zeroY: mid, barWidth: bw,
-        }, maxColumnsFor(width - PAD.left - PAD.right));
-        return (
-          <g opacity={0.55}>
-            <path d={p.up} className="text-up" fill="currentColor" />
-            <path d={p.down} className="text-down" fill="currentColor" />
-          </g>
-        );
-      })()}
-      {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
-      <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
-    </svg>
+    <div className="relative">
+      {colors && <PaneCanvas width={width} height={H} draw={drawBars} />}
+      <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="relative block">
+        {!colors && <line x1={PAD.left} x2={PAD.left + (width - PAD.left - PAD.right)} y1={mid} y2={mid} stroke="var(--grid)" strokeWidth={1} />}
+        {barLayer}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
+        <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
+      </svg>
+    </div>
   );
 }
+
+/** Breadth is bounded 0–100, so its pane has a fixed height and a fixed scale. */
+const BREADTH_H = 54;
+const breadthY = (v: number) => 8 + (BREADTH_H - 16) - (v / 100) * (BREADTH_H - 16);
 
 /**
  * Breadth, 0–100. Bounded, so the scale is fixed rather than fitted to the
@@ -2303,16 +2542,31 @@ function ForeignPane({
  * the market participating), not a threshold someone picked.
  */
 function BreadthPane({
-  width, x, PAD, hover, pct, label,
+  width, x, PAD, maxCols, hover, pct, label,
 }: PaneGeom & { pct: (number | null)[]; label: string; locale: Locale }) {
-  const H = 54;
+  const H = BREADTH_H;
   const plotW = width - PAD.left - PAD.right;
-  const y = (v: number) => 8 + (H - 16) - (v / 100) * (H - 16);
-  const d = seriesPath(pct, x, y, maxColumnsFor(plotW));
-  const last = [...pct].reverse().find((v): v is number => v !== null);
+  const y = breadthY;
+  const colors = useChartColors();
+  // Held across renders so a crosshair move does not rebuild the line.
+  const d = useMemo(() => (colors ? "" : seriesPath(pct, x, breadthY, maxCols)), [colors, pct, x, maxCols]);
+  // The 50% line goes with the series, so it stays beneath it.
+  const drawLine = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!colors) return;
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = colors.grid;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, breadthY(50)); ctx.lineTo(PAD.left + plotW, breadthY(50)); ctx.stroke();
+    ctx.restore();
+    drawSeries(ctx, pct, x, breadthY, maxCols, { color: colors.accent, width: 1.5 });
+  }, [colors, PAD, plotW, pct, x, maxCols]);
+  const last = useMemo(() => [...pct].reverse().find((v): v is number => v !== null), [pct]);
   return (
-    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="block">
-      <line x1={PAD.left} x2={PAD.left + plotW} y1={y(50)} y2={y(50)} stroke="var(--grid)" strokeWidth={1} strokeDasharray="2 3" />
+    <div className="relative">
+      {colors && <PaneCanvas width={width} height={H} draw={drawLine} />}
+    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="relative block">
+      {!colors && <line x1={PAD.left} x2={PAD.left + plotW} y1={y(50)} y2={y(50)} stroke="var(--grid)" strokeWidth={1} strokeDasharray="2 3" />}
       {d && <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />}
       {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
       <text x={PAD.left} y={10} fontSize={9} fill="var(--muted)">{label}</text>
@@ -2322,23 +2576,60 @@ function BreadthPane({
         </text>
       )}
     </svg>
+    </div>
   );
 }
 
 function OscillatorPane({
-  def, period, plots, width, band, x, PAD, hover, idx, locale,
+  def, period, plots, width, band, x, PAD, maxCols, hover, idx, locale,
 }: Omit<PaneGeom, "view"> & { def: IndicatorDef; period: number | null; plots: Plot[]; idx: number; locale: Locale }) {
   const H = 96;
-  const vals = plots.flatMap((p) => p.series.filter((v): v is number => v !== null));
-  if (!vals.length) return null;
-  const [lo, hi] = def.range ?? [Math.min(...vals), Math.max(...vals)];
+  const colors = useChartColors();
+  const e = useMemo(() => seriesExtent(plots.map((p) => p.series)), [plots]);
+  const [lo, hi] = def.range ?? [e.lo, e.hi];
   const span = hi - lo || 1;
-  const y = (v: number) => 14 + (H - 24) - ((v - lo) / span) * (H - 24);
+  const y = useCallback((v: number) => 14 + (H - 24) - ((v - lo) / span) * (H - 24), [lo, span]);
   const zeroY = lo < 0 && hi > 0 ? y(0) : H - 10;
-  const maxCols = maxColumnsFor(width - PAD.left - PAD.right);
+  // Held across renders so a crosshair move does not rebuild every series; see PricePane.
+  const plotLayer = useMemo(() => colors ? null : plots.map((p) => {
+    if (p.style !== "histogram") {
+      return (
+        <path key={p.key} d={seriesPath(p.series, x, y, maxCols)}
+          fill="none" stroke={COLOR_VAR[p.color]} strokeWidth={1.5} />
+      );
+    }
+    // Two paths rather than one node per bar — the same cost the candle
+    // paths were written to remove, which had survived in this pane.
+    const h = signedBarPaths(p.series, {
+      x, y, zeroY, barWidth: Math.max(1, Math.min(band, 10)),
+    }, maxCols);
+    return (
+      <g key={p.key} opacity={0.45}>
+        <path d={h.up} fill="var(--up)" />
+        <path d={h.down} fill="var(--down)" />
+      </g>
+    );
+  }), [colors, plots, x, y, zeroY, band, maxCols]);
+  // Guides go with the plots, so they stay beneath them; their labels stay SVG.
+  const drawPlots = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!colors) return;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = colors.grid;
+    for (const g of def.guides ?? []) {
+      ctx.beginPath(); ctx.moveTo(PAD.left, y(g)); ctx.lineTo(width - PAD.right, y(g)); ctx.stroke();
+    }
+    for (const p of plots) {
+      if (p.style !== "histogram") drawSeries(ctx, p.series, x, y, maxCols, { color: colors[p.color], width: 1.5 });
+      else drawSignedBars(ctx, p.series, { x, y, zeroY, barWidth: Math.max(1, Math.min(band, 10)) }, maxCols, colors, 0.45);
+    }
+  }, [colors, def.guides, PAD, width, y, plots, x, maxCols, zeroY, band]);
+  // After the hooks: returning above them would change the hook order.
+  if (!e.n) return null;
 
   return (
-    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={labelFor(def, period)} className="block border-t border-line">
+    <div className="relative border-t border-line">
+      {colors && <PaneCanvas width={width} height={H} draw={drawPlots} />}
+    <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={labelFor(def, period)} className="relative block">
       {/* The plot labels already name the indicator; printing `def.short` too
           produced "RSI RSI 14". */}
       <text x={PAD.left} y={11} fontSize={10} fill="var(--muted)">
@@ -2350,33 +2641,16 @@ function OscillatorPane({
 
       {(def.guides ?? []).map((g) => (
         <g key={g}>
-          <line x1={PAD.left} x2={width - PAD.right} y1={y(g)} y2={y(g)} stroke="var(--grid)" strokeWidth={1} />
+          {!colors && <line x1={PAD.left} x2={width - PAD.right} y1={y(g)} y2={y(g)} stroke="var(--grid)" strokeWidth={1} />}
           <text x={width - PAD.right + 6} y={y(g) + 3} fontSize={9} fill="var(--muted)" className="tnum">{g}</text>
         </g>
       ))}
 
-      {plots.map((p) => {
-        if (p.style !== "histogram") {
-          return (
-            <path key={p.key} d={seriesPath(p.series, x, y, maxCols)}
-              fill="none" stroke={COLOR_VAR[p.color]} strokeWidth={1.5} />
-          );
-        }
-        // Two paths rather than one node per bar — the same cost the candle
-        // paths were written to remove, which had survived in this pane.
-        const h = signedBarPaths(p.series, {
-          x, y, zeroY, barWidth: Math.max(1, Math.min(band, 10)),
-        }, maxCols);
-        return (
-          <g key={p.key} opacity={0.45}>
-            <path d={h.up} fill="var(--up)" />
-            <path d={h.down} fill="var(--down)" />
-          </g>
-        );
-      })}
+      {plotLayer}
 
       {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
     </svg>
+    </div>
   );
 }
 
@@ -2385,17 +2659,20 @@ function XAxis({ view, width, x, xStep, locale, hover, intraday }: { view: Bar[]
   // tick once the window spans more than a day, which tells the reader nothing.
   // Ticks that open a new trading day carry the date; ticks inside a day carry
   // the clock — the way a terminal axis reads.
-  const ticks: { i: number; label: string }[] = [];
-  let lastDay = "";
-  for (let i = 0; i < view.length - 1; i++) {
-    if (i % xStep !== 0) continue;
-    const day = dateOnly(view[i].t, locale).slice(0, 5);
-    ticks.push({
-      i,
-      label: !intraday || day !== lastDay ? day : barTime(view[i].t, locale),
-    });
-    lastDay = day;
-  }
+  const ticks = useMemo(() => {
+    const out: { i: number; label: string }[] = [];
+    let lastDay = "";
+    for (let i = 0; i < view.length - 1; i++) {
+      if (i % xStep !== 0) continue;
+      const day = dateOnly(view[i].t, locale).slice(0, 5);
+      out.push({
+        i,
+        label: !intraday || day !== lastDay ? day : barTime(view[i].t, locale),
+      });
+      lastDay = day;
+    }
+    return out;
+  }, [view, xStep, locale, intraday]);
 
   return (
     <svg width="100%" height={20} viewBox={`0 0 ${width} 20`} aria-hidden="true" className="block">

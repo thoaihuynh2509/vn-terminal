@@ -111,6 +111,9 @@ export function ShareMenu({
       if (!panes.length) return;
 
       const images = await Promise.all(panes.map((p) => svgToImage(freeze(p))));
+      // A pane's dense layer may be a canvas beneath its SVG; the picture needs both,
+      // or it exports every label and drawing with no candles under them.
+      const layers = panes.map((p) => p.parentElement?.querySelector<HTMLCanvasElement>("canvas[data-pane-layer]") ?? null);
       const width = Math.max(...images.map((i) => i.width));
       const chartHeight = images.reduce((h, i) => h + i.height, 0);
       const foot = footerText({ symbol, tf, at: new Date(), site });
@@ -133,10 +136,12 @@ export function ShareMenu({
       ctx.fillRect(0, 0, width, chartHeight + footH);
 
       let y = 0;
-      for (const img of images) {
+      images.forEach((img, i) => {
+        const layer = layers[i];
+        if (layer) ctx.drawImage(layer, 0, y, img.width, img.height);
         ctx.drawImage(img, 0, y, img.width, img.height);
         y += img.height;
-      }
+      });
 
       if (foot) {
         const muted = window.getComputedStyle(document.documentElement).getPropertyValue("--muted").trim();
