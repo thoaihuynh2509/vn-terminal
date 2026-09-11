@@ -17,9 +17,44 @@ const OUT = process.env.OUT ?? "/tmp/shots";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Candles drawn in the price pane, whichever way they are drawn.
+ *
+ * The dense layer may be canvas, which has no nodes to count, so it publishes
+ * its column count; SVG is counted from its body subpaths — rectangles, `M…H`,
+ * so a trade marker's closed diamond cannot pass for a candle. The price pane
+ * only: volume draws filled bars too, and counting both would let a broken
+ * candle pane pass on volume alone.
+ */
+const CANDLE_COLUMNS = `(() => {
+  const c = document.querySelector('canvas[data-layer="candles"]');
+  if (c) return Number(c.dataset.columns) || 0;
+  const pane = document.querySelector('svg[role=img]');
+  if (!pane) return 0;
+  return [...pane.querySelectorAll('path')]
+    .map((p) => p.getAttribute('d') || '')
+    .filter((d) => /^M[\\d.-]+,[\\d.-]+H/.test(d))
+    .reduce((n, d) => n + (d.match(/M/g) || []).length, 0);
+})()`;
+/** Whether line mode drew its line, as a canvas layer or as SVG path data. */
+const LINE_DRAWN = `(document.querySelector('canvas[data-layer="line"], canvas[data-layer="area"]') ? 1
+  : document.querySelectorAll('svg[role=img] path').length)`;
+
 async function launch() {
   const proc = spawn(CHROME, [
-    "--headless=new", `--remote-debugging-port=${PORT}`, "--disable-gpu",
+    "--headless=new", `--remote-debugging-port=${PORT}`,
+    // Off by default, as it always was. PERF_GPU=1 turns it on, because the
+    // two render paths do not rasterise alike without a GPU: SVG is rasterised
+    // in tiles on worker threads, an unaccelerated canvas on the MAIN thread —
+    // so a GPU-less run favours SVG in a way a reader's browser does not.
+    ...(process.env.PERF_GPU === "1" ? ["--ignore-gpu-blocklist", "--enable-gpu-rasterization"] : ["--disable-gpu"]),
+    // macOS tracks window occlusion even for headless Chrome, and when the
+    // display sleeps or locks it reports every window occluded — so the page
+    // turns "hidden" mid-run, animation frames stop, and a perf run measures
+    // nothing or stalls on input that is never processed. These keep the page
+    // live whether or not anyone is watching the screen.
+    "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
     "--hide-scrollbars", "--no-first-run", "--force-color-profile=srgb",
     "--user-data-dir=/tmp/cdp-profile", "about:blank",
   ], { stdio: "ignore" });
@@ -36,7 +71,14 @@ async function launch() {
 class Session {
   #ws; #id = 0; #pending = new Map();
   static async open() {
-    const t = await (await fetch(`http://127.0.0.1:${PORT}/json/new?about:blank`, { method: "PUT" })).json();
+    // Drive the tab Chrome launched with. A tab made through /json/new is
+    // created in the BACKGROUND, and this headless Chrome keeps it there even
+    // after Page.bringToFront: visibilityState "hidden", no animation frames,
+    // so every frame time sampled from it is empty and a drag never paints.
+    // Only fall back to a new tab if there is none.
+    const pages = (await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).filter((x) => x.type === "page");
+    const t = pages[0]
+      ?? await (await fetch(`http://127.0.0.1:${PORT}/json/new?about:blank`, { method: "PUT" })).json();
     const s = new Session();
     s.#ws = new WebSocket(t.webSocketDebuggerUrl);
     await new Promise((res, rej) => { s.#ws.onopen = res; s.#ws.onerror = rej; });
@@ -66,12 +108,16 @@ class Session {
     // there would fail a transport detail rather than the behaviour under test,
     // so that one case resolves and lets the assertion be the judge.
     const tolerate = method === "Input.dispatchMouseEvent" && params.type === "mouseWheel";
+    // A tolerated wheel needs no long wait: the page has the event whether or
+    // not the acknowledgement ever comes. Waiting the full timeout per notch
+    // turned a 20-notch zoom into five minutes once Chrome stopped sending it.
+    const limit = tolerate ? Math.min(timeoutMs, 400) : timeoutMs;
     return new Promise((res, rej) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
         if (tolerate) return res({});
         rej(new Error(`CDP timeout after ${timeoutMs}ms: ${method}`));
-      }, timeoutMs);
+      }, limit);
       this.#pending.set(id, {
         res: (v) => { clearTimeout(timer); res(v); },
         rej: (e) => { clearTimeout(timer); rej(e); },
@@ -103,6 +149,12 @@ class Session {
       features: [{ name: "prefers-color-scheme", value: scheme }],
     });
     await this.send("Page.enable");
+    // A tab opened through /json/new starts in the BACKGROUND. A hidden page
+    // runs no animation frames, so every frame time this file samples comes
+    // back empty and a rAF-throttled drag never paints. Measured, not assumed:
+    // a perf run sat on a page reporting visibilityState "hidden" and zero
+    // sampled frames.
+    await this.send("Page.bringToFront");
     await this.send("Page.navigate", { url });
     // Wait for the app shell plus a beat for client hydration.
     for (let i = 0; i < 80; i++) {
@@ -249,7 +301,15 @@ try {
     console.log("screenshots written to", OUT);
   }
 
-  if (mode === "perf") {
+  perf: if (mode === "perf") {
+    // A measurement tool that hangs silently is worse than one that fails:
+    // two runs sat for minutes with no output and nothing naming the step.
+    let phase = "starting";
+    const watchdog = setTimeout(() => {
+      console.error(`PERF WATCHDOG: no progress for 5 minutes, stalled at: ${phase}`);
+      process.exit(1);
+    }, 5 * 60_000);
+    watchdog.unref();
     // Chart interaction cost, measured rather than felt.
     //
     // `Performance.getMetrics` gives cumulative renderer timings, so the delta
@@ -269,9 +329,26 @@ try {
       });
     }
     await s.send("Performance.enable");
+    // The profile directory persists between runs, and the baseline TOGGLES
+    // indicators by label — so a previous run's saved settings would switch
+    // half of them off again and measure a different chart.
+    await s.goto(BASE + "/vi", { scheme: "light" });
+    await s.evaluate("localStorage.clear()");
+    // Frame times from a hidden page are not slow frames, they are no frames.
+    // Refuse to report them rather than print a table of zeros.
+    const visible = async () => {
+      const v = await s.evaluate("document.visibilityState");
+      if (v === "visible") return true;
+      console.error(`PERF ABORTED at ${phase}: the page is "${v}", so no animation frames run and nothing here would be a measurement.`);
+      process.exitCode = 1;
+      return false;
+    };
+    if (!(await visible())) break perf;
 
     const INDICATORS = ["SMA50", "EMA20", "BB", "VWAP", "RSI", "MACD", "ADX"];
+    phase = "baseline: loading the chart";
     await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light", width: 1440, height: 900 });
+    if (!(await visible())) break perf;
     for (const label of INDICATORS) {
       await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '${label}')?.click()`);
       await sleep(120);
@@ -338,7 +415,11 @@ try {
     };
 
     const rows = [];
+    let config = "baseline";
     const run = async (name, action) => {
+      phase = `${config}: ${name}`;
+      watchdog.refresh();
+      process.stderr.write(`  measuring ${phase}\n`);
       await sleep(400);
       const t0 = await metric("ScriptDuration");
       const l0 = await metric("LayoutDuration");
@@ -350,6 +431,7 @@ try {
       const script = ((await metric("ScriptDuration")) - t0) * 1000;
       const layout = ((await metric("LayoutDuration")) - l0) * 1000;
       rows.push({
+        config,
         interaction: name,
         "script ms": +script.toFixed(0),
         "layout ms": +layout.toFixed(0),
@@ -396,6 +478,208 @@ try {
       await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x + 240, y: box.y, button: "left", clickCount: 1, buttons: 0 });
       await sleep(400);
     }));
+
+    // ── heavy: the configuration a reader actually complained about ──────
+    //
+    // The run above is 1440×900 at the default 120-bar window, where none of
+    // the per-bar costs bite — which is how it reported a smooth chart that a
+    // pro reader found unusable in fullscreen, on "Tất cả", with every
+    // indicator on. This reproduces that: a 16" laptop viewport (2560×1440 with
+    // PERF_WIDE=1), every indicator in the registry, 200 drawings — pro's
+    // ceiling per symbol — then fullscreen. PERF_HEAVY=0 skips it.
+    if (process.env.PERF_HEAVY !== "0") {
+      config = "heavy";
+      rows.length = 0;
+      const wide = process.env.PERF_WIDE === "1";
+      const W = wide ? 2560 : 1728, H = wide ? 1440 : 1117;
+      const ALL_IND = ["sma20", "sma50", "ema20", "bb", "vwap", "keltner", "donchian", "supertrend",
+        "stoch", "cci", "willr", "adx", "mfi", "obv", "roc", "rsi", "macd", "atr"];
+
+      // Seeded from the symbol's own bars so every drawing sits on real times,
+      // in the shape `parseDrawings` accepts. 199 are priced well ABOVE the
+      // window: each is still built and rendered on every frame — the cost
+      // under test — but none is where a press meant as a pan would grab it.
+      // Spread over the real price range, 200 drawings (40 full-width hlines
+      // among them) put every point of the chart within a drawing's reach, and
+      // the "pan" rows measured an hline being dragged sideways. The last one
+      // sits at the latest close, on screen, for the drawing-drag row.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light", width: W, height: H });
+      const seeded = await s.evaluate(`(async () => {
+        const body = await (await fetch('/api/bars?symbol=VNM&tf=1D')).json();
+        const bars = body.data ?? body, n = bars.length, kinds = ['trend', 'fib', 'channel', 'hline', 'trade'];
+        const out = [];
+        const K = 3;
+        for (let i = 0; i < 199; i++) {
+          const j = (i * 7) % (n - 20), a = bars[j], z = bars[j + 15], kind = kinds[i % kinds.length], id = 'perf-' + i;
+          if (kind === 'hline') out.push({ id, kind, price: a.c * K });
+          else if (kind === 'trade') out.push({ id, kind, t: a.t, price: a.c * K });
+          else if (kind === 'channel') out.push({ id, kind, t1: a.t, p1: a.l * K, t2: z.t, p2: z.h * K, t3: z.t, p3: z.l * K });
+          else out.push({ id, kind, t1: a.t, p1: a.l * K, t2: z.t, p2: z.h * K });
+        }
+        out.push({ id: 'perf-grip', kind: 'hline', price: bars[n - 1].c });
+        localStorage.setItem('drawings:VNM', JSON.stringify(out));
+        return out.length;
+      })()`);
+
+      // Settled means the chart has stopped changing by itself: pane count and
+      // visible window both hold for 1.5s. "Tất cả" pulls a page of older bars
+      // on its own, and that paging is not the interaction under test.
+      const signature = () => s.evaluate(
+        "document.querySelectorAll('svg').length + '|' + ((document.body.innerText.match(/([\\d.]+)\\s*nến/) || [])[1] || '')");
+      const settle = async () => {
+        const t0 = Date.now();
+        let last = "", since = Date.now();
+        while (Date.now() - t0 < 30000) {
+          const sig = await signature();
+          if (sig !== last) { last = sig; since = Date.now(); }
+          else if (Date.now() - since >= 1500) return { sig, ms: since - t0 };
+          await sleep(150);
+        }
+        return { sig: last, ms: NaN };
+      };
+
+      // Open: navigation to settled, excluding the 1.5s the settle rule waits.
+      const url = `${BASE}/vi/bieu-do/VNM?tf=1D&ind=${ALL_IND.join(",")}&r=ALL`;
+      const openScript0 = await metric("ScriptDuration");
+      const openT0 = Date.now();
+      await s.send("Page.navigate", { url });
+      for (let i = 0; i < 80; i++) {
+        await sleep(150);
+        if (await s.evaluate("document.readyState === 'complete' && !!document.querySelector('svg[role=img]')")) break;
+      }
+      phase = "heavy: opening";
+      const opened = await settle();
+      if (!(await visible())) break perf;
+      const openWall = Date.now() - openT0 - 1500;
+      const openScript = ((await metric("ScriptDuration")) - openScript0) * 1000;
+
+      await s.click(`[...document.querySelectorAll('button[aria-pressed]')].find((b) => /⛶/.test(b.textContent))`);
+      const full = await settle();
+
+      // PERF_DEEP=1: a reader who has paged far into the past, then hit "Tất cả".
+      // Only then does the window hold more bars than the plot has columns, so
+      // only then does folding (`MIN_COLUMN_PX`) change anything — at the 432
+      // bars the chart opens with, every column already fits.
+      if (process.env.PERF_DEEP === "1") {
+        phase = "heavy: paging in history";
+        const pbox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+          return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()`));
+        // Narrow the window so it can pan at all; "Tất cả" pans nowhere.
+        for (let i = 0; i < 6; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: pbox.x, y: pbox.y, deltaX: 0, deltaY: -120 });
+        }
+        await sleep(400);
+        await s.evaluate("document.querySelector('svg[role=img]').focus()");
+        const key = (type) => s.send("Input.dispatchKeyEvent", {
+          type, key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, modifiers: 8,
+        });
+        for (let round = 0; round < 8; round++) {
+          for (let k = 0; k < 20; k++) { await key("keyDown"); await key("keyUp"); }
+          await sleep(1200);
+        }
+        await s.click(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Tất cả')`);
+        await settle();
+      }
+      const hbox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+        return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }); })()`));
+      const facts = await s.evaluate(`JSON.stringify({
+        panes: document.querySelectorAll('svg[role=img]').length,
+        svgs: document.querySelectorAll('svg').length,
+        window: (document.body.innerText.match(/([\\d.]+)\\s*nến/) || [])[1] || null,
+        pathKB: Math.round([...document.querySelectorAll('svg path')].reduce((n, p) => n + (p.getAttribute('d') || '').length, 0) / 1024),
+        canvases: document.querySelectorAll('canvas[data-pane-layer]').length,
+      })`);
+      const nodes = await metric("Nodes"), heap = await metric("JSHeapUsedSize");
+      // PERF_SHOT=name: a picture of exactly what was measured, so density is
+      // judged by eye and not by path length alone.
+      if (process.env.PERF_SHOT) console.log(`  screenshot: ${await s.shot(process.env.PERF_SHOT, false)}`);
+
+      // What a drag actually did, checked rather than assumed. With 200
+      // drawings on the chart a press can land on one and grab it instead of
+      // panning, and at "Tất cả" there is nothing to pan to — either would
+      // make a "pan" row measure something else entirely.
+      const paneSig = () => s.evaluate(`(() => {
+        const c = document.querySelector('canvas[data-layer]');
+        if (c) return 'canvas:' + (c.dataset.window || '');
+        const p = document.querySelector('svg[role=img] path');
+        return p ? (p.getAttribute('d') || '').length + ':' + (p.getAttribute('d') || '').slice(0, 48) : '';
+      })()`);
+      const probe = (px, py) => s.evaluate(`(() => {
+        const el = document.elementFromPoint(${px}, ${py});
+        return el ? el.tagName.toLowerCase() + (el.getAttribute('role') ? '[' + el.getAttribute('role') + ']' : '') : 'none';
+      })()`);
+      const selectedNow = () => s.evaluate("!!document.querySelector('svg[role=img] circle[r=\"4.5\"]')");
+      const checks = [];
+      const checked = (label, px, py, act) => async () => {
+        const under = await probe(px, py);
+        const sig0 = await paneSig();
+        await act();
+        checks.push({ drag: label, "pressed on": under, "window moved": sig0 !== (await paneSig()), "drawing selected after": await selectedNow() });
+      };
+
+      const drag = async (fromX, fromY, dx, dy, steps = 40) => {
+        await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x: fromX, y: fromY, button: "left", clickCount: 1, buttons: 1 });
+        for (let i = 1; i <= steps; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: fromX + i * dx, y: fromY + i * dy, button: "left", buttons: 1 });
+        }
+        await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: fromX + steps * dx, y: fromY + steps * dy, button: "left", clickCount: 1, buttons: 0 });
+        await sleep(500);
+      };
+      const hover = async () => {
+        for (let i = 0; i < 60; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: hbox.x - hbox.w / 3 + i * 8, y: hbox.y });
+        }
+        await sleep(500);
+      };
+      const wheel = async (notches, dir) => {
+        for (let i = 0; i < notches; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: hbox.x, y: hbox.y, deltaX: 0, deltaY: dir * 120 });
+        }
+        await sleep(500);
+      };
+
+      // A drag at "Tất cả" pans nothing — the window already holds every bar —
+      // so for this reader it IS a crosshair sweep with the button held.
+      await run("hover-sweep (60 moves)", hover);
+      // Pans press in the upper quarter of the pane, away from the one on-screen drawing.
+      const panY = hbox.y - hbox.h / 4;
+      await run("drag at Tất cả (40 moves)", checked("drag at Tất cả", hbox.x, panY, () => drag(hbox.x, panY, 6, 0)));
+      await run("wheel-zoom (20 notches)", async () => { await wheel(10, -1); await wheel(10, 1); });
+
+      // Genuine panning needs a window smaller than what is loaded.
+      await wheel(8, -1);
+      await run("pan, zoomed in (40 moves)", checked("pan, zoomed in", hbox.x, panY, () => drag(hbox.x, panY, 6, 0)));
+
+      // Grab a real drawing: the first dashed accent line inside the price pane
+      // is an hline. Whether it moved is checked, not assumed — a press that
+      // missed would silently measure a pan instead.
+      const grip = JSON.parse(await s.evaluate(`(() => {
+        const pane = document.querySelector('svg[role=img]').getBoundingClientRect();
+        const line = [...document.querySelectorAll('svg[role=img] line[stroke-dasharray="4 3"]')]
+          .find((l) => { const r = l.getBoundingClientRect(); return r.top > pane.top + 20 && r.top < pane.bottom - 20; });
+        if (!line) return 'null';
+        const r = line.getBoundingClientRect();
+        return JSON.stringify({ x: pane.left + pane.width / 2, y: r.top + r.height / 2 });
+      })()`));
+      const before = await s.evaluate("localStorage.getItem('drawings:VNM')");
+      if (grip) await run("drawing-drag (40 moves)", checked("drawing-drag", grip.x, grip.y, () => drag(grip.x, grip.y, 0, 2)));
+      const moved = grip ? before !== (await s.evaluate("localStorage.getItem('drawings:VNM')")) : false;
+
+      console.log(`\nheavy config: ${W}×${H}, fullscreen, ${ALL_IND.length} indicators requested, ${seeded} drawings seeded`);
+      console.log(`  open → settled: ${openWall}ms wall, ${openScript.toFixed(0)}ms script (settled at "${opened.sig}"; after fullscreen "${full.sig}")`);
+      console.log(`  on screen: ${facts}  | DOM nodes ${nodes} | JS heap ${(heap / 1048576).toFixed(1)}MB`);
+      console.log(`  drawing grabbed: ${grip ? "yes" : "NO — none found"}; drawing actually moved: ${moved}`);
+      console.table(rows);
+      console.table(checks);
+
+      const profiled = process.env.PERF_PROFILE === "all"
+        ? [["hover-sweep", hover], ["drag at Tất cả", () => drag(hbox.x, hbox.y, 6, 0)], ["pan, zoomed in", () => drag(hbox.x, hbox.y, 6, 0)]]
+        : [["hover-sweep", hover]];
+      for (const [label, action] of profiled) {
+        console.log(`\nCPU profile — heavy ${label}, hottest self time:`);
+        console.table((await profile(action)).slice(0, 10));
+      }
+    }
   }
 
   audit: if (mode === "audit") {
@@ -549,13 +833,7 @@ try {
     // ChartPro, which batches candle bodies into paths. The old `rect` count was
     // written for PriceChart and could not pass once the two symbol pages were
     // merged.
-    const candles = await s.evaluate(`(() => {
-      const pane = document.querySelector('svg[role=img]');
-      if (!pane) return 0;
-      return [...pane.querySelectorAll('path')]
-        .filter(p => /Z/.test(p.getAttribute('d') || ''))
-        .reduce((n, p) => n + ((p.getAttribute('d').match(/M/g) || []).length), 0);
-    })()`);
+    const candles = await s.evaluate(CANDLE_COLUMNS);
     check("candles drawn", candles > 20, `${candles} candles`);
     // The OHLC readout is what actually tracks the hovered bar, so it is what
     // gets asserted. This used to test `!!document.querySelector('[role=status]')`
@@ -604,7 +882,7 @@ try {
     await s.goto(BASE + "/vi/chung-khoan/VNM", { scheme: "light" });
     await s.evaluate(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Đường').click()`);
     await sleep(300);
-    const paths = await s.evaluate("document.querySelectorAll('svg[role=img] path').length");
+    const paths = await s.evaluate(LINE_DRAWN);
     check("line mode draws a path", paths >= 1, `${paths} paths`);
 
     // ── disclosure: the chart's interval menu ─────────────────────
@@ -700,14 +978,7 @@ try {
     // Count the CANDLES, not the elements they happen to be made of: bodies are
     // batched into paths, so an element count would only be testing the
     // rendering strategy. Each candle contributes one body subpath.
-    const termCandles = await s.evaluate(`(() => {
-      // The price pane only: the volume pane also draws filled bars, and
-      // counting both would let a broken candle pane pass on volume alone.
-      const pane = document.querySelector('svg[role=img]');
-      const paths = [...pane.querySelectorAll('path')];
-      const bodies = paths.filter(p => /Z/.test(p.getAttribute('d') || ''));
-      return bodies.reduce((n, p) => n + ((p.getAttribute('d').match(/M/g) || []).length), 0);
-    })()`);
+    const termCandles = await s.evaluate(CANDLE_COLUMNS);
     check("every visible bar is drawn as a candle", termCandles > 50, `${termCandles} candles`);
 
     // Open the menu, then match the item by its LABEL. This used to look for a
@@ -748,7 +1019,11 @@ try {
     // ── load more history (P2-16) ─────────────────────────────────
     {
       await s.evaluate("localStorage.removeItem('settings:chart')");
-      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&r=ALL", { scheme: "light" });
+      // A window that can pan. This used to open on "Tất cả", back when fitting
+      // everything counted as already being at the left edge; it now means
+      // "everything loaded" and pans nowhere, by decision. Paging in older bars
+      // is reached the way a reader reaches it: pan to the edge of a narrower window.
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&r=1Y", { scheme: "light" });
       await sleep(600);
       const oldestLabel = `(() => {
         const svgs = [...document.querySelectorAll('main svg')].filter(sv => sv.getAttribute('height') === '20');
@@ -1250,7 +1525,7 @@ try {
 
     await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Đường')?.click()`);
     await sleep(350);
-    const termPaths = await s.evaluate("document.querySelectorAll('svg[role=img] path').length");
+    const termPaths = await s.evaluate(LINE_DRAWN);
     check("line mode draws a path", termPaths >= 1, `${termPaths} paths`);
 
     await s.evaluate(`(()=>{const g=document.querySelector('svg[role=img]');g.focus();
@@ -1596,6 +1871,10 @@ try {
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&cmp=VNINDEX,HPG,FPT", { scheme: "light" });
       await sleep(400);
       const overlays = await s.evaluate(`(() => {
+        // On canvas the lines have no attributes to read, so it publishes the
+        // patterns it drew; as SVG they are counted from the paths themselves.
+        const c = document.querySelector('canvas[data-layer]');
+        if (c) return new Set((c.dataset.compareDashes || '').split('|').filter(Boolean)).size;
         const pane = document.querySelector('svg[role=img]');
         if (!pane) return 0;
         const dashes = new Set();
@@ -1733,16 +2012,13 @@ try {
         const m = t.match(/([0-9.,]+)[  ]nến/);
         const bars = m ? Number(m[1].replace(/[.,]/g, "")) : 0;
         if (bars < 850) return null;               // not a dense window yet
-        const bodies = [...document.querySelectorAll('svg[role=img] path')]
-          .map(p => (p.getAttribute('d') || ''))
-          .filter(d => /^M[\\d.]+,[\\d.]+H/.test(d));   // candle bodies are H-rects
-        const columns = bodies.reduce((n, d) => n + (d.match(/M/g) || []).length, 0);
+        const columns = ${CANDLE_COLUMNS};
         return { bars, columns };
       })()`, 6000);
       if (dense) {
         check("a wide intraday window exceeds what the plot can resolve",
           dense.bars > 850, `${dense.bars} bars`);
-        // 1440px wide minus axis padding, at 1.5px per column, is under 1000.
+        // The plot can resolve one column per MIN_COLUMN_PX, well under this many bars.
         check("drawn columns are capped below the visible bar count",
           dense.columns > 0 && dense.columns < dense.bars,
           `${dense.columns} columns for ${dense.bars} bars`);
