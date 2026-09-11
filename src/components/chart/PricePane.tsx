@@ -7,10 +7,11 @@ import { COLOR_VAR, type Plot } from "@/lib/ta/registry";
 import { PaneCanvas } from "./PaneCanvas";
 import { PlotLayer } from "./panLayers";
 import { useCursorY, useHoverIndex } from "./crosshair";
+import { useStoreValue, type ValueStore } from "./valueStore";
 import { useChartColors } from "./chartColors";
 import { dashList, drawArea, drawCandles, drawSeries } from "./canvasLayers";
 import { columnsFor } from "@/lib/chart/geometry";
-import { anchorsOf, channelParallel, fibLevels, trendPriceAt, type Drawing, type DrawingKind } from "@/lib/chart/drawings";
+import { anchorsOf, channelParallel, fibLevels, trendPriceAt, withDraft, type Drawing, type DrawingKind } from "@/lib/chart/drawings";
 import { nearestIndex } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
 import { EVENT_GLYPH, type PlacedEvent } from "@/lib/chart/events";
@@ -28,7 +29,7 @@ function dashGlyph(i: number): string {
 
 export function PricePane({
   width, plotW, band, x, PAD, maxCols, type, overlays, locale, digits, symbol, dict, intraday,
-  drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
+  drawings: stored, draft, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
   refLines, alerts, compareView, placedEvents, geom, selectedId,
   lead, bleedPx, drawCols, drawOverlays,
 }: PaneGeom & {
@@ -43,13 +44,26 @@ export function PricePane({
   geom: { sc: ScaleId; yMin: number; yMax: number };
   selectedId: string | null;
   compareView: { label: string; series: (number | null)[] }[];
-  drawings: Drawing[]; pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
+  drawings: Drawing[];
+  /** The drawing mid-drag, if any: while it moves, only this pane re-renders. */
+  draft: ValueStore<Drawing | null>;
+  pending: { t: number; p: number }[]; mode: "cursor" | DrawingKind;
   onClick: (e: React.PointerEvent<SVGSVGElement>) => void;
   onMove: (e: React.PointerEvent<SVGSVGElement>) => void; onLeave: () => void;
   onUp: (e: React.PointerEvent<SVGSVGElement>) => void; canPan: boolean;
   onKey: (e: React.KeyboardEvent<SVGSVGElement>) => void;
 }) {
   const { view, drawView, compareDraw } = useChartSeries();
+  // The drawing being dragged is drawn on its own, over the rest. The rest keep
+  // their identity for the whole drag, so a move rebuilds one drawing, not all
+  // of them; only the selection handles follow the draft (`shown`).
+  const dragging = useStoreValue(draft);
+  const draggingId = dragging?.id ?? null;
+  const drawings = useMemo(
+    () => (draggingId ? stored.filter((d) => d.id !== draggingId) : stored),
+    [stored, draggingId],
+  );
+  const shown = useMemo(() => withDraft(stored, dragging), [stored, dragging]);
   // The domain comes from the parent's `priceGeom`. This pane used to fold the
   // same bars, overlays and levels a second time on every render — with spread
   // arguments, tens of thousands of them at "Tất cả" — to reach identical numbers.
@@ -292,7 +306,7 @@ export function PricePane({
       })}
     </>
   ), [placedEvents, xd, H, dict, locale]);
-  const tradeLevels = useMemo(() => (
+  const buildTradeLevels = useCallback((list: Drawing[]) => (
     <>
       {/* Trade markers: an entry level, a marker at the session the shares
           become sellable (VN settles T+2, credited after lunch — "T+2.5"),
@@ -300,7 +314,7 @@ export function PricePane({
           first thing a VN holder wants from a chart of something they own.
           The level and the move sit on the price axis; the two marks pinned
           to a session are in `tradeMarks`, which moves with the bars. */}
-      {drawings.map((d) => {
+      {list.map((d) => {
         if (d.kind !== "trade") return null;
         const yEntry = y(d.price);
         if (!Number.isFinite(yEntry)) return null;
@@ -319,10 +333,12 @@ export function PricePane({
         );
       })}
     </>
-  ), [drawings, view, y, plotW, locale, digits, PAD]);
-  const tradeMarks = useMemo(() => (
+  ), [view, y, plotW, locale, digits, PAD]);
+  const tradeLevels = useMemo(() => buildTradeLevels(drawings), [buildTradeLevels, drawings]);
+  const tradeLevelsDraft = useMemo(() => (dragging ? buildTradeLevels([dragging]) : null), [buildTradeLevels, dragging]);
+  const buildTradeMarks = useCallback((list: Drawing[]) => (
     <>
-      {drawings.map((d) => {
+      {list.map((d) => {
         if (d.kind !== "trade") return null;
         const yEntry = y(d.price);
         if (!Number.isFinite(yEntry)) return null;
@@ -345,10 +361,12 @@ export function PricePane({
         );
       })}
     </>
-  ), [drawings, view, drawView, xd, y, H]);
-  const hlineLayer = useMemo(() => (
+  ), [view, drawView, xd, y, H]);
+  const tradeMarks = useMemo(() => buildTradeMarks(drawings), [buildTradeMarks, drawings]);
+  const tradeMarksDraft = useMemo(() => (dragging ? buildTradeMarks([dragging]) : null), [buildTradeMarks, dragging]);
+  const buildHlineLayer = useCallback((list: Drawing[]) => (
     <>
-      {drawings.map((d) => (d.kind !== "hline" ? null : (
+      {list.map((d) => (d.kind !== "hline" ? null : (
         <g key={d.id}>
           <line x1={PAD.left} x2={PAD.left + plotW} y1={y(d.price)} y2={y(d.price)}
             stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
@@ -358,12 +376,14 @@ export function PricePane({
         </g>
       )))}
     </>
-  ), [drawings, y, plotW, locale, digits, PAD]);
-  const drawingLayer = useMemo(() => (
+  ), [y, plotW, locale, digits, PAD]);
+  const hlineLayer = useMemo(() => buildHlineLayer(drawings), [buildHlineLayer, drawings]);
+  const hlineLayerDraft = useMemo(() => (dragging ? buildHlineLayer([dragging]) : null), [buildHlineLayer, dragging]);
+  const buildDrawingLayer = useCallback((list: Drawing[]) => (
     <>
       {/* Drawings map from data space through the same scales as the bars,
           so they stay pinned when the range changes. */}
-      {drawings.map((d) => {
+      {list.map((d) => {
         // On the price axis, not pinned to a session: drawn in `hlineLayer`.
         if (d.kind === "hline") return null;
         // Binary search, not a scan: this runs for every endpoint of every
@@ -509,12 +529,10 @@ export function PricePane({
           </g>
         );
       })}
-      {pending.map((pt, i) => (
-        <circle key={`${pt.t}-${i}`} cx={xd(nearestIndex(drawView, pt.t))} cy={y(pt.p)} r={4}
-          fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="2 2" />
-      ))}
     </>
-  ), [drawings, pending, drawView, xd, y, plotW, bleedPx, H, locale, digits, PAD]);
+  ), [drawView, xd, y, plotW, bleedPx, H, locale, digits, PAD]);
+  const drawingLayer = useMemo(() => buildDrawingLayer(drawings), [buildDrawingLayer, drawings]);
+  const drawingLayerDraft = useMemo(() => (dragging ? buildDrawingLayer([dragging]) : null), [buildDrawingLayer, dragging]);
   const lastPriceLayer = useMemo(() => (
     <>
       {/* Last-price tag: the standard terminal affordance for "where is it
@@ -536,6 +554,14 @@ export function PricePane({
       })()}
     </>
   ), [view, y, plotW, locale, digits, PAD]);
+  const pendingLayer = useMemo(() => (
+    <>
+      {pending.map((pt, i) => (
+        <circle key={`${pt.t}-${i}`} cx={xd(nearestIndex(drawView, pt.t))} cy={y(pt.p)} r={4}
+          fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="2 2" />
+      ))}
+    </>
+  ), [pending, drawView, xd, y]);
   const handleLayer = useMemo(() => (
     <>
       {/* Handles for the selected drawing, drawn last so they sit above every
@@ -545,7 +571,7 @@ export function PricePane({
           without a time is drawn at the left edge, where the reader can always
           reach it whatever the window shows; one with a time moves with the
           bars, so it is drawn in the overlay (`timeHandleLayer`). */}
-      {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
+      {selectedId && shown.filter((d) => d.id === selectedId).map((d) => (
         <g key={`sel-${d.id}`}>
           {anchorsOf(d).map((a, i) => {
             if (a.axis !== "price") return null;
@@ -559,10 +585,10 @@ export function PricePane({
         </g>
       ))}
     </>
-  ), [selectedId, drawings, y, PAD]);
+  ), [selectedId, shown, y, PAD]);
   const timeHandleLayer = useMemo(() => (
     <>
-      {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
+      {selectedId && shown.filter((d) => d.id === selectedId).map((d) => (
         <g key={`sel-${d.id}`}>
           {anchorsOf(d).map((a, i) => {
             if (a.axis === "price") return null;
@@ -577,7 +603,7 @@ export function PricePane({
         </g>
       ))}
     </>
-  ), [selectedId, drawings, drawView, xd, y, H]);
+  ), [selectedId, shown, drawView, xd, y, H]);
 
   return (
     <div className="relative">
@@ -599,6 +625,9 @@ export function PricePane({
           {eventLayer}
           {tradeMarks}
           {drawingLayer}
+          {pendingLayer}
+          {tradeMarksDraft}
+          {drawingLayerDraft}
           {timeHandleLayer}
         </svg>
       </PlotLayer>
@@ -624,6 +653,10 @@ export function PricePane({
         {tradeLevels}
 
         {hlineLayer}
+
+        {tradeLevelsDraft}
+
+        {hlineLayerDraft}
 
         {lastPriceLayer}
 

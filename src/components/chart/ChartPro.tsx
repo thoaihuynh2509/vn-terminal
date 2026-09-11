@@ -33,6 +33,7 @@ import { useDrawingStore } from "./useDrawingStore";
 import { useSeriesBars } from "./useSeriesBars";
 import { PanLayersContext, createPanLayers } from "./panLayers";
 import { CrosshairContext, createCrosshair, useOwnHover } from "./crosshair";
+import { createValueStore } from "./valueStore";
 
 /**
  * Plot margins. Module scope, not per render: a fresh object each render gave
@@ -209,12 +210,12 @@ export function ChartPro({
    * synchronous localStorage write per event — which fired the store event,
    * re-read and re-parsed every drawing and serialised the list several more
    * times — and then re-rendered the chart. The ref carries the latest copy
-   * between frames; the state is what the pane draws, at most once a frame.
+   * between frames; the store is what the price pane draws, at most once a
+   * frame, and only that pane re-renders for it.
    */
-  const [draft, setDraft] = useState<Drawing | null>(null);
+  const [draft] = useState(() => createValueStore<Drawing | null>(null));
   const draftRef = useRef<Drawing | null>(null);
   const draftFrame = useRef<number | null>(null);
-  const shownDrawings = useMemo(() => withDraft(drawings, draft), [drawings, draft]);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const getPanes = useCallback(
@@ -858,7 +859,7 @@ export function ChartPro({
       }
       const final = draftRef.current;
       draftRef.current = null;
-      setDraft(null);
+      draft.set(null);
       // A press that never moved is a selection, already applied on down. Only
       // an actual edit becomes an undo step, so tapping a drawing to look at it
       // does not fill the stack. A CANCELLED gesture — the browser taking the
@@ -934,7 +935,7 @@ export function ChartPro({
         if (draftFrame.current === null) {
           draftFrame.current = requestAnimationFrame(() => {
             draftFrame.current = null;
-            setDraft(draftRef.current);
+            draft.set(draftRef.current);
           });
         }
       }
@@ -1112,7 +1113,7 @@ export function ChartPro({
             type={type} overlays={computed.price} H={priceH}
             refLines={refLines} alerts={alertLines} compareView={compareView} placedEvents={placed} geom={priceGeom} selectedId={selectedId}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
-            drawings={shownDrawings} pending={pending} mode={mode} onClick={onDown}
+            drawings={drawings} draft={draft} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => crosshair.set({ hover: null, cursorY: null })} onKey={onKey} onUp={onUp} canPan={canPan}
           />
           {/* The divider between the price pane and everything below it.
