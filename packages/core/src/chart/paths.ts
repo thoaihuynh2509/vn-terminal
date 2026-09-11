@@ -20,14 +20,19 @@ export interface CandleGeom {
 }
 
 /**
- * Fewest pixels a drawn column may occupy.
+ * Fewest CSS pixels a drawn column may occupy.
  *
- * Below roughly this width neighbouring bars land in the same pixel column, so
- * the extra geometry is not detail the reader is losing — it is detail the
- * screen never showed. 1.5px keeps a visible gap between columns at the density
- * where candles become a wall.
+ * Not a pixel-sharing argument: on a 2× screen 1.5 CSS px is three device
+ * pixels, so columns that narrow do resolve. The limit is what reads as a
+ * candle — a body under about a pixel and a half, plus its gap, is a smudge,
+ * not a bar a reader can pick out. Folding below that costs nothing visible,
+ * because `decimate` keeps each bucket's true high and low.
+ *
+ * It is also the one lever that shrinks the cost of a PAN, since every pane's
+ * path work scales with the column count and memoisation cannot help a window
+ * that moves every frame. Raised from 1.5, measured in `cdp.mjs perf`.
  */
-export const MIN_COLUMN_PX = 1.5;
+export const MIN_COLUMN_PX = 2.5;
 
 /** How many columns a plot that wide can actually resolve. */
 export function maxColumnsFor(plotWidth: number): number {
