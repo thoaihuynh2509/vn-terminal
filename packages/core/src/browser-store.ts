@@ -29,23 +29,37 @@ export function writeStored(key: string, value: string | null) {
   window.dispatchEvent(new CustomEvent(`store:${key}`));
 }
 
-function subscribe(key: string) {
-  return (onChange: () => void) => {
-    const handler = () => onChange();
-    // Same-tab writes fire the custom event; other tabs fire `storage`.
-    window.addEventListener(`store:${key}`, handler);
-    window.addEventListener("storage", handler);
-    return () => {
-      window.removeEventListener(`store:${key}`, handler);
-      window.removeEventListener("storage", handler);
+const subscribers = new Map<string, (onChange: () => void) => () => void>();
+
+/**
+ * One subscribe function per key, for good.
+ *
+ * `useSyncExternalStore` resubscribes whenever it is handed a different
+ * function, and a fresh one per call made every render of every reader drop
+ * and re-add its window listeners.
+ */
+export function storeSubscriber(key: string): (onChange: () => void) => () => void {
+  let subscribe = subscribers.get(key);
+  if (!subscribe) {
+    subscribe = (onChange) => {
+      const handler = () => onChange();
+      // Same-tab writes fire the custom event; other tabs fire `storage`.
+      window.addEventListener(`store:${key}`, handler);
+      window.addEventListener("storage", handler);
+      return () => {
+        window.removeEventListener(`store:${key}`, handler);
+        window.removeEventListener("storage", handler);
+      };
     };
-  };
+    subscribers.set(key, subscribe);
+  }
+  return subscribe;
 }
 
 /** Raw string snapshot — stable identity, so React can compare it cheaply. */
 export function useStored(key: string): string | null {
   return useSyncExternalStore(
-    subscribe(key),
+    storeSubscriber(key),
     () => read(key),
     () => null, // server render: nothing is stored yet
   );
