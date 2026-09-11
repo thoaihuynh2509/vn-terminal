@@ -1,4 +1,5 @@
 import { PATHS, type Dict } from "@/lib/i18n";
+import { DEFAULT_SYMBOL } from "@/lib/chart/default-symbol";
 
 const SOURCES = [
   { label: "DNSE", href: "https://services.entrade.com.vn" },
@@ -58,7 +59,7 @@ export function Footer({ dict, locale = "vi" }: { dict: Dict; locale?: "vi" | "e
             <LinkList
               items={[
                 { label: dict.nav.stocks, href: p("stocks") },
-                { label: dict.nav.terminal, href: p("terminal") },
+                { label: dict.nav.terminal, href: `${p("terminal")}/${DEFAULT_SYMBOL}` },
                 { label: dict.nav.heatmap, href: p("heatmap") },
                 { label: dict.nav.gold, href: p("gold") },
                 { label: dict.nav.brief, href: p("brief") },

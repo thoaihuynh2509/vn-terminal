@@ -21,7 +21,7 @@ const CAFEF = "https://msh-appdata.cafef.vn/rest-api/api/v1/StockMarket?centerId
 const VPS = "https://bgapidatafeed.vps.com.vn/getliststockdata";
 
 /** What the chart opens on when a URL names no symbol. */
-export const DEFAULT_SYMBOL = "VNM";
+export { DEFAULT_SYMBOL } from "../chart/default-symbol.ts";
 
 /** VN30 constituents — the liquid core of HOSE. */
 export const VN30 = [

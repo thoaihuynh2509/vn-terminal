@@ -145,6 +145,41 @@ export async function TerminalView({
    */
   const source = chartSource(sym);
   const recorded = source.kind === "recorded" ? source.code : null;
+  // Everything besides the bars depends only on the symbol, the tier and the
+  // URL, so it is asked for alongside the bars instead of one feed after
+  // another: each feed is a round trip to a Vietnamese API, and in series they
+  // were most of this page's server time. Each settles to an empty value on
+  // failure, so none can reject unobserved when the page returns early.
+  // Multi-chart is Pro. A non-Pro request for a grid silently collapses to one
+  // chart rather than erroring — the capability is upsold, not punished.
+  const multi = can(tier, "chart:multi");
+  const cells = multi ? Math.max(1, Math.min(layout, 4)) : 1;
+  const companions = multi ? extra.slice(0, cells - 1) : [];
+  const canCompare = can(tier, "chart:compare");
+  // Capped by tier inside parseCompare, so a hand-typed ?cmp= with five symbols
+  // cannot fan out into five upstream fetches.
+  const compareSymbols = canCompare ? parseCompare(cmp, tier, sym) : [];
+  // Foreign net buy/sell (khối ngoại) from SSI FastConnect — daily only, gated
+  // to Plus, and only offered when the owner has wired SSI credentials.
+  const foreignReady = foreignFlowAvailable();
+  const companionBarsP = Promise.all(companions.map((sym2) => getTimeframeBars(sym2, view).catch(() => [] as Bar[])));
+  // An index and a stock come from different endpoints; the only reliable way
+  // to tell them apart here is that indices are not listed equities.
+  const compareBarsP = Promise.all(compareSymbols.map((other) =>
+    getTimeframeBars(other, view, { kind: exchangeOf(other) ? ("stock" as const) : ("index" as const) }).catch(() => [] as Bar[])));
+  const foreignP = fr && canCompare && foreignReady && !view.intraday
+    ? getForeignFlow(sym, 250).catch(() => [])
+    : Promise.resolve([]);
+  // Corporate events (cổ tức, phát hành) as x-axis markers. Free, and daily
+  // only: an intraday window almost never contains an ex-date, so the fetch
+  // would be noise. A chart without markers beats no chart.
+  const eventsP = view.intraday ? Promise.resolve([]) : getCorpEvents(sym, locale).catch(() => []);
+  const companionEventsP = view.intraday
+    ? Promise.resolve(companions.map(() => []))
+    : Promise.all(companions.map((c) => getCorpEvents(c, locale).catch(() => [])));
+  // Market breadth — the Pro pane; daily only, see where it is drawn.
+  const breadthP = br && multi && !view.intraday ? getBreadth().catch(() => []) : Promise.resolve([]);
+
   const [barsR, boardR] = await Promise.allSettled([
     source.kind === "recorded" ? recordedBars(source.code)
       : getTimeframeBars(sym, view),
@@ -181,14 +216,8 @@ export async function TerminalView({
   const bars = barsR.value;
   const board = boardR.status === "fulfilled" ? boardR.value : [];
 
-  // Multi-chart is Pro. A non-Pro request for a grid silently collapses to one
-  // chart rather than erroring — the capability is upsold, not punished.
-  const multi = can(tier, "chart:multi");
-  const cells = multi ? Math.max(1, Math.min(layout, 4)) : 1;
-  const companions = multi ? extra.slice(0, cells - 1) : [];
-  const companionBars = await Promise.all(
-    companions.map((sym2) => getTimeframeBars(sym2, view).catch(() => [])),
-  );
+  const [companionBars, compareBars, flow, events, companionEvents, breadthPoints] =
+    await Promise.all([companionBarsP, compareBarsP, foreignP, eventsP, companionEventsP, breadthP]);
   const last = bars[bars.length - 1];
   const prev = bars[bars.length - 2] ?? last;
   const change = last.c - prev.c;
@@ -213,48 +242,28 @@ export async function TerminalView({
   // VNINDEX overlay for relative strength — gated to Plus, URL-driven so it is
   // shareable. Aligned to the symbol's bars by timestamp; a normalised shape,
   // not the price scale.
-  const canCompare = can(tier, "chart:compare");
-  // Capped by tier inside parseCompare, so a hand-typed ?cmp= with five symbols
-  // cannot fan out into five upstream fetches.
-  const compareSymbols = canCompare ? parseCompare(cmp, tier, sym) : [];
-  const compareSeries = await Promise.all(
-    compareSymbols.map(async (other) => {
-      // An index and a stock come from different endpoints; the only reliable
-      // way to tell them apart here is that indices are not listed equities.
-      const kind = exchangeOf(other) ? ("stock" as const) : ("index" as const);
-      const other_bars = await getTimeframeBars(other, view, { kind }).catch(() => []);
-      if (!other_bars.length) return null;
-      const byTs = new Map(other_bars.map((b) => [b.t, b.c]));
-      return { label: other, series: bars.map((b) => byTs.get(b.t) ?? null) };
-    }),
-  );
+  const compareSeries = compareSymbols.map((other, i) => {
+    const other_bars = compareBars[i];
+    if (!other_bars.length) return null;
+    const byTs = new Map(other_bars.map((b) => [b.t, b.c]));
+    return { label: other, series: bars.map((b) => byTs.get(b.t) ?? null) };
+  });
   // A symbol whose feed failed is dropped rather than drawn as a gap that looks
   // like the stock stopped trading.
   const compare: CompareSeries[] = compareSeries.filter((c): c is CompareSeries => c !== null);
 
-  // Foreign net buy/sell (khối ngoại) from SSI FastConnect — daily only, gated
-  // to Plus, and only offered when the owner has wired SSI credentials. Aligned
-  // to the bars by trading DAY (sources keep different epochs for the same day).
-  const foreignReady = foreignFlowAvailable();
+  // Foreign flow, aligned to the bars by trading DAY (sources keep different
+  // epochs for the same day).
   let foreign: CompareSeries | null = null;
   /** Kept for the prose below, which must never trigger a fetch of its own. */
   let foreignDays: { date: string; netVal: number }[] = [];
-  if (fr && canCompare && foreignReady && !view.intraday) {
-    const flow = await getForeignFlow(sym, 250).catch(() => []);
-    if (flow.length) {
-      foreignDays = flow;
-      const byDate = new Map(flow.map((f) => [f.date, f.netVal]));
-      const isoDay = (t: number) =>
-        new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(t * 1000));
-      foreign = { label: dict.chart.foreignPane, series: bars.map((b) => byDate.get(isoDay(b.t)) ?? null) };
-    }
+  if (flow.length) {
+    foreignDays = flow;
+    const byDate = new Map(flow.map((f) => [f.date, f.netVal]));
+    const isoDay = (t: number) =>
+      new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(t * 1000));
+    foreign = { label: dict.chart.foreignPane, series: bars.map((b) => byDate.get(isoDay(b.t)) ?? null) };
   }
-
-  // Corporate events (cổ tức, phát hành) as x-axis markers. Free, and daily
-  // only: an intraday window almost never contains an ex-date, so the fetch
-  // would be noise. Failure is already swallowed by the provider — a chart
-  // without markers beats no chart.
-  const events = view.intraday ? [] : await getCorpEvents(sym, locale);
 
   /**
    * Per-companion reference lines and events.
@@ -272,9 +281,6 @@ export async function TerminalView({
       { price: cPrev.c * (1 - cBand), label: dict.stocks.floor, dir: "down" as const },
     ];
   });
-  const companionEvents = view.intraday
-    ? companions.map(() => [])
-    : await Promise.all(companions.map((c) => getCorpEvents(c, locale)));
 
   // The shared view. Decoded HERE rather than in the browser: a hand-typed
   // ?ind= full of paid indicators is trimmed before anything renders, the same
@@ -294,11 +300,8 @@ export async function TerminalView({
   // only: breadth is a daily measure and recomputing it per intraday interval
   // would multiply thirty upstream fetches for a number that does not change.
   let breadth: CompareSeries | null = null;
-  if (br && can(tier, "chart:multi") && !view.intraday) {
-    const points = await getBreadth().catch(() => []);
-    if (points.length) {
-      breadth = { label: dict.chart.breadthPane, series: alignBreadth(points, bars) };
-    }
+  if (breadthPoints.length) {
+    breadth = { label: dict.chart.breadthPane, series: alignBreadth(breadthPoints, bars) };
   }
 
   // RSI for the alert panel, computed from the bars this page already loaded.

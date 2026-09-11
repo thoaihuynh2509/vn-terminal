@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { PATHS, type Dict } from "@/lib/i18n";
+import { DEFAULT_SYMBOL } from "@/lib/chart/default-symbol";
 import type { Locale, Tier } from "@/lib/types";
 import { ThemeToggle } from "./ThemeToggle";
 import { AccountMenu } from "./AccountMenu";
@@ -43,6 +44,9 @@ export function Header({
   const pathname = usePathname() || `/${locale}`;
   const other: Locale = locale === "vi" ? "en" : "vi";
   const p = (k: keyof typeof PATHS) => `/${locale}/${PATHS[k][locale]}`;
+  // Straight to a chart. `/bieu-do` on its own only redirects here, and that
+  // redirect cost a whole server round trip on every click of the nav item.
+  const chartHref = `${p("terminal")}/${DEFAULT_SYMBOL}`;
 
   /**
    * The assistant has no page of its own — /hoi-ai redirects into the chart
@@ -55,7 +59,7 @@ export function Header({
 
   const isActive = (href: string) => {
     if (href === p("ask")) return onTerminal && onAsk;
-    if (href === p("terminal")) return onTerminal && !onAsk;
+    if (href === chartHref) return onTerminal && !onAsk;
     return href === `/${locale}` ? pathname === href : pathname.startsWith(href);
   };
 
@@ -63,7 +67,7 @@ export function Header({
   // sits second, not inside a "Markets" dropdown.
   const items: NavLink[] = [
     { href: `/${locale}`, label: dict.nav.home },
-    { href: p("terminal"), label: dict.nav.terminal },
+    { href: chartHref, label: dict.nav.terminal },
     { href: p("stocks"), label: dict.nav.stocks },
     { href: p("gold"), label: dict.nav.gold },
     { href: p("brief"), label: dict.nav.brief },
@@ -115,15 +119,17 @@ export function Header({
         <nav aria-label={dict.nav.home} className="order-3 w-full lg:order-2 lg:w-auto lg:min-w-0 lg:flex-1">
           <div className="relative -mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:px-0 lg:pb-0">
             {items.map((it) => (
-              <Link key={it.href} href={it.href} aria-current={isActive(it.href) ? "page" : undefined} className={linkCls(isActive(it.href))}>
+              <Link key={it.href} href={it.href} aria-current={isActive(it.href) ? "page" : undefined} className={`relative ${linkCls(isActive(it.href))}`}>
                 {it.label}
+                <PendingHint />
               </Link>
             ))}
             <Link
               href={p("ask")}
               aria-current={isActive(p("ask")) ? "page" : undefined}
-              className={`${linkCls(isActive(p("ask")))} inline-flex items-center gap-1.5`}
+              className={`relative ${linkCls(isActive(p("ask")))} inline-flex items-center gap-1.5`}
             >
+              <PendingHint />
               {dict.nav.ask}
               <span className="rounded bg-gold-soft px-1.5 py-px font-mono text-[10px] font-semibold uppercase text-accent">
                 {dict.pricing.plus}
@@ -134,5 +140,25 @@ export function Header({
       </div>
       <SymbolSearch locale={locale} dict={dict} symbols={symbols} />
     </header>
+  );
+}
+
+/**
+ * A bar under a nav item while its page loads.
+ *
+ * The chart route has no loading skeleton — it has to be able to answer a real
+ * 404 — so without this a click on the chart changed nothing on screen for the
+ * second or more the server takes. Always rendered and only faded in, so it
+ * never shifts the row.
+ */
+function PendingHint() {
+  const { pending } = useLinkStatus();
+  return (
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none absolute inset-x-3 bottom-0.5 h-0.5 rounded-full bg-accent transition-opacity ${
+        pending ? "animate-pulse opacity-100" : "opacity-0"
+      }`}
+    />
   );
 }
