@@ -111,9 +111,25 @@ export function ShareMenu({
       if (!panes.length) return;
 
       const images = await Promise.all(panes.map((p) => svgToImage(freeze(p))));
-      // A pane's dense layer may be a canvas beneath its SVG; the picture needs both,
-      // or it exports every label and drawing with no candles under them.
-      const layers = panes.map((p) => p.parentElement?.querySelector<HTMLCanvasElement>("canvas[data-pane-layer]") ?? null);
+      // A pane's plot is a canvas and an overlay beneath its SVG, clipped to the
+      // plot and wider than it; the picture needs all three, placed where they
+      // sit on screen, or it exports the axis with nothing on it.
+      const plots = await Promise.all(panes.map(async (p) => {
+        const wrap = p.parentElement;
+        const origin = p.getBoundingClientRect();
+        const at = (el: Element) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left - origin.left, y: r.top - origin.top, w: r.width, h: r.height };
+        };
+        const clip = wrap?.querySelector("[data-plot-clip]") ?? null;
+        const layer = wrap?.querySelector<HTMLCanvasElement>("canvas[data-pane-layer]") ?? null;
+        const over = wrap?.querySelector<SVGSVGElement>("svg[data-plot-overlay]") ?? null;
+        return {
+          clip: clip ? at(clip) : null,
+          layer: layer ? { el: layer, ...at(layer) } : null,
+          over: over ? { img: await svgToImage(freeze(over)), ...at(over) } : null,
+        };
+      }));
       const width = Math.max(...images.map((i) => i.width));
       const chartHeight = images.reduce((h, i) => h + i.height, 0);
       const foot = footerText({ symbol, tf, at: new Date(), site });
@@ -137,8 +153,12 @@ export function ShareMenu({
 
       let y = 0;
       images.forEach((img, i) => {
-        const layer = layers[i];
-        if (layer) ctx.drawImage(layer, 0, y, img.width, img.height);
+        const { clip, layer, over } = plots[i];
+        ctx.save();
+        if (clip) { ctx.beginPath(); ctx.rect(clip.x, y + clip.y, clip.w, clip.h); ctx.clip(); }
+        if (layer) ctx.drawImage(layer.el, layer.x, y + layer.y, layer.w, layer.h);
+        if (over) ctx.drawImage(over.img, over.x, y + over.y, over.w, over.h);
+        ctx.restore();
         ctx.drawImage(img, 0, y, img.width, img.height);
         y += img.height;
       });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dict } from "@/lib/i18n";
 import { INDICATORS, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { clampPeriod, effectivePeriod, formatRef, parseRef, sameIndicator } from "@/lib/ta/params";
@@ -8,7 +8,7 @@ import { GateHint, type Gate } from "./GateHint";
 import { INDICATOR_LIMIT, can } from "@/lib/auth/entitlement";
 import { MAX_TEXT_LEN, hitAnchor, hitTest, moveAnchor, newId, translate, type Drawing, type DrawingKind, sameDrawing, withDraft } from "@/lib/chart/drawings";
 import { clampHover, maxOffset, offsetFromDrag, pinch, spreadOf, windowBounds, zoomAt } from "@/lib/chart/pan";
-import type { CorpEvent } from "@/lib/chart/events";
+import { placeEvents, type CorpEvent } from "@/lib/chart/events";
 import { FIRST_CHART_KEY } from "@/components/OnboardingWatchlist";
 import { maxColumnsFor } from "@/lib/chart/paths";
 import { linkedIndex } from "@/lib/chart/sync";
@@ -21,7 +21,7 @@ import { DEFAULT_SETTINGS, SETTINGS_KEY, parseSettings, restorable, serializeSet
 import { track } from "@/lib/analytics/posthog";
 import { parseAlerts, STORAGE_KEY as ALERTS_KEY } from "@/lib/alerts/alerts";
 import type { Bar, Locale, Tier } from "@/lib/types";
-import { type ChartType, TOOL_POINTS, type RefLine, type CompareSeries } from "./chartShared";
+import { ChartSeriesContext, type ChartSeries, type ChartType, TOOL_POINTS, type RefLine, type CompareSeries } from "./chartShared";
 import { Toolbar } from "./ChartToolbar";
 import { PricePane } from "./PricePane";
 import { VolumePane, ForeignPane, BreadthPane, OscillatorPane } from "./SubPanes";
@@ -31,6 +31,7 @@ import { DrawingRail } from "./DrawingRail";
 import { StatusLine } from "./StatusLine";
 import { useDrawingStore } from "./useDrawingStore";
 import { useSeriesBars } from "./useSeriesBars";
+import { PanLayersContext, createPanLayers } from "./panLayers";
 
 /**
  * Plot margins. Module scope, not per render: a fresh object each render gave
@@ -38,6 +39,11 @@ import { useSeriesBars } from "./useSeriesBars";
  * closures could never hit.
  */
 const PAD = { left: 6, right: 58 } as const;
+
+/** Share of the visible window drawn past each edge during a drag; see `drawView`. */
+const BLEED = 0.3;
+/** A pointer resting this long mid-drag lets the chart catch up: the axis re-fits to what is in view. */
+const PAN_REST_MS = 120;
 
 /**
  * How close a click has to be, in normalised pane units, to grab something.
@@ -457,6 +463,41 @@ export function ChartPro({
     [foreign, wStart, wEnd],
   );
   const canPan = shownRange > 0 && shownRange < bars.length;
+  /**
+   * The window drawn: the visible one, plus `BLEED` of it on each side while a
+   * drag is in progress.
+   *
+   * A drag moves what is drawn by a transform on every pointer move and
+   * re-renders only to re-centre it; the margin is what it reveals in between,
+   * so a drag shows bars rather than empty canvas. Only a drag draws it: every
+   * other render would pay for 60% more canvas that nothing can reveal. Scales
+   * and read-outs still come from the visible window alone.
+   */
+  const [panning, setPanning] = useState(false);
+  const bleedBars = canPan && panning ? Math.ceil(view.length * BLEED) : 0;
+  const dStart = Math.max(0, wStart - bleedBars);
+  const dEnd = Math.min(bars.length, wEnd + bleedBars);
+  const lead = wStart - dStart;
+  const drawView = useMemo(() => bars.slice(dStart, dEnd), [bars, dStart, dEnd]);
+  const compareDraw = useMemo(() => compare.map((c) => c.series.slice(dStart, dEnd)), [compare, dStart, dEnd]);
+  const breadthDraw = useMemo(() => (breadth ? breadth.series.slice(dStart, dEnd) : null), [breadth, dStart, dEnd]);
+  const foreignDraw = useMemo(() => (foreign ? foreign.series.slice(dStart, dEnd) : null), [foreign, dStart, dEnd]);
+  /** Bar-length arrays reach the panes by context, not props; see `ChartSeries`. */
+  const series = useMemo<ChartSeries>(() => ({
+    view, drawView, compareDraw,
+    breadth: breadthView ? { pct: breadthView, pctDraw: breadthDraw ?? breadthView } : null,
+    foreign: foreignView ? { net: foreignView, netDraw: foreignDraw ?? foreignView } : null,
+  }), [view, drawView, compareDraw, breadthView, breadthDraw, foreignView, foreignDraw]);
+  /**
+   * Event markers, placed once per series and then cut to the drawn window.
+   * Placing derives a day key for every bar, so doing it per render put that
+   * work on every re-centre of a pan and every wheel notch.
+   */
+  const placedAll = useMemo(() => placeEvents(bars, events), [bars, events]);
+  const placed = useMemo(
+    () => placedAll.filter((e) => e.i >= dStart && e.i < dEnd).map((e) => ({ ...e, i: e.i - dStart })),
+    [placedAll, dStart, dEnd],
+  );
   // A pointer can fire many moves per frame; the chart can only paint once.
   const panFrame = useRef<number | null>(null);
   const panTo = useRef<number | null>(null);
@@ -498,6 +539,14 @@ export function ChartPro({
       panes: groups.filter((g) => g.def.pane === "oscillator"),
     };
   }, [allPlots, wStart, wEnd]);
+  // The same plots over the drawn window, in the same order as `computed`.
+  const drawPlots = useMemo(() => {
+    const cut = (p: Plot): Plot => ({ ...p, series: p.series.slice(dStart, dEnd) });
+    return {
+      price: allPlots.filter((g) => g.def.pane === "price").flatMap((g) => g.plots.map(cut)),
+      panes: allPlots.filter((g) => g.def.pane === "oscillator").map((g) => g.plots.map(cut)),
+    };
+  }, [allPlots, dStart, dEnd]);
 
   // Mirrors `active` so the refused paths are observable — a gate we cannot
   // count is a gate we cannot price — without the stale-closure hazard that
@@ -563,6 +612,25 @@ export function ChartPro({
   // still parses and rasterises every byte of it on each pan frame. Derived
   // once here; every pane used to derive it again from the same width.
   const maxCols = maxColumnsFor(plotW);
+  const bleedPx = bleedBars * band;
+  const drawCols = Math.max(1, Math.round((maxCols * drawView.length) / Math.max(1, view.length)));
+
+  const [pan] = useState(createPanLayers);
+  // The offset the drawn layers show, and the fractional one under a dragging
+  // pointer (null when nothing is being dragged).
+  const panShown = useRef(offset);
+  const panLive = useRef<number | null>(null);
+  // The re-centre in flight, so a move never starts a second one on top of it.
+  const panPending = useRef<number | null>(null);
+  const panRest = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (panRest.current) clearTimeout(panRest.current); }, []);
+  // After every pane has redrawn for this commit (child layout effects run
+  // first), so the shift is reset in the same paint as the new window.
+  useLayoutEffect(() => {
+    panShown.current = offset;
+    panPending.current = null;
+    pan.set(panLive.current === null ? 0 : (panLive.current - offset) * band);
+  }, [offset, band, pan]);
 
   // Inverses of the price pane's scales, so a click becomes a (time, price)
   // pair rather than a pixel that would drift on the next zoom.
@@ -801,12 +869,17 @@ export function ChartPro({
       }
     }
     drag.current = { x: e.clientX, offset, moved: false };
-    if (canPan) e.currentTarget.setPointerCapture?.(e.pointerId);
+    if (canPan) {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      // Draw the margin a pan reveals now, while the pointer is still down.
+      setPanning(true);
+    }
   };
 
   const onUp = (e: React.PointerEvent<SVGSVGElement>) => {
     // The gesture is over, so a bar that arrived during it can land now.
     releaseHeld();
+    if (panning) setPanning(false);
     if (e.pointerType === "touch") {
       touches.current.delete(e.pointerId);
       // Lifting one finger of a pinch ends the gesture rather than silently
@@ -846,9 +919,19 @@ export function ChartPro({
     if (panFrame.current !== null) {
       cancelAnimationFrame(panFrame.current);
       panFrame.current = null;
-      if (panTo.current !== null) setOffset(panTo.current);
-      panTo.current = null;
     }
+    if (panLive.current !== null) {
+      panLive.current = null;
+      // Synchronous, not a transition: the window let go on is the one on
+      // screen from the next frame, and it supersedes any render in flight.
+      if (panTo.current !== null) setOffset(panTo.current);
+      // Landing on the window already drawn commits nothing, so nothing else
+      // would clear the shift.
+      if (panTo.current === null || panTo.current === panShown.current) pan.set(0);
+    }
+    panTo.current = null;
+    panPending.current = null;
+    if (panRest.current !== null) { clearTimeout(panRest.current); panRest.current = null; }
     if (d && !d.moved) onPriceClick(e);
   };
 
@@ -906,12 +989,22 @@ export function ChartPro({
       if (Math.abs(dx) > 3) d.moved = true;
       if (d.moved) {
         panTo.current = offsetFromDrag(d.offset, dx, band, bars.length, range);
-        if (panFrame.current === null) {
-          panFrame.current = requestAnimationFrame(() => {
-            panFrame.current = null;
-            if (panTo.current !== null) setOffset(panTo.current);
-          });
-        }
+        // Every move: shift what is drawn, unrounded, with no render at all.
+        panLive.current = Math.min(Math.max(0, d.offset + dx / Math.max(band, 0.5)), maxOffset(bars.length, range));
+        pan.set((panLive.current - panShown.current) * band);
+        // A render only re-centres what is drawn: once the shift has used half
+        // the margin, or when the pointer rests. Every move between is the
+        // transform alone. One re-centre at a time, as a transition, so it is
+        // never restarted and never blocks a move.
+        const recenter = () => {
+          const to = panTo.current;
+          if (to === null || panPending.current !== null || to === panShown.current) return;
+          panPending.current = to;
+          startTransition(() => setOffset(to));
+        };
+        if (Math.abs(panLive.current - panShown.current) * band > bleedPx / 2) recenter();
+        if (panRest.current !== null) clearTimeout(panRest.current);
+        panRest.current = setTimeout(() => { panRest.current = null; recenter(); }, PAN_REST_MS);
         setHover((h) => (h === null ? h : null));
         setCursorY((v) => (v === null ? v : null));
         return;
@@ -982,6 +1075,7 @@ export function ChartPro({
   };
 
   const xStep = Math.max(1, Math.floor(view.length / 6));
+  const drawn = { lead, bleedPx, drawCols, plotW };
 
   return (
     <div className={full ? "fixed inset-0 z-50 overflow-auto bg-page p-4" : ""}>
@@ -1054,12 +1148,17 @@ export function ChartPro({
             hasDrawings={drawings.length > 0}
             clearDrawings={() => { commitDrawings([]); setPending([]); setSelectedId(null); }}
           />
-          <div ref={wrapRef} className="min-w-0 flex-1">
+          {/* No text selection: a drag on the plot is a pan, and selecting the
+              axis labels under it both looks broken and repaints every move. */}
+          <div ref={wrapRef} className="min-w-0 flex-1 select-none">
+          <PanLayersContext.Provider value={pan}>
+          <ChartSeriesContext.Provider value={series}>
           <PricePane
             intraday={intraday}
-            view={view} width={width} plotW={plotW} band={band} x={x} PAD={PAD} maxCols={maxCols}
+            {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols}
+            drawOverlays={drawPlots.price}
             type={type} overlays={computed.price} hover={shownHover} idx={idx} H={priceH}
-            refLines={refLines} alerts={alertLines} compareView={compareView} events={events} geom={priceGeom} selectedId={selectedId}
+            refLines={refLines} alerts={alertLines} compareView={compareView} placedEvents={placed} geom={priceGeom} selectedId={selectedId}
             locale={locale} digits={digits} symbol={symbol} dict={dict}
             drawings={shownDrawings} pending={pending} mode={mode} onClick={onDown}
             onMove={onMove} onLeave={() => { setHover(null); setCursorY(null); }} onKey={onKey} onUp={onUp} canPan={canPan}
@@ -1089,27 +1188,29 @@ export function ChartPro({
           >
             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-line group-hover:bg-accent group-focus:bg-accent" />
           </div>
-          <VolumePane view={view} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday} locale={locale} />
+          <VolumePane {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday} locale={locale} />
           {breadthView && (
             <BreadthPane
-              view={view} intraday={intraday} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover}
-              pct={breadthView} label={breadth?.label ?? ""} locale={locale}
+              {...drawn} intraday={intraday} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover}
+              label={breadth?.label ?? ""} locale={locale}
             />
           )}
           {foreignView && (
             <ForeignPane
-              view={view} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday}
-              net={foreignView} label={foreign?.label ?? "Khối ngoại"} locale={locale}
+              {...drawn} width={width} band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} intraday={intraday}
+              label={foreign?.label ?? "Khối ngoại"} locale={locale}
             />
           )}
-          {computed.panes.map(({ def, period, plots }) => (
+          {computed.panes.map(({ def, period, plots }, i) => (
             <OscillatorPane
-              intraday={intraday}
-              key={def.id} def={def} period={period} plots={plots} width={width}
+              intraday={intraday} {...drawn}
+              key={def.id} def={def} period={period} plots={plots} drawPlots={drawPlots.panes[i] ?? plots} width={width}
               band={band} x={x} PAD={PAD} maxCols={maxCols} hover={shownHover} idx={idx} locale={locale}
             />
           ))}
-          <XAxis view={view} width={width} x={x} xStep={xStep} locale={locale} hover={shownHover} intraday={intraday} />
+          <XAxis {...drawn} PAD={PAD} fromEnd={bars.length - 1 - dStart} width={width} x={x} xStep={xStep} locale={locale} hover={shownHover} intraday={intraday} />
+          </ChartSeriesContext.Provider>
+          </PanLayersContext.Provider>
           </div>
         </div>
       )}

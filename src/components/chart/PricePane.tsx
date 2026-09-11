@@ -5,19 +5,20 @@ import { num } from "@/lib/format";
 import type { Dict } from "@/lib/i18n";
 import { COLOR_VAR, type Plot } from "@/lib/ta/registry";
 import { PaneCanvas } from "./PaneCanvas";
+import { PlotLayer } from "./panLayers";
 import { useChartColors } from "./chartColors";
 import { dashList, drawArea, drawCandles, drawSeries } from "./canvasLayers";
 import { columnsFor } from "@/lib/chart/geometry";
 import { anchorsOf, channelParallel, fibLevels, trendPriceAt, type Drawing, type DrawingKind } from "@/lib/chart/drawings";
 import { nearestIndex } from "@/lib/chart/pan";
 import { isSettled, settlementDate, unrealisedPct } from "@/lib/chart/settlement";
-import { EVENT_GLYPH, placeEvents, type CorpEvent } from "@/lib/chart/events";
+import { EVENT_GLYPH, type PlacedEvent } from "@/lib/chart/events";
 import { candlePaths, seriesPath } from "@/lib/chart/paths";
 import { norm, pctOf, scaleTicks, type ScaleId, seriesExtent } from "@/lib/chart/scale";
 import { dashFor } from "@/lib/chart/compare";
 import type { PriceAlert } from "@/lib/alerts/alerts";
 import type { Locale } from "@/lib/types";
-import { type ChartType, TOOL_POINTS, stamp, type PaneGeom, type RefLine } from "./chartShared";
+import { type ChartType, TOOL_POINTS, stamp, useChartSeries, type PaneGeom, type RefLine } from "./chartShared";
 
 /** Legend keys that mirror the dash patterns, so the mapping survives greyscale. */
 function dashGlyph(i: number): string {
@@ -25,13 +26,18 @@ function dashGlyph(i: number): string {
 }
 
 export function PricePane({
-  view, width, plotW, band, x, PAD, maxCols, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
+  width, plotW, band, x, PAD, maxCols, type, overlays, hover, idx, locale, digits, symbol, dict, intraday,
   drawings, pending, mode, onClick, onMove, onLeave, onKey, onUp, canPan, H,
-  refLines, alerts, compareView, cursorY, events, geom, selectedId,
+  refLines, alerts, compareView, cursorY, placedEvents, geom, selectedId,
+  lead, bleedPx, drawCols, drawOverlays,
 }: PaneGeom & {
-  H: number; plotW: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
+  /** `overlays` over the drawn window rather than the visible one. */
+  drawOverlays: Plot[];
+  H: number; type: ChartType; overlays: Plot[]; idx: number; locale: Locale; digits: number;
   symbol: string; dict: Dict;
-  refLines: RefLine[]; alerts: PriceAlert[]; events: CorpEvent[];
+  refLines: RefLine[]; alerts: PriceAlert[];
+  /** Corporate events, already placed on the drawn window's indices. */
+  placedEvents: PlacedEvent[];
   /** The parent's `priceGeom`: the one price domain every layer maps through. */
   geom: { sc: ScaleId; yMin: number; yMax: number };
   selectedId: string | null;
@@ -43,6 +49,7 @@ export function PricePane({
   onUp: (e: React.PointerEvent<SVGSVGElement>) => void; canPan: boolean;
   onKey: (e: React.KeyboardEvent<SVGSVGElement>) => void;
 }) {
+  const { view, drawView, compareDraw } = useChartSeries();
   // The domain comes from the parent's `priceGeom`. This pane used to fold the
   // same bars, overlays and levels a second time on every render — with spread
   // arguments, tens of thousands of them at "Tất cả" — to reach identical numbers.
@@ -61,6 +68,8 @@ export function PricePane({
   // One mapping for candles, drawings, alert levels, reference lines and the
   // crosshair, so switching the axis cannot move some of them and not others.
   const y = useCallback((v: number) => 10 + (H - 20) - norm(sc, v, yMin, yMax) * (H - 20), [sc, yMin, yMax, H]);
+  // A drawn-window index to pane x: `drawView[lead]` sits where `view[0]` does.
+  const xd = useCallback((j: number) => x(j - lead), [x, lead]);
 
   // Compare line: its OWN min/max mapped to the pane's pixel band, so it shows
   // relative SHAPE without touching the price scale, candles or crosshair.
@@ -69,28 +78,20 @@ export function PricePane({
   // a share at 27 sit on the chart together — and none of them touch the price
   // scale, the candles or the crosshair.
 
-  const compareScaled = useMemo(() => compareView.map((c) => {
+  const compareScaled = useMemo(() => compareView.map((c, i) => {
     const e = seriesExtent([c.series]);
     const lo = e.n ? e.lo : 0;
     const hi = e.n ? e.hi : 1;
     const cy = (v: number) => 10 + (H - 20) - ((v - lo) / ((hi - lo) || 1)) * (H - 20);
-    return { label: c.label, series: c.series, cy };
+    return { label: c.label, series: c.series, drawn: compareDraw[i] ?? c.series, cy };
     // A series with no finite value draws nothing, and is not named in the legend.
-  }).filter((c) => c.series.some((v) => v !== null && Number.isFinite(v))), [compareView, H]);
+  }).filter((c) => c.series.some((v) => v !== null && Number.isFinite(v))), [compareView, compareDraw, H]);
   const comparePaths = useMemo(
     () => (onCanvas ? [] : compareScaled.map((c) => ({ label: c.label, d: seriesPath(c.series, x, c.cy, maxCols) }))),
     [onCanvas, compareScaled, x, maxCols],
   );
 
 
-  /**
-   * Marker placements, held across renders.
-   *
-   * This was computed inline in the markup, so it re-derived a day key for
-   * every visible bar on every render — and a pan renders on every frame. The
-   * placements only change when the window or the event list does.
-   */
-  const placedEvents = useMemo(() => placeEvents(view, events), [view, events]);
 
   /**
    * The price pane's dense layer on canvas, in the order the SVG drew it: grid,
@@ -99,28 +100,30 @@ export function PricePane({
    */
   const drawPrice = useCallback((ctx: CanvasRenderingContext2D) => {
     if (!colors) return;
+    // Across the whole canvas, margins included: a pan moves them into view.
+    const from = PAD.left - bleedPx, to = PAD.left + plotW + bleedPx;
     ctx.lineWidth = 1;
     ctx.strokeStyle = colors.grid;
     for (const v of scaleTicks(sc, yMin, yMax)) {
-      ctx.beginPath(); ctx.moveTo(PAD.left, y(v)); ctx.lineTo(PAD.left + plotW, y(v)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(from, y(v)); ctx.lineTo(to, y(v)); ctx.stroke();
     }
     if (type === "candle") {
-      drawCandles(ctx, view, { x, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) }, maxCols, colors);
+      drawCandles(ctx, drawView, { x: xd, y, bodyWidth: Math.max(1, Math.min(band * 0.62, 14)) }, drawCols, colors);
     } else {
-      const closes = view.map((b) => b.c);
-      if (type === "area") drawArea(ctx, closes, x, y, maxCols, H - 10, colors.accent, 0.10);
-      drawSeries(ctx, closes, x, y, maxCols, { color: colors.accent, width: 2, join: "round" });
+      const closes = drawView.map((b) => b.c);
+      if (type === "area") drawArea(ctx, closes, xd, y, drawCols, H - 10, colors.accent, 0.10);
+      drawSeries(ctx, closes, xd, y, drawCols, { color: colors.accent, width: 2, join: "round" });
     }
-    for (const o of overlays) {
+    for (const o of drawOverlays) {
       const isBand = o.style === "band";
-      drawSeries(ctx, o.series, x, y, maxCols, {
+      drawSeries(ctx, o.series, xd, y, drawCols, {
         color: colors[o.color], width: isBand ? 1 : 1.5, dash: isBand ? [3, 3] : undefined, alpha: isBand ? 0.8 : 1,
       });
     }
-    compareScaled.forEach((c, i) => drawSeries(ctx, c.series, x, c.cy, maxCols, {
+    compareScaled.forEach((c, i) => drawSeries(ctx, c.drawn, xd, c.cy, drawCols, {
       color: colors.muted, width: 1.5, dash: dashList(dashFor(i)), alpha: 0.85,
     }));
-  }, [colors, sc, yMin, yMax, PAD, y, plotW, type, view, x, band, maxCols, H, overlays, compareScaled]);
+  }, [colors, sc, yMin, yMax, PAD, y, plotW, bleedPx, type, drawView, xd, band, drawCols, H, drawOverlays, compareScaled]);
 
   /**
    * The pane's geometry, held across renders as ready-made elements.
@@ -268,7 +271,7 @@ export function PricePane({
           "was I holding when this paid, and how much", and the label says the
           amount without implying it caused anything. */}
       {placedEvents.map((ev) => {
-        const cx = x(ev.i);
+        const cx = xd(ev.i);
         const label = ev.kind === "cash" ? dict.chart.eventCash
           : ev.kind === "stock" ? dict.chart.eventStock : dict.chart.eventRights;
         const amount = ev.cash !== null
@@ -288,37 +291,25 @@ export function PricePane({
         );
       })}
     </>
-  ), [placedEvents, x, H, dict, locale]);
-  const tradeLayer = useMemo(() => (
+  ), [placedEvents, xd, H, dict, locale]);
+  const tradeLevels = useMemo(() => (
     <>
       {/* Trade markers: an entry level, a marker at the session the shares
           become sellable (VN settles T+2, credited after lunch — "T+2.5"),
           and the unrealised move. No global tool models this, and it is the
-          first thing a VN holder wants from a chart of something they own. */}
+          first thing a VN holder wants from a chart of something they own.
+          The level and the move sit on the price axis; the two marks pinned
+          to a session are in `tradeMarks`, which moves with the bars. */}
       {drawings.map((d) => {
         if (d.kind !== "trade") return null;
         const yEntry = y(d.price);
         if (!Number.isFinite(yEntry)) return null;
         const last = view[view.length - 1]?.c ?? d.price;
         const move = unrealisedPct(d.price, last);
-        const settleAt = settlementDate(d.t);
-        const settled = isSettled(d.t, view[view.length - 1]?.t ?? d.t);
-        const iEntry = nearestIndex(view, d.t);
-        const iSettle = nearestIndex(view, settleAt);
         return (
           <g key={d.id}>
             <line x1={PAD.left} x2={PAD.left + plotW} y1={yEntry} y2={yEntry}
               stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="6 2" opacity={0.8} />
-            {/* Where the position was opened. */}
-            <path d={`M${x(iEntry)},${yEntry - 5} L${x(iEntry) + 5},${yEntry} L${x(iEntry)},${yEntry + 5} L${x(iEntry) - 5},${yEntry} Z`}
-              fill="var(--ink-2)" />
-            {/* Until this line the shares cannot be sold at all. Solid once
-                they have settled, dashed while they are still locked. */}
-            {iSettle > iEntry && (
-              <line x1={x(iSettle)} x2={x(iSettle)} y1={8} y2={H - 8}
-                stroke="var(--ink-2)" strokeWidth={1}
-                strokeDasharray={settled ? undefined : "2 4"} opacity={0.55} />
-            )}
             {/* Signed and glyphed, so the move never rides on colour alone. */}
             <text x={PAD.left + 4} y={yEntry - 4} fontSize={10} className="tnum"
               fill="var(--ink-2)">
@@ -328,39 +319,69 @@ export function PricePane({
         );
       })}
     </>
-  ), [drawings, view, x, y, plotW, H, locale, digits, PAD]);
+  ), [drawings, view, y, plotW, locale, digits, PAD]);
+  const tradeMarks = useMemo(() => (
+    <>
+      {drawings.map((d) => {
+        if (d.kind !== "trade") return null;
+        const yEntry = y(d.price);
+        if (!Number.isFinite(yEntry)) return null;
+        const settled = isSettled(d.t, view[view.length - 1]?.t ?? d.t);
+        const iEntry = nearestIndex(drawView, d.t);
+        const iSettle = nearestIndex(drawView, settlementDate(d.t));
+        return (
+          <g key={d.id}>
+            {/* Where the position was opened. */}
+            <path d={`M${xd(iEntry)},${yEntry - 5} L${xd(iEntry) + 5},${yEntry} L${xd(iEntry)},${yEntry + 5} L${xd(iEntry) - 5},${yEntry} Z`}
+              fill="var(--ink-2)" />
+            {/* Until this line the shares cannot be sold at all. Solid once
+                they have settled, dashed while they are still locked. */}
+            {iSettle > iEntry && (
+              <line x1={xd(iSettle)} x2={xd(iSettle)} y1={8} y2={H - 8}
+                stroke="var(--ink-2)" strokeWidth={1}
+                strokeDasharray={settled ? undefined : "2 4"} opacity={0.55} />
+            )}
+          </g>
+        );
+      })}
+    </>
+  ), [drawings, view, drawView, xd, y, H]);
+  const hlineLayer = useMemo(() => (
+    <>
+      {drawings.map((d) => (d.kind !== "hline" ? null : (
+        <g key={d.id}>
+          <line x1={PAD.left} x2={PAD.left + plotW} y1={y(d.price)} y2={y(d.price)}
+            stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
+          <text x={PAD.left + plotW + 6} y={y(d.price) + 3.5} fontSize={10} fill="var(--accent)" className="tnum">
+            {num(d.price, locale, digits)}
+          </text>
+        </g>
+      )))}
+    </>
+  ), [drawings, y, plotW, locale, digits, PAD]);
   const drawingLayer = useMemo(() => (
     <>
       {/* Drawings map from data space through the same scales as the bars,
           so they stay pinned when the range changes. */}
       {drawings.map((d) => {
-        if (d.kind === "hline") {
-          return (
-            <g key={d.id}>
-              <line x1={PAD.left} x2={PAD.left + plotW} y1={y(d.price)} y2={y(d.price)}
-                stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
-              <text x={PAD.left + plotW + 6} y={y(d.price) + 3.5} fontSize={10} fill="var(--accent)" className="tnum">
-                {num(d.price, locale, digits)}
-              </text>
-            </g>
-          );
-        }
+        // On the price axis, not pinned to a session: drawn in `hlineLayer`.
+        if (d.kind === "hline") return null;
         // Binary search, not a scan: this runs for every endpoint of every
         // drawing on every frame of a pan.
-        const iOf = (t: number) => nearestIndex(view, t);
+        const iOf = (t: number) => nearestIndex(drawView, t);
         if (d.kind === "trade") return null; // drawn separately, below
 
         // A moment worth marking, with no price of its own.
         if (d.kind === "vline") {
           return (
-            <line key={d.id} x1={x(iOf(d.t))} x2={x(iOf(d.t))} y1={8} y2={H - 8}
+            <line key={d.id} x1={xd(iOf(d.t))} x2={xd(iOf(d.t))} y1={8} y2={H - 8}
               stroke="var(--accent)" strokeWidth={1} strokeDasharray="4 3" />
           );
         }
 
         // A note anchored to a bar and a price, so it travels with the data.
         if (d.kind === "text") {
-          const tx = x(iOf(d.t)), ty = y(d.price);
+          const tx = xd(iOf(d.t)), ty = y(d.price);
           return (
             <g key={d.id}>
               <circle cx={tx} cy={ty} r={2.5} fill="var(--accent)" />
@@ -373,7 +394,7 @@ export function PricePane({
 
         // A box over a region: a range, a consolidation, an event window.
         if (d.kind === "rect") {
-          const x1 = Math.min(x(i1), x(i2)), x2 = Math.max(x(i1), x(i2));
+          const x1 = Math.min(xd(i1), xd(i2)), x2 = Math.max(xd(i1), xd(i2));
           const y1 = Math.min(y(d.p1), y(d.p2)), y2 = Math.max(y(d.p1), y(d.p2));
           return (
             <rect key={d.id} x={x1} y={y1} width={Math.max(1, x2 - x1)} height={Math.max(1, y2 - y1)}
@@ -384,16 +405,16 @@ export function PricePane({
         // A ray keeps going past its second point, which is the whole reason
         // a reader picks one over a segment.
         if (d.kind === "ray") {
-          const last = view.length - 1;
-          const endT = view[last].t;
+          const last = drawView.length - 1;
+          const endT = drawView[last].t;
           // Extended along its own slope to the right edge rather than to the
           // second point, so the line stays true as the window moves.
           const endP = trendPriceAt(d, Math.max(endT, d.t2));
-          const xEnd = x(Math.max(i2, last));
+          const xEnd = xd(Math.max(i2, last));
           return (
             <g key={d.id}>
-              <line x1={x(i1)} y1={y(d.p1)} x2={xEnd} y2={y(endP)} stroke="var(--accent)" strokeWidth={1.5} />
-              <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
+              <line x1={xd(i1)} y1={y(d.p1)} x2={xEnd} y2={y(endP)} stroke="var(--accent)" strokeWidth={1.5} />
+              <circle cx={xd(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
             </g>
           );
         }
@@ -404,14 +425,14 @@ export function PricePane({
           const dp = d.p2 - d.p1;
           const pctMove = d.p1 ? (dp / d.p1) * 100 : 0;
           const bars = Math.abs(i2 - i1);
-          const mx = (x(i1) + x(i2)) / 2;
+          const mx = (xd(i1) + xd(i2)) / 2;
           const my = Math.min(y(d.p1), y(d.p2)) - 6;
           return (
             <g key={d.id}>
-              <rect x={Math.min(x(i1), x(i2))} y={Math.min(y(d.p1), y(d.p2))}
-                width={Math.max(1, Math.abs(x(i2) - x(i1)))} height={Math.max(1, Math.abs(y(d.p2) - y(d.p1)))}
+              <rect x={Math.min(xd(i1), xd(i2))} y={Math.min(y(d.p1), y(d.p2))}
+                width={Math.max(1, Math.abs(xd(i2) - xd(i1)))} height={Math.max(1, Math.abs(y(d.p2) - y(d.p1)))}
                 fill={dp >= 0 ? "var(--up)" : "var(--down)"} fillOpacity={0.10} />
-              <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
+              <line x1={xd(i1)} y1={y(d.p1)} x2={xd(i2)} y2={y(d.p2)}
                 stroke="var(--ink-2)" strokeWidth={1} strokeDasharray="3 2" />
               <text x={mx} y={my} fontSize={10} textAnchor="middle" className="tnum" fill="var(--ink-2)">
                 {dp >= 0 ? "▲" : "▼"} {dp >= 0 ? "+" : ""}{num(dp, locale, digits)} ({dp >= 0 ? "+" : ""}{num(pctMove, locale, 2)}%) · {bars}
@@ -422,31 +443,31 @@ export function PricePane({
 
         if (d.kind === "channel") {
           const par = channelParallel(d);
-          const ya = y(trendPriceAt(d, view[i1].t)), yb = y(trendPriceAt(d, view[i2].t));
-          const pa = y(trendPriceAt(par, view[i1].t)), pb = y(trendPriceAt(par, view[i2].t));
+          const ya = y(trendPriceAt(d, drawView[i1].t)), yb = y(trendPriceAt(d, drawView[i2].t));
+          const pa = y(trendPriceAt(par, drawView[i1].t)), pb = y(trendPriceAt(par, drawView[i2].t));
           const i3 = iOf(d.t3);
           return (
             <g key={d.id}>
               {/* The band is what a channel is FOR — the two lines alone leave
                   the reader to infer which side of each one matters. */}
-              <polygon points={`${x(i1)},${ya} ${x(i2)},${yb} ${x(i2)},${pb} ${x(i1)},${pa}`}
+              <polygon points={`${xd(i1)},${ya} ${xd(i2)},${yb} ${xd(i2)},${pb} ${xd(i1)},${pa}`}
                 fill="var(--accent)" fillOpacity={0.08} />
-              <line x1={x(i1)} y1={ya} x2={x(i2)} y2={yb} stroke="var(--accent)" strokeWidth={1.5} />
-              <line x1={x(i1)} y1={pa} x2={x(i2)} y2={pb} stroke="var(--accent)" strokeWidth={1.5} />
-              <circle cx={x(i1)} cy={ya} r={3} fill="var(--accent)" />
-              <circle cx={x(i2)} cy={yb} r={3} fill="var(--accent)" />
-              <circle cx={x(i3)} cy={y(d.p3)} r={3} fill="var(--accent)" />
+              <line x1={xd(i1)} y1={ya} x2={xd(i2)} y2={yb} stroke="var(--accent)" strokeWidth={1.5} />
+              <line x1={xd(i1)} y1={pa} x2={xd(i2)} y2={pb} stroke="var(--accent)" strokeWidth={1.5} />
+              <circle cx={xd(i1)} cy={ya} r={3} fill="var(--accent)" />
+              <circle cx={xd(i2)} cy={yb} r={3} fill="var(--accent)" />
+              <circle cx={xd(i3)} cy={y(d.p3)} r={3} fill="var(--accent)" />
             </g>
           );
         }
 
         if (d.kind === "fib" || d.kind === "fibext") {
-          const from = Math.min(x(i1), x(i2));
+          const from = Math.min(xd(i1), xd(i2));
           return (
             <g key={d.id}>
               {/* The swing being measured, drawn faintly: without it the
                   levels are just lines with no visible origin. */}
-              <line x1={x(i1)} y1={y(d.p1)} x2={x(i2)} y2={y(d.p2)}
+              <line x1={xd(i1)} y1={y(d.p1)} x2={xd(i2)} y2={y(d.p2)}
                 stroke="var(--muted)" strokeWidth={1} strokeDasharray="2 2" />
               {fibLevels(d).map((l) => {
                 // 50% and 61.8% are the levels traders actually watch; the
@@ -459,7 +480,7 @@ export function PricePane({
                 const gap = from + w + 8;
                 return (
                   <g key={l.ratio}>
-                    <line x1={Math.min(gap, PAD.left + plotW)} x2={PAD.left + plotW} y1={y(l.price)} y2={y(l.price)}
+                    <line x1={Math.min(gap, PAD.left + plotW + bleedPx)} x2={PAD.left + plotW + bleedPx} y1={y(l.price)} y2={y(l.price)}
                       stroke="var(--accent)" strokeWidth={key ? 1.4 : 1} strokeOpacity={key ? 0.9 : 0.45} />
                     {/* A moving average or a candle wick crossing the label
                         reads as a strikethrough through the price. */}
@@ -472,8 +493,8 @@ export function PricePane({
                   </g>
                 );
               })}
-              <circle cx={x(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
-              <circle cx={x(i2)} cy={y(d.p2)} r={3} fill="var(--accent)" />
+              <circle cx={xd(i1)} cy={y(d.p1)} r={3} fill="var(--accent)" />
+              <circle cx={xd(i2)} cy={y(d.p2)} r={3} fill="var(--accent)" />
             </g>
           );
         }
@@ -481,19 +502,19 @@ export function PricePane({
         if (d.kind !== "trend") return null;
         return (
           <g key={d.id}>
-            <line x1={x(i1)} y1={y(trendPriceAt(d, view[i1].t))} x2={x(i2)} y2={y(trendPriceAt(d, view[i2].t))}
+            <line x1={xd(i1)} y1={y(trendPriceAt(d, drawView[i1].t))} x2={xd(i2)} y2={y(trendPriceAt(d, drawView[i2].t))}
               stroke="var(--accent)" strokeWidth={1.5} />
-            <circle cx={x(i1)} cy={y(trendPriceAt(d, view[i1].t))} r={3} fill="var(--accent)" />
-            <circle cx={x(i2)} cy={y(trendPriceAt(d, view[i2].t))} r={3} fill="var(--accent)" />
+            <circle cx={xd(i1)} cy={y(trendPriceAt(d, drawView[i1].t))} r={3} fill="var(--accent)" />
+            <circle cx={xd(i2)} cy={y(trendPriceAt(d, drawView[i2].t))} r={3} fill="var(--accent)" />
           </g>
         );
       })}
       {pending.map((pt, i) => (
-        <circle key={`${pt.t}-${i}`} cx={x(nearestIndex(view, pt.t))} cy={y(pt.p)} r={4}
+        <circle key={`${pt.t}-${i}`} cx={xd(nearestIndex(drawView, pt.t))} cy={y(pt.p)} r={4}
           fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="2 2" />
       ))}
     </>
-  ), [drawings, pending, view, x, y, plotW, H, locale, digits, PAD]);
+  ), [drawings, pending, drawView, xd, y, plotW, bleedPx, H, locale, digits, PAD]);
   const lastPriceLayer = useMemo(() => (
     <>
       {/* Last-price tag: the standard terminal affordance for "where is it
@@ -520,13 +541,32 @@ export function PricePane({
       {/* Handles for the selected drawing, drawn last so they sit above every
           drawing they might overlap. A hollow ring, not a filled dot: the
           filled circles already mean "anchor of a channel", and two meanings
-          for one shape is how a reader learns to distrust the chart. */}
+          for one shape is how a reader learns to distrust the chart. An anchor
+          without a time is drawn at the left edge, where the reader can always
+          reach it whatever the window shows; one with a time moves with the
+          bars, so it is drawn in the overlay (`timeHandleLayer`). */}
       {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
         <g key={`sel-${d.id}`}>
           {anchorsOf(d).map((a, i) => {
-            // An anchor without a time is drawn at the left edge, where the
-            // reader can always reach it whatever the window shows.
-            const hx = a.axis === "price" ? PAD.left + 10 : x(nearestIndex(view, a.t));
+            if (a.axis !== "price") return null;
+            const hy = y(a.p);
+            if (!Number.isFinite(hy)) return null;
+            return (
+              <circle key={i} cx={PAD.left + 10} cy={hy} r={4.5}
+                fill="var(--page)" stroke="var(--accent)" strokeWidth={2} />
+            );
+          })}
+        </g>
+      ))}
+    </>
+  ), [selectedId, drawings, y, PAD]);
+  const timeHandleLayer = useMemo(() => (
+    <>
+      {selectedId && drawings.filter((d) => d.id === selectedId).map((d) => (
+        <g key={`sel-${d.id}`}>
+          {anchorsOf(d).map((a, i) => {
+            if (a.axis === "price") return null;
+            const hx = xd(nearestIndex(drawView, a.t));
             const hy = a.axis === "time" ? H / 2 : y(a.p);
             if (!Number.isFinite(hx) || !Number.isFinite(hy)) return null;
             return (
@@ -537,19 +577,31 @@ export function PricePane({
         </g>
       ))}
     </>
-  ), [selectedId, drawings, view, x, y, H, PAD]);
+  ), [selectedId, drawings, drawView, xd, y, H]);
 
   return (
     <div className="relative">
-      {onCanvas && (
-        <PaneCanvas
-          width={width} height={H} draw={drawPrice}
-          layer={type === "candle" ? "candles" : type}
-          columns={type === "candle" ? columnsFor(view.length, maxCols) : undefined}
-          windowKey={`${view[0].t}:${view[view.length - 1].t}`}
-          compareDashes={compareScaled.map((_, i) => dashFor(i))}
-        />
-      )}
+      <PlotLayer left={PAD.left} width={plotW} height={H}>
+        {onCanvas && (
+          <PaneCanvas
+            width={plotW + 2 * bleedPx} height={H} left={-bleedPx} originX={PAD.left - bleedPx} draw={drawPrice}
+            layer={type === "candle" ? "candles" : type}
+            columns={type === "candle" ? columnsFor(view.length, maxCols) : undefined}
+            windowKey={`${view[0].t}:${view[view.length - 1].t}`}
+            compareDashes={compareScaled.map((_, i) => dashFor(i))}
+          />
+        )}
+        {/* Everything pinned to a session rather than a price. It moves with
+            the bars during a pan, so it lives with them, above the canvas. */}
+        <svg aria-hidden="true" data-plot-overlay="" className="pointer-events-none absolute top-0 block"
+          style={{ left: -bleedPx, width: plotW + 2 * bleedPx, height: H }}
+          viewBox={`${PAD.left - bleedPx} 0 ${plotW + 2 * bleedPx} ${H}`}>
+          {eventLayer}
+          {tradeMarks}
+          {drawingLayer}
+          {timeHandleLayer}
+        </svg>
+      </PlotLayer>
       <svg
         width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" tabIndex={0}
         aria-label={`${symbol} ${dict.stocks.chartTitle}. ${dict.common.tableView}.`}
@@ -569,11 +621,9 @@ export function PricePane({
 
         {compareLayer}
 
-        {eventLayer}
+        {tradeLevels}
 
-        {tradeLayer}
-
-        {drawingLayer}
+        {hlineLayer}
 
         {lastPriceLayer}
 

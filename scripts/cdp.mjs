@@ -675,6 +675,20 @@ try {
       // Genuine panning needs a window smaller than what is loaded.
       await wheel(8, -1);
       await run("pan, zoomed in (40 moves)", checked("pan, zoomed in", hbox.x, panY, () => drag(hbox.x, panY, 6, 0)));
+      // A pan long enough to outrun the margin a drag draws past each edge: it
+      // has to re-centre several times, so any hitch in that shows here.
+      const swing = async (fromX, fromY) => {
+        await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x: fromX, y: fromY, button: "left", clickCount: 1, buttons: 1 });
+        for (let i = 1; i <= 60; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: fromX + i * 10, y: fromY, button: "left", buttons: 1 });
+        }
+        for (let i = 1; i <= 120; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: fromX + 600 - i * 10, y: fromY, button: "left", buttons: 1 });
+        }
+        await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: fromX - 600, y: fromY, button: "left", clickCount: 1, buttons: 0 });
+        await sleep(500);
+      };
+      await run("long pan (180 moves)", checked("long pan", hbox.x, panY, () => swing(hbox.x, panY)));
 
       // Grab a real drawing: the first dashed accent line inside the price pane
       // is an hline. Whether it moved is checked, not assumed — a press that
@@ -711,12 +725,25 @@ try {
         await sleep(400);
       }
 
-      const profiled = process.env.PERF_PROFILE === "all"
-        ? [["hover-sweep", hover], ["drag at Tất cả", () => drag(hbox.x, hbox.y, 6, 0)], ["pan, zoomed in", () => drag(hbox.x, hbox.y, 6, 0)]]
-        : [["hover-sweep", hover]];
-      for (const [label, action] of profiled) {
+      // PERF_PROFILE: "all", or a comma list of hover, tatca, pan, longpan, wheel.
+      // `wheel` first returns to "Tất cả", where the measured wheel row ran,
+      // so list it last.
+      const PROFILES = {
+        hover: ["hover-sweep", hover],
+        tatca: ["drag at Tất cả", () => drag(hbox.x, hbox.y, 6, 0)],
+        pan: ["pan, zoomed in", () => drag(hbox.x, hbox.y, 6, 0)],
+        longpan: ["long pan", () => swing(hbox.x, panY)],
+        wheel: ["wheel-zoom at Tất cả", async () => { await wheel(10, -1); await wheel(10, 1); }, async () => {
+          await s.click(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Tất cả')`);
+          await settle();
+        }],
+      };
+      const wanted = (process.env.PERF_PROFILE || "hover").split(",").map((k) => k.trim());
+      const profiled = (wanted.includes("all") ? ["hover", "tatca", "pan"] : wanted).filter((k) => PROFILES[k]).map((k) => PROFILES[k]);
+      for (const [label, action, before] of profiled) {
+        if (before) await before();
         console.log(`\nCPU profile — heavy ${label}, hottest self time:`);
-        console.table((await profile(action)).slice(0, 10));
+        console.table((await profile(action)).slice(0, 14));
       }
     }
   }

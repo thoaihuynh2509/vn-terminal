@@ -5,15 +5,22 @@ import { num, volume as fmtVol } from "@/lib/format";
 import { COLOR_VAR, type IndicatorDef, type Plot } from "@/lib/ta/registry";
 import { labelFor, shortFor } from "@/lib/ta/params";
 import { PaneCanvas } from "./PaneCanvas";
+import { PlotLayer } from "./panLayers";
 import { useChartColors } from "./chartColors";
 import { drawSeries, drawSignedBars, drawVolume } from "./canvasLayers";
 import { seriesPath, signedBarPaths, volumePaths } from "@/lib/chart/paths";
 import { seriesExtent } from "@/lib/chart/scale";
 import type { Locale } from "@/lib/types";
-import type { PaneGeom } from "./chartShared";
+import { useChartSeries, type PaneGeom } from "./chartShared";
 
-export function VolumePane({ view, width, band, x, PAD, maxCols, hover, locale }: PaneGeom & { locale: Locale }) {
+const NONE: (number | null)[] = [];
+
+export function VolumePane({
+  lead, bleedPx, drawCols, plotW, width, band, x, PAD, maxCols, hover, locale,
+}: PaneGeom & { locale: Locale }) {
   const H = 56;
+  const { view, drawView } = useChartSeries();
+  const xd = useCallback((j: number) => x(j - lead), [x, lead]);
   const colors = useChartColors();
   const maxV = useMemo(() => Math.max(seriesExtent([view.map((b) => b.v)]).hi, 1), [view]);
   // Held across renders so a crosshair move does not rebuild every bar; see PricePane.
@@ -31,15 +38,17 @@ export function VolumePane({ view, width, band, x, PAD, maxCols, hover, locale }
   }, [colors, view, x, band, maxV, maxCols]);
   const drawBars = useCallback((ctx: CanvasRenderingContext2D) => {
     if (!colors) return;
-    drawVolume(ctx, view, {
-      x, barWidth: Math.max(1, Math.min(band * 0.62, 14)), height: H, maxVolume: maxV,
-    }, maxCols, colors, 0.32);
-  }, [colors, view, x, band, maxV, maxCols]);
+    drawVolume(ctx, drawView, {
+      x: xd, barWidth: Math.max(1, Math.min(band * 0.62, 14)), height: H, maxVolume: maxV,
+    }, drawCols, colors, 0.32);
+  }, [colors, drawView, xd, band, maxV, drawCols]);
   // After the hooks: returning above them would change the hook order.
   if (maxV <= 1) return null;
   return (
     <div className="relative">
-      {colors && <PaneCanvas width={width} height={H} draw={drawBars} />}
+      <PlotLayer left={PAD.left} width={plotW} height={H}>
+        {colors && <PaneCanvas width={plotW + 2 * bleedPx} height={H} left={-bleedPx} originX={PAD.left - bleedPx} draw={drawBars} />}
+      </PlotLayer>
       <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={`Volume`} className="relative block">
         {barLayer}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--axis)" strokeWidth={1} />}
@@ -56,9 +65,13 @@ export function VolumePane({ view, width, band, x, PAD, maxCols, hover, locale }
  * simply has no bar; nothing is drawn as a fake zero.
  */
 export function ForeignPane({
-  width, band, x, PAD, maxCols, hover, net, label,
-}: PaneGeom & { net: (number | null)[]; label: string; locale: Locale }) {
+  width, band, x, PAD, maxCols, hover, label, lead, bleedPx, drawCols, plotW,
+}: PaneGeom & { label: string; locale: Locale }) {
   const H = 54;
+  const foreign = useChartSeries().foreign;
+  const net = foreign?.net ?? NONE;
+  const netDraw = foreign?.netDraw ?? NONE;
+  const xd = useCallback((j: number) => x(j - lead), [x, lead]);
   const mid = H / 2;
   const colors = useChartColors();
   // The largest magnitude sits at one of the two extremes. An empty series is
@@ -86,14 +99,16 @@ export function ForeignPane({
     if (!colors) return;
     ctx.lineWidth = 1;
     ctx.strokeStyle = colors.grid;
-    ctx.beginPath(); ctx.moveTo(PAD.left, mid); ctx.lineTo(PAD.left + (width - PAD.left - PAD.right), mid); ctx.stroke();
-    drawSignedBars(ctx, net, {
-      x, y: (v) => mid - (v / maxAbs) * (mid - 6), zeroY: mid, barWidth: bw,
-    }, maxCols, colors, 0.55);
-  }, [colors, PAD, width, mid, net, x, maxAbs, bw, maxCols]);
+    ctx.beginPath(); ctx.moveTo(PAD.left - bleedPx, mid); ctx.lineTo(PAD.left + plotW + bleedPx, mid); ctx.stroke();
+    drawSignedBars(ctx, netDraw, {
+      x: xd, y: (v) => mid - (v / maxAbs) * (mid - 6), zeroY: mid, barWidth: bw,
+    }, drawCols, colors, 0.55);
+  }, [colors, PAD, plotW, bleedPx, mid, netDraw, xd, maxAbs, bw, drawCols]);
   return (
     <div className="relative">
-      {colors && <PaneCanvas width={width} height={H} draw={drawBars} />}
+      <PlotLayer left={PAD.left} width={plotW} height={H}>
+        {colors && <PaneCanvas width={plotW + 2 * bleedPx} height={H} left={-bleedPx} originX={PAD.left - bleedPx} draw={drawBars} />}
+      </PlotLayer>
       <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="relative block">
         {!colors && <line x1={PAD.left} x2={PAD.left + (width - PAD.left - PAD.right)} y1={mid} y2={mid} stroke="var(--grid)" strokeWidth={1} />}
         {barLayer}
@@ -115,10 +130,13 @@ const breadthY = (v: number) => 8 + (BREADTH_H - 16) - (v / 100) * (BREADTH_H - 
  * the market participating), not a threshold someone picked.
  */
 export function BreadthPane({
-  width, x, PAD, maxCols, hover, pct, label,
-}: PaneGeom & { pct: (number | null)[]; label: string; locale: Locale }) {
+  width, x, PAD, maxCols, hover, label, lead, bleedPx, drawCols, plotW,
+}: PaneGeom & { label: string; locale: Locale }) {
   const H = BREADTH_H;
-  const plotW = width - PAD.left - PAD.right;
+  const breadth = useChartSeries().breadth;
+  const pct = breadth?.pct ?? NONE;
+  const pctDraw = breadth?.pctDraw ?? NONE;
+  const xd = useCallback((j: number) => x(j - lead), [x, lead]);
   const y = breadthY;
   const colors = useChartColors();
   // Held across renders so a crosshair move does not rebuild the line.
@@ -130,14 +148,16 @@ export function BreadthPane({
     ctx.lineWidth = 1;
     ctx.strokeStyle = colors.grid;
     ctx.setLineDash([2, 3]);
-    ctx.beginPath(); ctx.moveTo(PAD.left, breadthY(50)); ctx.lineTo(PAD.left + plotW, breadthY(50)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(PAD.left - bleedPx, breadthY(50)); ctx.lineTo(PAD.left + plotW + bleedPx, breadthY(50)); ctx.stroke();
     ctx.restore();
-    drawSeries(ctx, pct, x, breadthY, maxCols, { color: colors.accent, width: 1.5 });
-  }, [colors, PAD, plotW, pct, x, maxCols]);
+    drawSeries(ctx, pctDraw, xd, breadthY, drawCols, { color: colors.accent, width: 1.5 });
+  }, [colors, PAD, plotW, bleedPx, pctDraw, xd, drawCols]);
   const last = useMemo(() => [...pct].reverse().find((v): v is number => v !== null), [pct]);
   return (
     <div className="relative">
-      {colors && <PaneCanvas width={width} height={H} draw={drawLine} />}
+      <PlotLayer left={PAD.left} width={plotW} height={H}>
+        {colors && <PaneCanvas width={plotW + 2 * bleedPx} height={H} left={-bleedPx} originX={PAD.left - bleedPx} draw={drawLine} />}
+      </PlotLayer>
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={label} className="relative block">
       {!colors && <line x1={PAD.left} x2={PAD.left + plotW} y1={y(50)} y2={y(50)} stroke="var(--grid)" strokeWidth={1} strokeDasharray="2 3" />}
       {d && <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />}
@@ -154,9 +174,14 @@ export function BreadthPane({
 }
 
 export function OscillatorPane({
-  def, period, plots, width, band, x, PAD, maxCols, hover, idx, locale,
-}: Omit<PaneGeom, "view"> & { def: IndicatorDef; period: number | null; plots: Plot[]; idx: number; locale: Locale }) {
+  def, period, plots, drawPlots, width, band, x, PAD, maxCols, hover, idx, locale, lead, bleedPx, drawCols, plotW,
+}: PaneGeom & {
+  def: IndicatorDef; period: number | null; plots: Plot[];
+  /** `plots` over `drawView`: what is drawn, where `plots` sets the scale and the read-out. */
+  drawPlots: Plot[]; idx: number; locale: Locale;
+}) {
   const H = 96;
+  const xd = useCallback((j: number) => x(j - lead), [x, lead]);
   const colors = useChartColors();
   const e = useMemo(() => seriesExtent(plots.map((p) => p.series)), [plots]);
   const [lo, hi] = def.range ?? [e.lo, e.hi];
@@ -184,24 +209,26 @@ export function OscillatorPane({
     );
   }), [colors, plots, x, y, zeroY, band, maxCols]);
   // Guides go with the plots, so they stay beneath them; their labels stay SVG.
-  const drawPlots = useCallback((ctx: CanvasRenderingContext2D) => {
+  const drawPlotLines = useCallback((ctx: CanvasRenderingContext2D) => {
     if (!colors) return;
     ctx.lineWidth = 1;
     ctx.strokeStyle = colors.grid;
     for (const g of def.guides ?? []) {
-      ctx.beginPath(); ctx.moveTo(PAD.left, y(g)); ctx.lineTo(width - PAD.right, y(g)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(PAD.left - bleedPx, y(g)); ctx.lineTo(PAD.left + plotW + bleedPx, y(g)); ctx.stroke();
     }
-    for (const p of plots) {
-      if (p.style !== "histogram") drawSeries(ctx, p.series, x, y, maxCols, { color: colors[p.color], width: 1.5 });
-      else drawSignedBars(ctx, p.series, { x, y, zeroY, barWidth: Math.max(1, Math.min(band, 10)) }, maxCols, colors, 0.45);
+    for (const p of drawPlots) {
+      if (p.style !== "histogram") drawSeries(ctx, p.series, xd, y, drawCols, { color: colors[p.color], width: 1.5 });
+      else drawSignedBars(ctx, p.series, { x: xd, y, zeroY, barWidth: Math.max(1, Math.min(band, 10)) }, drawCols, colors, 0.45);
     }
-  }, [colors, def.guides, PAD, width, y, plots, x, maxCols, zeroY, band]);
+  }, [colors, def.guides, PAD, plotW, bleedPx, y, drawPlots, xd, drawCols, zeroY, band]);
   // After the hooks: returning above them would change the hook order.
   if (!e.n) return null;
 
   return (
     <div className="relative border-t border-line">
-      {colors && <PaneCanvas width={width} height={H} draw={drawPlots} />}
+      <PlotLayer left={PAD.left} width={plotW} height={H}>
+        {colors && <PaneCanvas width={plotW + 2 * bleedPx} height={H} left={-bleedPx} originX={PAD.left - bleedPx} draw={drawPlotLines} />}
+      </PlotLayer>
     <svg width="100%" height={H} viewBox={`0 0 ${width} ${H}`} role="img" aria-label={labelFor(def, period)} className="relative block">
       {/* The plot labels already name the indicator; printing `def.short` too
           produced "RSI RSI 14". */}

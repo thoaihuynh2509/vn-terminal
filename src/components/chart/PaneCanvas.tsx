@@ -17,7 +17,7 @@ import { useLayoutEffect, useRef, useState, useEffect } from "react";
  * without resizing anything.
  */
 export function PaneCanvas({
-  width, height, draw, columns, layer, windowKey, compareDashes,
+  width, height, draw, columns, layer, windowKey, compareDashes, left = 0, originX = 0,
 }: {
   /** CSS pixels — the pane SVG's own viewBox width, which is its rendered width. */
   width: number;
@@ -31,6 +31,10 @@ export function PaneCanvas({
   windowKey?: string;
   /** The dash pattern of each compare line drawn — telling them apart is the point. */
   compareDashes?: string[];
+  /** Where the canvas sits in its container, in CSS pixels. */
+  left?: number;
+  /** The pane x its left edge shows, so `draw` works in pane coordinates. */
+  originX?: number;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [dpr, setDpr] = useState(1);
@@ -52,10 +56,10 @@ export function PaneCanvas({
     if (c.height !== h) c.height = h;
     const ctx = c.getContext("2d");
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.setTransform(dpr, 0, 0, dpr, -originX * dpr, 0);
+    ctx.clearRect(originX, 0, width, height);
     draw(ctx);
-  }, [width, height, dpr, draw]);
+  }, [width, height, dpr, draw, originX]);
 
   return (
     <canvas
@@ -66,8 +70,8 @@ export function PaneCanvas({
       data-layer={layer}
       data-window={windowKey}
       data-compare-dashes={compareDashes?.length ? compareDashes.join("|") : undefined}
-      className="pointer-events-none absolute left-0 top-0 block"
-      style={{ width: "100%", height }}
+      className="pointer-events-none absolute top-0 block"
+      style={{ left, width, height }}
     />
   );
 }
