@@ -817,7 +817,8 @@ try {
     s.on("Network.requestWillBeSent", (p) => {
       if (p.type === "Fetch" || p.type === "XHR") requests.push({ t: Date.now(), url: new URL(p.request.url) });
     });
-    const fmt = (f) => `${f.n} frames, p95 ${f.p95.toFixed(1)}ms, worst ${f.worst.toFixed(1)}ms, ${f.dropped} over 25ms`;
+    const fmt = (f) => `${f.n} frames, p95 ${f.p95.toFixed(1)}ms, worst ${f.worst.toFixed(1)}ms, ${f.dropped} over 25ms`
+      + (f.where.length ? ` (${f.where.join(", ")})` : "");
     const fsButton = `[...document.querySelectorAll('button[aria-pressed]')].find((b) => /⛶|⤢/.test(b.textContent))`;
     const state = async () => JSON.parse(await s.evaluate(`JSON.stringify((() => {
       const c = document.querySelector('canvas[data-layer]');
@@ -850,12 +851,35 @@ try {
       }
       await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x + steps * dx, y, button: "left", buttons: 0, clickCount: 1 });
     };
+    // Frame times, and where each slow one fell — before the press, after it, or
+    // after the release — so a dropped frame names the moment that cost it.
     const frames = async (fn) => {
-      await s.evaluate(`window.__ft = []; window.__on = true; (() => { let last = performance.now();
-        const f = (t) => { __ft.push(t - last); last = t; if (__on) requestAnimationFrame(f); }; requestAnimationFrame(f); })()`);
+      await s.evaluate(`(() => {
+        window.__ft = []; window.__slow = []; window.__marks = {}; window.__on = true;
+        if (!window.__marked) {
+          window.__marked = true;
+          addEventListener('pointerdown', (e) => { window.__marks.down = e.timeStamp; }, true);
+          addEventListener('pointerup', (e) => { window.__marks.up = e.timeStamp; }, true);
+        }
+        let last = performance.now();
+        const f = (t) => {
+          const d = t - last;
+          __ft.push(d);
+          if (d > 25 && __ft.length > 1) __slow.push({ at: last, d });
+          last = t;
+          if (__on) requestAnimationFrame(f);
+        };
+        requestAnimationFrame(f);
+      })()`);
       await fn();
-      return JSON.parse(await s.evaluate(`(() => { __on = false; const g = __ft.slice(1).sort((a, b) => a - b);
-        return JSON.stringify({ n: g.length, p95: g[Math.floor(g.length * 0.95)] ?? 0, worst: g[g.length - 1] ?? 0, dropped: g.filter((x) => x > 25).length }); })()`));
+      return JSON.parse(await s.evaluate(`(() => {
+        __on = false;
+        const g = __ft.slice(1).sort((a, b) => a - b), m = window.__marks;
+        const where = __slow.map((x) => (m.up !== undefined && x.at >= m.up ? 'release+' + Math.round(x.at - m.up)
+          : m.down !== undefined && x.at >= m.down ? 'press+' + Math.round(x.at - m.down) : 'before the press') + ' ' + x.d.toFixed(1) + 'ms');
+        return JSON.stringify({ n: g.length, p95: g[Math.floor(g.length * 0.95)] ?? 0, worst: g[g.length - 1] ?? 0,
+          dropped: g.filter((x) => x > 25).length, where });
+      })()`));
     };
 
     try {
