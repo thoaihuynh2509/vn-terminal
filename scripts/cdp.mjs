@@ -18,6 +18,21 @@ const OUT = process.env.OUT ?? "/tmp/shots";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** The x-axis labels a reader can see: ticks drawn past the plot edge, and clipped, do not count. */
+const AXIS_LABELS = `(() => {
+  const ticks = document.querySelector('svg[data-axis-ticks]')
+    ?? [...document.querySelectorAll('main svg')].filter((sv) => sv.getAttribute('height') === '20').pop();
+  if (!ticks) return [];
+  const box = (ticks.closest('[data-plot-clip]') ?? ticks).getBoundingClientRect();
+  return [...ticks.querySelectorAll('text')]
+    .filter((t) => { const r = t.getBoundingClientRect(); return r.right > box.left && r.left < box.right; })
+    .map((t) => t.textContent.trim());
+})()`;
+
+/** The indicator registry, by pane. Hand-kept: the `actions` sweep checks it against the menu. */
+const PRICE_IND = ["sma20", "sma50", "ema20", "bb", "vwap", "keltner", "donchian", "supertrend"];
+const OSC_IND = ["stoch", "cci", "willr", "adx", "mfi", "obv", "roc", "rsi", "macd", "atr"];
+
 /**
  * Candles drawn in the price pane, whichever way they are drawn.
  *
@@ -428,6 +443,7 @@ try {
       await sleep(400);
       const t0 = await metric("ScriptDuration");
       const l0 = await metric("LayoutDuration");
+      const k0 = await metric("TaskDuration");
       await startSampler();
       const wall0 = Date.now();
       await action();
@@ -435,11 +451,17 @@ try {
       const stats = JSON.parse(await stopSampler());
       const script = ((await metric("ScriptDuration")) - t0) * 1000;
       const layout = ((await metric("LayoutDuration")) - l0) * 1000;
+      // Main-thread time per pointer move. A 120Hz display gives a frame 8.3ms;
+      // frame deltas cannot show that here, because headless Chrome holds
+      // frames to 60Hz whatever the vsync flags say (measured: 17.5ms uncapped).
+      const task = ((await metric("TaskDuration")) - k0) * 1000;
+      const moves = Number((name.match(/\((\d+)/) || [])[1]) || 1;
       rows.push({
         config,
         interaction: name,
         "script ms": +script.toFixed(0),
         "layout ms": +layout.toFixed(0),
+        "main ms/move": +(task / moves).toFixed(1),
         "median frame": stats.median ?? 0,
         "p95 frame": stats.p95 ?? 0,
         "worst frame": stats.worst ?? 0,
@@ -497,8 +519,7 @@ try {
       rows.length = 0;
       const wide = process.env.PERF_WIDE === "1";
       const W = wide ? 2560 : 1728, H = wide ? 1440 : 1117;
-      const ALL_IND = ["sma20", "sma50", "ema20", "bb", "vwap", "keltner", "donchian", "supertrend",
-        "stoch", "cci", "willr", "adx", "mfi", "obv", "roc", "rsi", "macd", "atr"];
+      const ALL_IND = [...PRICE_IND, ...OSC_IND];
 
       // Seeded from the symbol's own bars so every drawing sits on real times,
       // in the shape `parseDrawings` accepts. 199 are priced well ABOVE the
@@ -613,7 +634,7 @@ try {
         const el = document.elementFromPoint(${px}, ${py});
         return el ? el.tagName.toLowerCase() + (el.getAttribute('role') ? '[' + el.getAttribute('role') + ']' : '') : 'none';
       })()`);
-      const selectedNow = () => s.evaluate("!!document.querySelector('svg[role=img] circle[r=\"4.5\"]')");
+      const selectedNow = () => s.evaluate("!!document.querySelector('svg[role=img] circle[r=\"4.5\"], svg[data-plot-overlay] circle[r=\"4.5\"]')");
       const checks = [];
       const checked = (label, px, py, act) => async () => {
         const under = await probe(px, py);
@@ -676,6 +697,19 @@ try {
       console.log(`  drawing grabbed: ${grip ? "yes" : "NO — none found"}; drawing actually moved: ${moved}`);
       console.table(rows);
       console.table(checks);
+
+      // A frame from the middle of a pan, where drawings must still sit on
+      // their candles. Not measured: a screenshot mid-gesture stalls frames.
+      if (process.env.PERF_SHOT) {
+        await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x: hbox.x, y: panY, button: "left", clickCount: 1, buttons: 1 });
+        for (let i = 1; i <= 20; i++) {
+          await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: hbox.x + i * 6, y: panY, button: "left", buttons: 1 });
+        }
+        await sleep(120);
+        console.log(`  mid-drag screenshot: ${await s.shot(`${process.env.PERF_SHOT}-middrag`, false)}`);
+        await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: hbox.x + 120, y: panY, button: "left", clickCount: 1, buttons: 0 });
+        await sleep(400);
+      }
 
       const profiled = process.env.PERF_PROFILE === "all"
         ? [["hover-sweep", hover], ["drag at Tất cả", () => drag(hbox.x, hbox.y, 6, 0)], ["pan, zoomed in", () => drag(hbox.x, hbox.y, 6, 0)]]
@@ -1175,6 +1209,7 @@ try {
     if (!secret) {
       skip("adding an oscillator adds a pane", NEEDS_SLOT);
       skip("removing it removes the pane", NEEDS_SLOT);
+      skip("every registry indicator draws for a pro reader", NEEDS_SLOT);
     } else {
       await clickInd("RSI (14)"); await sleep(400);
       const afterRsi = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
@@ -1182,6 +1217,60 @@ try {
       await clickInd("RSI (14)"); await sleep(400);
       const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
       check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
+
+      // Every indicator a pro reader can switch on, one at a time from a link.
+      // An oscillator must add a pane that draws; a price overlay must change
+      // what the price pane draws. Requested is not drawn.
+      const menuCount = await (async () => {
+        await s.evaluate(`(() => {
+          const b = [...document.querySelectorAll('button[aria-haspopup="menu"]')].find(x => x.textContent.includes('Chỉ báo'));
+          if (b && b.getAttribute('aria-expanded') === 'false') b.click();
+        })()`);
+        await sleep(150);
+        return s.evaluate("document.querySelectorAll('[role=menuitemcheckbox]').length");
+      })();
+      const swept = PRICE_IND.length + OSC_IND.length;
+      check("the indicator sweep covers the whole menu", menuCount === swept, `${menuCount} in the menu, ${swept} swept`);
+      const errs = [];
+      s.on("Runtime.exceptionThrown", (p) => errs.push((p.exceptionDetails?.exception?.description ?? "").split("\n")[0]));
+      await s.send("Runtime.enable");
+      const drawn = `JSON.stringify((() => {
+        const svgs = [...document.querySelectorAll('svg[role=img]')];
+        const canvases = [...document.querySelectorAll('canvas[data-pane-layer]')];
+        const blank = canvases.filter((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          for (let i = 3; i < d.length; i += 4 * 97) if (d[i]) return false; return true; }).length;
+        const price = document.querySelector('canvas[data-layer]');
+        let hash = 0;
+        if (price) { const d = price.toDataURL(); for (let i = 0; i < d.length; i += 7) hash = (hash * 31 + d.charCodeAt(i)) | 0; }
+        return { panes: svgs.length, labels: svgs.map((sv) => sv.getAttribute('aria-label')), canvases: canvases.length, blank, hash };
+      })())`;
+      const openWith = async (id) => {
+        await s.goto(`${BASE}/vi/bieu-do/VNM?tf=1D&ind=${id}`, { scheme: "light" });
+        await s.waitFor("!!document.querySelector('canvas[data-layer]')", { timeoutMs: 15000 });
+        await sleep(300);
+        return JSON.parse(await s.evaluate(drawn));
+      };
+      // Candles alone on the price pane (an oscillator draws elsewhere), and
+      // the pane count with only a price overlay on.
+      const candlesOnly = await openWith("stoch");
+      const basePanes = (await openWith("sma20")).panes;
+      const tail = (e0) => (errs.length > e0 ? `, ${errs[e0].slice(0, 80)}` : "");
+      for (const id of PRICE_IND) {
+        const e0 = errs.length;
+        const st = await openWith(id);
+        check(`pro: ${id} draws on the price pane`,
+          st.hash !== candlesOnly.hash && st.panes === basePanes && st.blank === 0 && errs.length === e0,
+          `${st.panes} panes, ${st.blank} of ${st.canvases} canvases blank${tail(e0)}`);
+      }
+      for (const id of OSC_IND) {
+        const e0 = errs.length;
+        const st = await openWith(id);
+        const added = st.labels.find((l) => !candlesOnly.labels.includes(l)) ?? st.labels[st.labels.length - 1];
+        check(`pro: ${id} adds a pane that draws`,
+          st.panes === basePanes + 1 && st.blank === 0 && errs.length === e0,
+          `${st.panes} panes (${added}), ${st.blank} of ${st.canvases} canvases blank${tail(e0)}`);
+      }
+      s.on("Runtime.exceptionThrown", () => {});
     }
 
     // ── load more history (P2-16) ─────────────────────────────────
@@ -1193,11 +1282,7 @@ try {
       // is reached the way a reader reaches it: pan to the edge of a narrower window.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&r=1Y", { scheme: "light" });
       await sleep(600);
-      const oldestLabel = `(() => {
-        const svgs = [...document.querySelectorAll('main svg')].filter(sv => sv.getAttribute('height') === '20');
-        const t = svgs[0]?.querySelector('text');
-        return t ? t.textContent.trim() : null;
-      })()`;
+      const oldestLabel = `(${AXIS_LABELS})[0] ?? null`;
       const startOldest = await s.evaluate(oldestLabel);
       // Count the history requests directly. The VISIBLE bar count is not the
       // signal — the window keeps its size, it is the reachable history that
@@ -1524,7 +1609,7 @@ try {
       await sleep(350);
       check("clicking a drawing selects it instead of deleting it", (await count()) === 1);
       const handles = await s.evaluate(
-        `document.querySelectorAll('svg[role=img] circle[stroke-width="2"]').length`);
+        `document.querySelectorAll('svg[role=img] circle[stroke-width="2"], svg[data-plot-overlay] circle[stroke-width="2"]').length`);
       check("a selected drawing shows grab handles", handles >= 1, `${handles} handles`);
 
       // Delete is now explicit, and undo brings it back — the property that
@@ -1786,11 +1871,7 @@ try {
       // The axis of every timeframe must be INFORMATIVE. The bug this guards:
       // a clock-only intraday axis printed "09:00" at all six ticks once the
       // window spanned more than a day, which tells the reader nothing.
-      const axis = async () => s.evaluate(`(() => {
-        const svgs = [...document.querySelectorAll('svg')].filter(s => s.getAttribute('height') === '20');
-        const last = svgs[svgs.length - 1];
-        return JSON.stringify(last ? [...last.querySelectorAll('text')].map(t => t.textContent.trim()) : []);
-      })()`);
+      const axis = async () => s.evaluate(`JSON.stringify(${AXIS_LABELS})`);
 
       for (const tf of ["5m", "1h", "1D"]) {
         await s.goto(BASE + `/vi/bieu-do/VNM?tf=${tf}`, { scheme: "light" });
@@ -1877,11 +1958,7 @@ try {
 
       // ── panning into the past ───────────────────────────────────
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
-      const axisFirst = async () => s.evaluate(`(() => {
-        const svgs = [...document.querySelectorAll('svg')].filter(s => s.getAttribute('height') === '20');
-        const t = svgs[svgs.length - 1]?.querySelector('text');
-        return t ? t.textContent.trim() : null;
-      })()`);
+      const axisFirst = async () => s.evaluate(`(${AXIS_LABELS})[0] ?? null`);
 
       const panFrom = await axisFirst();
       const rect = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
@@ -2269,7 +2346,7 @@ try {
 
       const fib = JSON.parse(await s.evaluate(`(() => {
         const d = JSON.parse(localStorage.getItem('drawings:VNM') || '[]');
-        const texts = [...document.querySelectorAll('svg[role=img] text')].map(t => t.textContent.trim());
+        const texts = [...document.querySelectorAll('svg[role=img] text, svg[data-plot-overlay] text')].map(t => t.textContent.trim());
         return JSON.stringify({ stored: d.length, kind: d[0]?.kind, labels: texts.filter(t => /%/.test(t)) });
       })()`));
       check("two clicks store one Fibonacci drawing", fib.stored === 1 && fib.kind === "fib", JSON.stringify(fib.stored));
@@ -2283,7 +2360,7 @@ try {
         const d = JSON.parse(localStorage.getItem('drawings:VNM') || '[]')[0];
         if (!d) return false;
         const lo = Math.min(d.p1, d.p2), hi = Math.max(d.p1, d.p2);
-        const nums = [...document.querySelectorAll('svg[role=img] text')]
+        const nums = [...document.querySelectorAll('svg[role=img] text, svg[data-plot-overlay] text')]
           .map(t => t.textContent.trim()).filter(t => /%/.test(t))
           .map(t => Number(t.split('·')[1].trim().replace(/[.]/g, '').replace(/[,]/, '.')));
         return nums.every(n => n >= lo - 0.5 && n <= hi + 0.5);
@@ -2348,7 +2425,7 @@ try {
 
         // The two edges must be drawn parallel on screen, not merely in the data.
         const parallelOnScreen = await s.evaluate(`(() => {
-          const g = [...document.querySelectorAll('svg[role=img] g')]
+          const g = [...document.querySelectorAll('svg[role=img] g, svg[data-plot-overlay] g')]
             .find(g => g.querySelector('polygon') && g.querySelectorAll('line').length === 2);
           if (!g) return null;
           const [a, b] = [...g.querySelectorAll('line')];
@@ -2360,7 +2437,7 @@ try {
           parallelOnScreen !== null && parallelOnScreen < 1e-6, String(parallelOnScreen));
 
         check("the channel band is filled",
-          (await s.evaluate(`!!document.querySelector('svg[role=img] polygon')`)) === true);
+          (await s.evaluate(`!!document.querySelector('svg[role=img] polygon, svg[data-plot-overlay] polygon')`)) === true);
 
         // Switching tools mid-draw must not leave a half-finished anchor behind.
         await s.evaluate("localStorage.removeItem('drawings:VNM')");
