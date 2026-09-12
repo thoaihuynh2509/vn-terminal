@@ -16,8 +16,10 @@ import type { Bar } from "@/lib/types";
 const HISTORY_RETRY_MS = 8_000;
 
 /** The bars the chart draws: the server's window, older history pulled in by panning, and the live bar. */
-export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isBusy }: {
-  barsProp: Bar[]; symbol: string; tf: string; fitAll: boolean; range: number; offset: number;
+export function useSeriesBars({ barsProp, symbol, tf, fitAll = false, range = 0, offset = 0, isBusy, edge }: {
+  barsProp: Bar[]; symbol: string; tf: string; fitAll?: boolean; range?: number; offset?: number;
+  /** The engine's left-edge verdict and the oldest bar it was reached against; stale once older bars are prepended. */
+  edge?: { near: boolean; count: number; oldest?: number };
   /** Whether a pointer gesture is under way; a polled bar waits for it to end. */
   isBusy: () => boolean;
 }) {
@@ -98,6 +100,8 @@ export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isB
    * values, at most one gesture later.
    */
   const heldLive = useRef<Bar | null>(null);
+  // A history page landing mid-gesture recomputes every indicator inside it, so it waits for the release too.
+  const heldPage = useRef<(() => void) | null>(null);
 
   /** What the chart actually draws: the server's window plus anything pulled in. */
   const bars = useMemo(() => {
@@ -122,7 +126,10 @@ export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isB
    * them, and the 429 that followed used to be permanent (see below). This
    * flips once, when the reader arrives, and then holds still.
    */
-  const nearEdge = wantsOlder({ fitAll, total: bars.length, range, offset });
+  const nearEdge = edge
+    ? edge.near && (edge.oldest === undefined || edge.oldest === bars[0]?.t)
+    : wantsOlder({ fitAll, total: bars.length, range, offset });
+  const windowCount = edge ? edge.count : range;
 
   /**
    * Pull in older history when the window reaches the left edge.
@@ -140,7 +147,7 @@ export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isB
     loading.current = true;
     const oldest = bars[0].t;
     const bucket = Math.max(60, (bars[1]?.t ?? oldest + 86400) - oldest);
-    const { to } = olderWindow(oldest, bucket, range || 120);
+    const { to } = olderWindow(oldest, bucket, Math.round(windowCount) || 120);
     const signal = histAbort.current?.signal;
 
     (async () => {
@@ -178,17 +185,20 @@ export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isB
         // Only the part the prop does not already carry is kept, so a server
         // re-render never duplicates what it re-sends.
         const known = new Set(barsProp.map((b) => b.t));
-        setPulled({ key: seriesKey, bars: merged.filter((b) => !known.has(b.t)), done: false });
+        const apply = () => setPulled({ key: seriesKey, bars: merged.filter((b) => !known.has(b.t)), done: false });
+        if (isBusy()) heldPage.current = apply;
+        else apply();
       } catch {
         // Offline or aborted: the chart keeps what it has and may try again.
       } finally {
-        loading.current = false;
+        // A held page keeps the flight open, or the same window would be asked for again.
+        if (!heldPage.current) loading.current = false;
       }
     })();
     // Deliberately no cleanup: `loading` already keeps this to one flight, and
     // the series-scoped controller above owns cancellation. A cleanup here
     // would abort on every dependency change instead.
-  }, [bars, barsProp, range, nearEdge, symbol, tf, exhausted, seriesKey, history.bars, retry]);
+  }, [bars, barsProp, windowCount, nearEdge, symbol, tf, exhausted, seriesKey, history.bars, retry, isBusy]);
 
   // Polling, only while the session is open, and only for the primary chart's
   // own symbol. A companion cell in a grid polls too — each is its own chart —
@@ -220,6 +230,7 @@ export function useSeriesBars({ barsProp, symbol, tf, fitAll, range, offset, isB
 
   const releaseHeld = useCallback(() => {
     if (heldLive.current) { takeLive(heldLive.current); heldLive.current = null; }
+    if (heldPage.current) { heldPage.current(); heldPage.current = null; loading.current = false; }
   }, [takeLive]);
 
   return { bars, releaseHeld };

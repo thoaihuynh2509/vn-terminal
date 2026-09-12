@@ -1,17 +1,14 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChartPro } from "@/components/chart/ChartPro";
+import { TradingChart } from "@/components/chart/tv/TradingChart";
 import { ChartRail } from "@/components/chart/ChartRail";
 import { ChartViewed } from "@/components/chart/ChartViewed";
 import { PageHeader } from "@/components/editorial";
 import { FeedBanner } from "@/components/FeedBanner";
 import { JsonLd } from "@/components/JsonLd";
 import { SymbolNarrative } from "@/components/SymbolNarrative";
-import { PageShell } from "@/components/layout";
 import { breadcrumbLd, symbolTrail } from "@/lib/seo";
 import { siteUrl } from "@/lib/site";
 import { LiveStamp } from "@/components/LiveStamp";
-import { SymbolSearchButton } from "@/components/SymbolSearch";
 import { WatchButton } from "@/components/WatchButton";
 import { Delta } from "@/components/Delta";
 import { getSession, sessionsAvailable } from "@/lib/auth/session";
@@ -20,18 +17,17 @@ import { activeProvider } from "@/lib/ask/provider";
 import { freeAsksToShow } from "@/lib/ask/meter";
 import { dateOnly, equityPrice } from "@/lib/format";
 import { rsi } from "@/lib/ta/indicators";
-import { getDict, PATHS, type Dict } from "@/lib/i18n";
+import { getDict, PATHS } from "@/lib/i18n";
 import { getBoard, getTimeframeBars, VN30 } from "@/lib/providers/vnstock";
 import { HOSE_SYMBOLS, bandOf, exchangeOf } from "@/lib/universe";
 import { foreignFlowAvailable, getForeignFlow } from "@/lib/providers/ssi";
 import { getCorpEvents } from "@/lib/providers/events";
 import { ChartSyncProvider } from "@/components/chart/ChartSync";
-import { SavedLayoutBar } from "@/components/chart/SavedLayoutBar";
 import { decodeTemplate } from "@/lib/chart/layouts";
 import { chartSource, seriesKey } from "@/lib/chart/series";
 import { dbAvailable, getDb } from "@/lib/db";
 import type { Bar } from "@/lib/types";
-import type { CompareSeries, RefLine } from "@/components/chart/ChartPro";
+import type { CompareSeries, RefLine } from "@/components/chart/chartShared";
 import { DEFAULT_TF, timeframe } from "@/lib/chart/timeframes";
 import { decodeView } from "@/lib/chart/view-state";
 import { parseCompare } from "@/lib/chart/compare";
@@ -39,6 +35,8 @@ import { getBreadth } from "@/lib/providers/breadth";
 import { alignBreadth } from "@/lib/breadth";
 import { INDICATORS } from "@/lib/ta/registry";
 import { TimeframePicker } from "@/components/chart/TimeframePicker";
+import { Workspace } from "@/components/chart/tv/Workspace";
+import type { PaneToggle } from "@/components/chart/tv/IndicatorsDialog";
 import type { Locale } from "@/lib/types";
 
 /**
@@ -315,17 +313,34 @@ export async function TerminalView({
     ? { rsi14: { current: rsiNow, ...(typeof rsiPrev === "number" ? { previous: rsiPrev } : {}) } }
     : undefined;
 
+  const terminalBase = `/${locale}/${PATHS.terminal[locale]}/${sym}`;
+  const tfQuery = `?tf=${encodeURIComponent(view.id)}`;
+  const gridQuery = cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : "";
+  const cmpQuery = compareSymbols.length ? `&cmp=${compareSymbols.join(",")}` : "";
+  const pricing = (plan: string) => `/${locale}/${PATHS.pricing[locale]}?plan=${plan}`;
+  const layoutDefaults = HOSE_SYMBOLS.filter((s) => s !== sym).slice(0, 3);
+  const layoutHref = (n: number) => {
+    if (n === 1) return `${terminalBase}${tfQuery}`;
+    const picks = [...extra, ...layoutDefaults].filter((v, i, a) => a.indexOf(v) === i).slice(0, n - 1);
+    return `${terminalBase}${tfQuery}&layout=${n}&s=${picks.join(",")}`;
+  };
+  // Breadth and foreign flow are panes the page switches on through the URL; the indicators dialog lists them.
+  const panes: PaneToggle[] = [
+    ...(!view.intraday ? [{
+      id: "breadth", label: dict.chart.breadthPane, on: !!breadth,
+      href: `${terminalBase}${tfQuery}${gridQuery}${cmpQuery}${foreign ? "&fr=1" : ""}${breadth ? "" : "&br=1"}`,
+      ...(multi ? {} : { lockHref: pricing("pro") }),
+    }] : []),
+    ...(foreignReady && !view.intraday ? [{
+      id: "foreign", label: dict.chart.foreignPane, on: !!foreign,
+      href: `${terminalBase}${tfQuery}${gridQuery}${cmpQuery}${breadth ? "&br=1" : ""}${foreign ? "" : "&fr=1"}`,
+      ...(canCompare ? {} : { lockHref: pricing("plus") }),
+    }] : []),
+  ];
+  const exchange = exchangeOf(sym);
+
   return (
-    <PageShell
-      rail={
-        <ChartRail
-          locale={locale} dict={dict} symbol={sym} board={board}
-          current={last.c} previous={prev.c} tier={tier} isMock={activeProvider() === "mock"}
-          initialTab={rail} indicators={rsi14}
-          freeAsks={freeAsksToShow(tier, session?.asks, sessionsAvailable())}
-        />
-      }
-    >
+    <>
       {/* The 60 VN30 chart URLs are the biggest cohort in the sitemap and had no
           structured data at all. A trail, not a quote: the graph stays true
           whatever the market did, and the feed may lag. */}
@@ -334,250 +349,97 @@ export async function TerminalView({
         symbol={sym} tf={view.id} intraday={!!view.intraday} layout={cells}
         tier={tier} hasCmp={compare.length > 0} hasFr={!!foreign}
       />
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="font-mono text-[30px] font-semibold tracking-tight">{sym}</h1>
-            <WatchButton symbol={sym} addLabel={dict.stocks.addWatch} removeLabel={dict.stocks.removeWatch} />
-            <SymbolSearchButton label={dict.chart.changeSymbol} compact />
-          </div>
-          {/* A recorded series says where its history STARTS, because it has no
-              upstream past and a chart that stops abruptly at the left edge
-              otherwise reads as missing data rather than as the beginning. */}
-          <p className="mt-2 font-mono text-[12px] text-muted">
-            {recorded
-              ? dict.chart.seriesFrom.replace("{d}", dateOnly(bars[0].t, locale))
-              : `${exchangeOf(sym) ?? dict.common.noData} · ${dict.common.unit}: ${dict.common.thousandVnd}`}
-          </p>
-          {/* Session-aware: the chart was the one live surface with no refresh at
-              all, but it must not pulse "live" at a price frozen since 15:00. */}
-          <div className="mt-2"><LiveStamp locale={locale} sessionAware /></div>
-        </div>
-        <div className="text-right">
-          <div className="tnum font-mono text-[32px] font-medium leading-none tracking-tight">{equityPrice(last.c, locale)}</div>
-          <div className="mt-2 text-[14px]"><Delta change={change} changePct={changePct} locale={locale} /></div>
-        </div>
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2.5">
-        <TimeframePicker
-          current={view.id}
-          base={`/${locale}/${PATHS.terminal[locale]}/${sym}`}
-          extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
-          dict={dict}
-          tier={tier}
-          pricingHref={`/${locale}/${PATHS.pricing[locale]}?plan=plus`}
-        />
-        <LayoutSwitcher locale={locale} dict={dict} symbol={sym} extra={extra} layout={cells} multi={multi} tf={view.id} />
-        {/* Saved setups are a click away here; the rail stays where they are
-            managed. Switching between them is a thing a reader does constantly
-            and it should not cost opening a panel first. */}
-        <SavedLayoutBar locale={locale} dict={dict} current={sym} />
-        <CompareToggle
-          locale={locale} dict={dict} symbol={sym} tf={view.id}
-          on={compare.length > 0} canCompare={canCompare} frOn={!!foreign}
-          extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
-        />
-        {!view.intraday && (
-          <BreadthToggle
-            locale={locale} dict={dict} symbol={sym} tf={view.id}
-            on={!!breadth} canBreadth={can(tier, "chart:multi")}
-            extraQuery={`${cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}${compare.length ? `&cmp=${compare.map((c) => c.label).join(",")}` : ""}${foreign ? "&fr=1" : ""}`}
-          />
-        )}
-        {foreignReady && !view.intraday && (
-          <ForeignToggle
-            locale={locale} dict={dict} symbol={sym} tf={view.id}
-            on={!!foreign} canForeign={canCompare} cmpOn={!!compare}
-            extraQuery={cells > 1 ? `&layout=${cells}&s=${companions.join(",")}` : ""}
-          />
-        )}
-      </div>
-
-      {/* One provider around the whole grid: the cells share the hovered MOMENT,
-          so a crosshair on one lands on the same session in every other. A
-          single chart sits inside it too; only ChartPro's `CrosshairSync` leaf
-          reads the shared state, so a hover re-renders nothing else. */}
-      <ChartSyncProvider>
-      <div className={`grid gap-4 ${cells > 1 ? "xl:grid-cols-2" : ""}`}>
-        <div className="card min-w-0 p-5">
-          <ChartPro bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} events={events} initialView={chartView} tf={view.id} />
-        </div>
-        {companions.map((sym2, i) =>
-          companionBars[i].length ? (
-            <div key={sym2} className="card min-w-0 p-5">
-              <h2 className="mb-3 font-mono text-[15px] font-semibold tracking-tight">{sym2}</h2>
-              {/* Companions get their OWN ceiling/floor, computed from their own
-                  previous close and their own exchange's band. They were drawn
-                  bare, which made a 4-up grid three charts missing the first
-                  thing a VN trader looks for. */}
-              <ChartPro bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday} refLines={companionRefs[i]} events={companionEvents[i]} tf={view.id} />
+      <h1 className="sr-only">{sym} — {dict.stocks.chartTitle}</h1>
+      <Workspace
+        dict={dict} symbol={sym}
+        interval={
+          <TimeframePicker key="interval" variant="menu" current={view.id} base={terminalBase} extraQuery={gridQuery}
+            dict={dict} tier={tier} pricingHref={pricing("plus")} />
+        }
+        compare={{
+          current: compareSymbols,
+          base: `${terminalBase}${tfQuery}${gridQuery}${foreign ? "&fr=1" : ""}${breadth ? "&br=1" : ""}`,
+          allowed: canCompare, lockHref: pricing("plus"),
+          suggestions: ["VNINDEX", "VN30", ...HOSE_SYMBOLS].filter((s, i, a) => s !== sym && a.indexOf(s) === i),
+        }}
+        panes={panes}
+        layouts={[1, 2, 4].map((n) => ({ n, href: n === 1 || multi ? layoutHref(n) : null }))}
+        layout={cells} layoutLockHref={pricing("pro")} pricingHref={pricing("plus")}
+        rangeLink={{ base: terminalBase, extraQuery: gridQuery }}
+        panel={
+          <>
+            <section className="hidden border-b border-tv-border p-4 text-tv-text lg:block">
+              <div className="flex items-center gap-2">
+                <span className="text-[15px] font-semibold">{sym}</span>
+                <WatchButton symbol={sym} addLabel={dict.stocks.addWatch} removeLabel={dict.stocks.removeWatch} />
+              </div>
+              {/* A recorded series says where its history STARTS: a chart that stops at the
+                  left edge otherwise reads as missing data rather than as the beginning. */}
+              <p className="mt-1 text-[12px] text-tv-text-2">
+                {recorded
+                  ? dict.chart.seriesFrom.replace("{d}", dateOnly(bars[0].t, locale))
+                  : `${exchange ?? dict.common.noData} · ${dict.common.unit}: ${dict.common.thousandVnd}`}
+              </p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="tnum text-[26px] font-semibold leading-none">{equityPrice(last.c, locale)}</span>
+                <span className="text-[14px]"><Delta change={change} changePct={changePct} locale={locale} /></span>
+              </div>
+              <div className="mt-2"><LiveStamp locale={locale} sessionAware /></div>
+            </section>
+            <ChartRail
+              locale={locale} dict={dict} symbol={sym} board={board}
+              current={last.c} previous={prev.c} tier={tier} isMock={activeProvider() === "mock"}
+              initialTab={rail} indicators={rsi14}
+              freeAsks={freeAsksToShow(tier, session?.asks, sessionsAvailable())}
+            />
+          </>
+        }
+      >
+        {/* One provider around the whole grid: the cells share the hovered MOMENT,
+            so a crosshair on one lands on the same session in every other. */}
+        <ChartSyncProvider>
+          <div className={`grid h-full ${cells === 2 ? "grid-cols-2" : cells === 4 ? "grid-cols-2 grid-rows-2" : ""}`}>
+            <div data-chart-cell className="min-h-0 min-w-0">
+              <TradingChart bars={bars} symbol={sym} locale={locale} dict={dict} tier={tier} digits={2} intraday={view.intraday}
+                refLines={refLines} compare={compare} foreign={foreign} breadth={breadth} events={events} initialView={chartView}
+                tf={view.id} exchange={exchange} role="primary" />
             </div>
-          ) : (
-            <div key={sym2} className="card p-5"><FeedBanner dict={dict} /></div>
-          ),
+            {companions.map((sym2, i) =>
+              companionBars[i].length ? (
+                <div key={sym2} data-chart-cell className="min-h-0 min-w-0 border-l border-t border-tv-border">
+                  {/* Companions get their OWN ceiling/floor, from their own previous close and exchange band. */}
+                  <TradingChart bars={companionBars[i]} symbol={sym2} locale={locale} dict={dict} tier={tier} digits={2}
+                    intraday={view.intraday} refLines={companionRefs[i]} events={companionEvents[i]} tf={view.id}
+                    exchange={exchangeOf(sym2)} role="cell" />
+                </div>
+              ) : (
+                <div key={sym2} data-chart-cell className="border-l border-t border-tv-border p-5"><FeedBanner dict={dict} /></div>
+              ),
+            )}
+          </div>
+        </ChartSyncProvider>
+      </Workspace>
+
+      {/* Sixty VN30 chart URLs are the long-tail play; this is what a crawler reads.
+          Equities only, and daily bars only: the canonical URL carries no timeframe. */}
+      <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
+        {source.kind === "equity" && !view.intraday && (
+          <SymbolNarrative
+            dict={dict}
+            input={{
+              symbol: sym,
+              locale,
+              bars,
+              exchange,
+              band,
+              vn30: (VN30 as readonly string[]).includes(sym),
+              ...(typeof rsiNow === "number" ? { rsi14: rsiNow } : {}),
+              foreign: foreignDays,
+              events,
+            }}
+          />
         )}
       </div>
-      </ChartSyncProvider>
-
-      {/* Sixty VN30 chart URLs are the long-tail play and, until now, none of
-          them had a sentence to read. Equities only, and daily bars only: the
-          canonical URL carries no timeframe, so this is what a crawler sees. */}
-      {source.kind === "equity" && !view.intraday && (
-        <SymbolNarrative
-          dict={dict}
-          input={{
-            symbol: sym,
-            locale,
-            bars,
-            exchange: exchangeOf(sym),
-            band,
-            vn30: (VN30 as readonly string[]).includes(sym),
-            ...(typeof rsiNow === "number" ? { rsi14: rsiNow } : {}),
-            foreign: foreignDays,
-            events,
-          }}
-        />
-      )}
-
-    </PageShell>
-  );
-}
-
-
-/**
- * Layout control. The chosen symbols live in the URL so a workspace is
- * shareable and survives a reload — the alternative, hidden client state, makes
- * a multi-chart setup impossible to send to a colleague.
- */
-function LayoutSwitcher({
-  locale, dict, symbol, extra, layout, multi, tf,
-}: {
-  locale: Locale; dict: Dict; symbol: string; extra: string[]; layout: number; multi: boolean; tf: string;
-}) {
-  // Companions for an empty grid slot come from the large-cap basket, which
-  // is what a reader most likely wants beside their symbol.
-  const defaults = HOSE_SYMBOLS.filter((s) => s !== symbol).slice(0, 3);
-  const href = (n: number) => {
-    const path = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}`;
-    if (n === 1) return path;
-    const picks = [...extra, ...defaults].filter((v, i, a) => a.indexOf(v) === i).slice(0, n - 1);
-    return `${path}&layout=${n}&s=${picks.join(",")}`;
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted">{dict.chart.layout}</span>
-      <div role="group" aria-label={dict.chart.layout} className="flex overflow-hidden rounded-[9px] border border-line bg-surface">
-        {[1, 2, 4].map((n) => {
-          const locked = !multi && n > 1;
-          const active = layout === n;
-          return locked ? (
-            <span key={n} title={dict.chart.layoutLocked}
-              className="cursor-not-allowed px-3 py-1.5 font-mono text-[12px] text-muted opacity-60">
-              🔒 {n}
-            </span>
-          ) : (
-            <Link key={n} href={href(n)} aria-current={active ? "page" : undefined}
-              className={`px-3 py-1.5 font-mono text-[12px] font-medium ${
-                active ? "bg-btn text-btn-ink" : "text-ink-2 hover:bg-page hover:text-ink"
-              }`}>
-              {n}
-            </Link>
-          );
-        })}
-      </div>
-      {!multi && (
-        <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=pro`} className="text-[12px] font-medium text-accent hover:underline">
-          {dict.chart.layoutLocked} <span aria-hidden="true">→</span>
-        </Link>
-      )}
-    </div>
-  );
-}
-
-/**
- * VNINDEX overlay toggle. URL-driven (`?cmp=1`) so the compared view is
- * shareable and re-renders server-side. Gated: a non-Plus reader sees a lock
- * that upsells rather than a control that 402s.
- */
-function CompareToggle({
-  locale, dict, symbol, tf, on, canCompare, frOn, extraQuery,
-}: {
-  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canCompare: boolean; frOn: boolean; extraQuery: string;
-}) {
-  // Preserve the foreign-flow flag so the two overlays are independent toggles.
-  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}${frOn ? "&fr=1" : ""}`;
-  if (!canCompare) {
-    return (
-      <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.compareLock}
-        className="inline-flex items-center gap-1.5 rounded-[9px] border border-dashed border-gold-line bg-gold-soft px-3 py-1.5 text-[12px] font-medium text-accent">
-        🔒 {dict.chart.compareOn}
-      </Link>
-    );
-  }
-  return (
-    <Link
-      href={on ? base : `${base}&cmp=1`}
-      aria-pressed={on}
-      className={`rounded-[9px] border px-3 py-1.5 text-[12px] font-medium ${
-        on ? "border-btn bg-btn text-btn-ink" : "border-line bg-surface text-ink-2 hover:border-ink hover:text-ink"
-      }`}
-    >
-      {on ? dict.chart.compareOff : dict.chart.compareOn}
-    </Link>
-  );
-}
-
-/** VN30 breadth pane toggle (?br=1). Pro — it is the flagship of that tier. */
-function BreadthToggle({
-  locale, dict, symbol, tf, on, canBreadth, extraQuery,
-}: {
-  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canBreadth: boolean; extraQuery: string;
-}) {
-  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}`;
-  if (!canBreadth) {
-    return (
-      <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=pro`} title={dict.chart.breadthLock}
-        className="inline-flex items-center gap-1.5 rounded-[9px] border border-dashed border-gold-line bg-gold-soft px-3 py-1.5 text-[12px] font-medium text-accent">
-        🔒 {dict.chart.breadthOn}
-      </Link>
-    );
-  }
-  return (
-    <Link href={on ? base : `${base}&br=1`} aria-pressed={on}
-      className={`rounded-[9px] border px-3 py-1.5 text-[12px] font-medium ${
-        on ? "border-btn bg-btn text-btn-ink" : "border-line bg-surface text-ink-2 hover:border-ink hover:text-ink"
-      }`}>
-      {on ? dict.chart.breadthOff : dict.chart.breadthOn}
-    </Link>
-  );
-}
-
-/** Foreign net buy/sell pane toggle (?fr=1). Same URL-driven, gated pattern. */
-function ForeignToggle({
-  locale, dict, symbol, tf, on, canForeign, cmpOn, extraQuery,
-}: {
-  locale: Locale; dict: Dict; symbol: string; tf: string; on: boolean; canForeign: boolean; cmpOn: boolean; extraQuery: string;
-}) {
-  const base = `/${locale}/${PATHS.terminal[locale]}/${symbol}?tf=${encodeURIComponent(tf)}${extraQuery}${cmpOn ? "&cmp=1" : ""}`;
-  if (!canForeign) {
-    return (
-      <Link href={`/${locale}/${PATHS.pricing[locale]}?plan=plus`} title={dict.chart.foreignLock}
-        className="inline-flex items-center gap-1.5 rounded-[9px] border border-dashed border-gold-line bg-gold-soft px-3 py-1.5 text-[12px] font-medium text-accent">
-        🔒 {dict.chart.foreignOn}
-      </Link>
-    );
-  }
-  return (
-    <Link
-      href={on ? base : `${base}&fr=1`}
-      aria-pressed={on}
-      className={`rounded-[9px] border px-3 py-1.5 text-[12px] font-medium ${
-        on ? "border-btn bg-btn text-btn-ink" : "border-line bg-surface text-ink-2 hover:border-ink hover:text-ink"
-      }`}
-    >
-      {on ? dict.chart.foreignOff : dict.chart.foreignOn}
-    </Link>
+    </>
   );
 }

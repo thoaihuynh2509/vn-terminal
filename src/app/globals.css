@@ -62,6 +62,22 @@
   --btn: #12161b;
   --btn-hover: #2a3038;
   --btn-ink: #ffffff;
+  /* The chart workspace follows TradingView's own palette, not the site's. */
+  --tv-bg: #ffffff;
+  --tv-border: #e0e3eb;
+  --tv-text: #131722;
+  --tv-text-2: #6a6d78;
+  --tv-hover: #f0f3fa;
+  --tv-accent: #2962ff;
+  --tv-accent-soft: #e3effd;
+  --tv-grid: #f3f4f6;
+  --tv-cross: #9598a1;
+  --tv-label: #131722;
+  --tv-up: #089981;
+  --tv-down: #f23645;
+  --tv-up-text: #067a67;
+  --tv-down-text: #d1202f;
+  --tv-accent-text: #1e53e5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -95,6 +111,21 @@
     --btn: #f5f6f7;
     --btn-hover: #ffffff;
     --btn-ink: #0d0d0d;
+    --tv-bg: #0f0f0f;
+    --tv-border: #2e2e2e;
+    --tv-text: #dbdbdb;
+    --tv-text-2: #8c8c8c;
+    --tv-hover: #2e2e2e;
+    --tv-accent: #2962ff;
+    --tv-accent-soft: #142e61;
+    --tv-grid: #1c1c1c;
+    --tv-cross: #6a6d78;
+    --tv-label: #363a45;
+    --tv-up: #089981;
+    --tv-down: #f23645;
+    --tv-up-text: #089981;
+    --tv-down-text: #f23645;
+    --tv-accent-text: #6e9bff;
   }
 }
 
@@ -128,9 +159,40 @@
   --btn: #f5f6f7;
   --btn-hover: #ffffff;
   --btn-ink: #0d0d0d;
+
+  --tv-bg: #0f0f0f;
+  --tv-border: #2e2e2e;
+  --tv-text: #dbdbdb;
+  --tv-text-2: #8c8c8c;
+  --tv-hover: #2e2e2e;
+  --tv-accent: #2962ff;
+  --tv-accent-soft: #142e61;
+  --tv-grid: #1c1c1c;
+  --tv-cross: #6a6d78;
+  --tv-label: #363a45;
+  --tv-up: #089981;
+  --tv-down: #f23645;
+  --tv-up-text: #089981;
+  --tv-down-text: #f23645;
+  --tv-accent-text: #6e9bff;
 }
 
 @theme inline {
+  --color-tv-bg: var(--tv-bg);
+  --color-tv-border: var(--tv-border);
+  --color-tv-text: var(--tv-text);
+  --color-tv-text-2: var(--tv-text-2);
+  --color-tv-hover: var(--tv-hover);
+  --color-tv-accent: var(--tv-accent);
+  --color-tv-accent-soft: var(--tv-accent-soft);
+  --color-tv-grid: var(--tv-grid);
+  --color-tv-cross: var(--tv-cross);
+  --color-tv-label: var(--tv-label);
+  --color-tv-up: var(--tv-up);
+  --color-tv-down: var(--tv-down);
+  --color-tv-up-text: var(--tv-up-text);
+  --color-tv-down-text: var(--tv-down-text);
+  --color-tv-accent-text: var(--tv-accent-text);
   --color-page: var(--page);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -342,4 +404,10 @@ body {
 .cv-row {
   content-visibility: auto;
   contain-intrinsic-size: auto 22px;
+}
+
+/* The chart page is a full-width workspace, as TradingView's is; :has() keeps every other page in its column. */
+main:has(> .tv-workspace) {
+  max-width: none;
+  padding: 0;
 }

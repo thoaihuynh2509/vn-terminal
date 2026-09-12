@@ -3,8 +3,14 @@
 import { useSyncExternalStore } from "react";
 
 /** The tokens a canvas layer paints with. SVG reads these as `var(--…)`; canvas cannot. */
-const TOKENS = ["up", "down", "surface", "accent", "muted", "ink-2", "grid"] as const;
+const TOKENS = ["up", "down", "surface", "accent", "muted", "ink-2", "grid", "ink", "line", "page", "axis", "up-text", "down-text", "accent-text"] as const;
 export type ChartToken = (typeof TOKENS)[number];
+/** The chart paints in TradingView's palette, which the workspace tokens carry for both themes. */
+const TV_VAR: Record<ChartToken, string> = {
+  up: "--tv-up", down: "--tv-down", surface: "--tv-bg", accent: "--tv-accent", muted: "--tv-cross",
+  "ink-2": "--tv-text-2", grid: "--tv-grid", ink: "--tv-label", line: "--tv-border", page: "--tv-bg", axis: "--tv-text",
+  "up-text": "--tv-up-text", "down-text": "--tv-down-text", "accent-text": "--tv-accent-text",
+};
 export type ChartColors = Record<ChartToken, string>;
 
 /**
@@ -32,7 +38,7 @@ function read(): ChartColors {
   if (!dirty && cached) return cached;
   dirty = false;
   const cs = getComputedStyle(document.documentElement);
-  const next = Object.fromEntries(TOKENS.map((t) => [t, cs.getPropertyValue(`--${t}`).trim()])) as ChartColors;
+  const next = Object.fromEntries(TOKENS.map((t) => [t, cs.getPropertyValue(TV_VAR[t]).trim()])) as ChartColors;
   if (cached && TOKENS.every((t) => cached![t] === next[t])) return cached;
   cached = next;
   return next;
@@ -55,4 +61,9 @@ export function useChartColors(): ChartColors | null {
 /** A plot colour (`COLOR_VAR` key) as a literal. */
 export function plotColor(colors: ChartColors, key: "accent" | "up" | "down" | "muted" | "ink-2"): string {
   return colors[key];
+}
+
+/** A plot's colour for text beside it: the same hue, at a strength small type can be read at. */
+export function textColor(colors: ChartColors, key: "accent" | "up" | "down" | "muted" | "ink-2"): string {
+  return key === "accent" ? colors["accent-text"] : key === "up" ? colors["up-text"] : key === "down" ? colors["down-text"] : colors["ink-2"];
 }

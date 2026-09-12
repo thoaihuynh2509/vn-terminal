@@ -14,17 +14,17 @@
  */
 import { INDICATOR_LIMIT, can, type Tier } from "../auth/entitlement.ts";
 import { parseRef } from "../ta/params.ts";
-import { RANGE_PRESETS, type RangePreset } from "./ranges.ts";
+import { isTvRange, type TvRange } from "./range-interval.ts";
 import { DEFAULT_SCALE, isScale, type ScaleId } from "./scale.ts";
 
-export type ChartTypeId = "candle" | "line" | "area";
-const TYPES: ChartTypeId[] = ["candle", "line", "area"];
+import { isChartType, type ChartTypeId } from "./chart-types.ts";
+export type { ChartTypeId } from "./chart-types.ts";
 
 export interface ChartView {
   type: ChartTypeId;
   /** Indicator tokens (`id` or `id:period`), trimmed to what this tier may show. */
   ind: string[];
-  range: RangePreset | null;
+  range: TvRange | null;
   /** Price axis: linear, logarithmic or percent change. Free for every tier. */
   scale: ScaleId;
 }
@@ -56,13 +56,11 @@ export function decodeView(
   params: { type?: string | null; ind?: string | null; r?: string | null; sc?: string | null },
   { tier, known, isFree }: DecodeOptions,
 ): ChartView {
-  const type = TYPES.includes(params.type as ChartTypeId)
-    ? (params.type as ChartTypeId)
+  const type = isChartType(params.type)
+    ? params.type
     : DEFAULT_VIEW.type;
 
-  const range = RANGE_PRESETS.includes(params.r as RangePreset)
-    ? (params.r as RangePreset)
-    : null;
+  const range = isTvRange(params.r) ? params.r : null;
 
   // Not tier-gated: reading a chart on the right axis is a basic, and a gate
   // here would make a shared link open on a different scale than it was sent.

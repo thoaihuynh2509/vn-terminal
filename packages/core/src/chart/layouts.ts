@@ -16,9 +16,10 @@
  * browser or a database.
  */
 import { LAYOUT_LIMIT, type Tier } from "../auth/entitlement.ts";
-import type { RangePreset } from "./ranges.ts";
+import { isTvRange, type TvRange } from "./range-interval.ts";
 import { DEFAULT_SCALE, isScale, type ScaleId } from "./scale.ts";
 import type { ChartTypeId } from "./view-state.ts";
+import { isChartType } from "./chart-types.ts";
 
 export interface SavedLayout {
   /** Reader-chosen, and the document key on the server. */
@@ -31,7 +32,7 @@ export interface SavedLayout {
   type: ChartTypeId;
   /** Indicator tokens (`rsi`, `rsi:21`). */
   ind: string[];
-  range: RangePreset | null;
+  range: TvRange | null;
   /** Price axis. */
   scale: ScaleId;
   /** Compare overlay symbols. */
@@ -87,9 +88,9 @@ export function parseLayout(v: unknown): SavedLayout | null {
     extra: strArr(o.extra, 3).map((s) => s.toUpperCase()),
     grid,
     tf: str(o.tf) || "1D",
-    type: o.type === "line" || o.type === "area" ? o.type : "candle",
+    type: isChartType(o.type) ? o.type : "candle",
     ind: strArr(o.ind, 40),
-    range: typeof o.range === "string" ? (o.range as RangePreset) : null,
+    range: isTvRange(o.range) ? o.range : null,
     scale: isScale(o.scale) ? o.scale : DEFAULT_SCALE,
     cmp: strArr(o.cmp, 3).map((s) => s.toUpperCase()),
     fr: o.fr === true,

@@ -18,52 +18,108 @@ const OUT = process.env.OUT ?? "/tmp/shots";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** The x-axis labels a reader can see: ticks drawn past the plot edge, and clipped, do not count. */
-const AXIS_LABELS = `(() => {
-  const ticks = document.querySelector('svg[data-axis-ticks]')
-    ?? [...document.querySelectorAll('main svg')].filter((sv) => sv.getAttribute('height') === '20').pop();
-  if (!ticks) return [];
-  const box = (ticks.closest('[data-plot-clip]') ?? ticks).getBoundingClientRect();
-  return [...ticks.querySelectorAll('text')]
-    .filter((t) => { const r = t.getBoundingClientRect(); return r.right > box.left && r.left < box.right; })
-    .map((t) => t.textContent.trim());
+/** The chart host. Lightweight Charts paints into it; what canvas cannot expose, the chart publishes on it as `data-*`. */
+const HOST = `document.querySelector('div[role=img][tabindex]')`;
+/**
+ * Switch on the host's paint trace and give it a moment to publish: the
+ * drawings it painted (`data-drawn`), the axis ticks in view (`data-ticks`),
+ * prices sampled down the price pane (`data-scale`) and the percent ticks
+ * (`data-pct`). A reader never sets it.
+ */
+const TRACE_ON = `(async () => { const h = ${HOST}; if (!h) return false; h.dataset.trace = '1'; await new Promise((r) => setTimeout(r, 450)); return true; })()`;
+/** The time-axis labels in view, as the chart's own formatter printed them. */
+const AXIS_LABELS = `JSON.parse(${HOST}?.dataset.ticks || '[]')`;
+/** What the drawings layer painted on its last frame. */
+const DRAWN = `JSON.parse(${HOST}?.dataset.drawn || '{"drawn":[],"handles":0}')`;
+/** Panes as the engine lays them out: a table row each whose plot cell holds a canvas, less the time axis. */
+const PANES = `(() => { const h = ${HOST}; return h ? [...h.querySelectorAll('table tr')].filter((tr) => tr.children[1]?.querySelector('canvas')).length - 1 : 0; })()`;
+/** The price pane's legend, as a reader reads it, and one of its values by slot. */
+const LEGEND = `(${HOST}?.parentElement?.querySelector('.tnum')?.innerText ?? '')`;
+const LEGEND_SLOT = (k) => `(${HOST}?.parentElement?.querySelector('[data-lv="${k}"]')?.textContent ?? '')`;
+/** True once the chart has drawn: its host holds a canvas. */
+const CHART_DRAWN = `!!${HOST}?.querySelector('canvas')`;
+/** Pick a chart style the way a reader does: open the style menu, then choose. */
+const PICK_STYLE = (label) => `(async () => {
+  document.querySelector('button[aria-haspopup=menu][aria-label^="Kiểu biểu đồ"]')?.click();
+  await new Promise((r) => setTimeout(r, 150));
+  const item = [...document.querySelectorAll('[role=menuitemradio]')].find((b) => b.textContent.trim() === ${JSON.stringify(label)});
+  item?.click();
+  return !!item;
 })()`;
+/** The indicators dialog, opened if closed. */
+const OPEN_INDICATORS = `(async () => {
+  const b = [...document.querySelectorAll('button[aria-haspopup=dialog]')].find((x) => x.textContent.includes('Chỉ báo'));
+  if (b && b.getAttribute('aria-expanded') !== 'true') b.click();
+  await new Promise((r) => setTimeout(r, 150));
+  return !!document.querySelector('[role=dialog][aria-label="Chỉ báo"]');
+})()`;
+const INDICATOR_ROWS = `[...document.querySelectorAll('[role=dialog][aria-label="Chỉ báo"] ul button[aria-pressed]')]`;
+const SHARE_MENU = `document.querySelector('button[aria-haspopup=menu][aria-label="Chia sẻ"], button[aria-haspopup=menu][aria-label="Đã chép!"]')`;
 
 /** The indicator registry, by pane. Hand-kept: the `actions` sweep checks it against the menu. */
 const PRICE_IND = ["sma20", "sma50", "ema20", "bb", "vwap", "keltner", "donchian", "supertrend"];
 const OSC_IND = ["stoch", "cci", "willr", "adx", "mfi", "obv", "roc", "rsi", "macd", "atr"];
 
 /**
- * Candles drawn in the price pane, whichever way they are drawn.
+ * The price pane's pixels, classified against the theme's own colours.
  *
- * The dense layer may be canvas, which has no nodes to count, so it publishes
- * its column count; SVG is counted from its body subpaths — rectangles, `M…H`,
- * so a trade marker's closed diamond cannot pass for a candle. The price pane
- * only: volume draws filled bars too, and counting both would let a broken
- * candle pane pass on volume alone.
+ * Candles paint opaque in --up/--down, volume in the same hues at 45% alpha, a
+ * line or area series in --accent. Rows crossed by a full-width level (ceiling,
+ * floor, last price) are left out of the candle count, so a price line cannot
+ * pass for a column of candles. Tokens are resolved by painting them, so any
+ * CSS colour syntax works.
  */
-const CANDLE_COLUMNS = `(() => {
-  const c = document.querySelector('canvas[data-layer="candles"]');
-  if (c) return Number(c.dataset.columns) || 0;
-  const pane = document.querySelector('svg[role=img]');
-  if (!pane) return 0;
-  return [...pane.querySelectorAll('path')]
-    .map((p) => p.getAttribute('d') || '')
-    .filter((d) => /^M[\\d.-]+,[\\d.-]+H/.test(d))
-    .reduce((n, d) => n + (d.match(/M/g) || []).length, 0);
+const PLOT_PIXELS = `(() => {
+  const h = ${HOST};
+  const c = h && [...h.querySelectorAll('table tr')][0]?.children[1]?.querySelector('canvas');
+  if (!c || !c.width) return null;
+  const css = getComputedStyle(document.documentElement);
+  const swatch = document.createElement('canvas').getContext('2d');
+  const tone = (name) => {
+    swatch.clearRect(0, 0, 1, 1);
+    swatch.fillStyle = css.getPropertyValue(name).trim();
+    swatch.fillRect(0, 0, 1, 1);
+    return [...swatch.getImageData(0, 0, 1, 1).data].slice(0, 3);
+  };
+  const up = tone('--tv-up'), down = tone('--tv-down'), accent = tone('--tv-accent');
+  const W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data;
+  const is = (i, k) => Math.abs(d[i] - k[0]) < 14 && Math.abs(d[i + 1] - k[1]) < 14 && Math.abs(d[i + 2] - k[2]) < 14;
+  const candle = (i) => d[i + 3] > 240 && (is(i, up) || is(i, down));
+  const level = new Uint8Array(H);
+  for (let y = 0; y < H; y++) {
+    let n = 0;
+    for (let x = 0; x < W; x += 3) if (candle((y * W + x) * 4)) n++;
+    if (n > W / 12) level[y] = 1;
+  }
+  let candles = 0, run = false, volume = 0, line = 0;
+  for (let x = 0; x < W; x++) {
+    let hit = false;
+    for (let y = 0; y < H; y += 2) {
+      const i = (y * W + x) * 4;
+      if (candle(i)) { if (!level[y]) hit = true; }
+      else if (d[i + 3] > 80 && d[i + 3] < 150 && (is(i, up) || is(i, down))) volume++;
+      else if (d[i + 3] > 240 && is(i, accent)) line++;
+    }
+    if (hit && !run) candles++;
+    run = hit;
+  }
+  return { candles, volume, line };
 })()`;
-/** Whether line mode drew its line, as a canvas layer or as SVG path data. */
-const LINE_DRAWN = `(document.querySelector('canvas[data-layer="line"], canvas[data-layer="area"]') ? 1
-  : document.querySelectorAll('svg[role=img] path').length)`;
+/** Candles drawn in the price pane: one run of candle-coloured columns each. */
+const CANDLE_COLUMNS = `(${PLOT_PIXELS}?.candles ?? 0)`;
+/** Whether line mode drew its line: accent pixels, and no column of candles. */
+const LINE_DRAWN = `(() => { const p = ${PLOT_PIXELS}; return p && p.line > 0 && p.candles < 5 ? 1 : 0; })()`;
 
 async function launch() {
   const proc = spawn(CHROME, [
     "--headless=new", `--remote-debugging-port=${PORT}`,
-    // Off by default, as it always was. PERF_GPU=1 and `smoke` turn it on, because the
-    // two render paths do not rasterise alike without a GPU: SVG is rasterised
-    // in tiles on worker threads, an unaccelerated canvas on the MAIN thread —
-    // so a GPU-less run favours SVG in a way a reader's browser does not.
+    // Off by default, as it always was. PERF_GPU=1 and `smoke` turn it on: without a GPU
+    // the chart's canvases rasterise on the MAIN thread, so a GPU-less run measures a
+    // slower chart than a reader's browser draws.
     ...(process.env.PERF_GPU === "1" || process.argv[2] === "smoke" ? ["--ignore-gpu-blocklist", "--enable-gpu-rasterization"] : ["--disable-gpu"]),
+    // A real 2x display for the sharpness checks: emulating one scales devicePixelRatio but not the
+    // device-pixel box the chart sizes its canvases from, so every canvas would read as blurry.
+    ...(process.argv[2] === "smoke" ? ["--force-device-scale-factor=2"] : []),
     // macOS tracks window occlusion even for headless Chrome, and when the
     // display sleeps or locks it reports every window occluded — so the page
     // turns "hidden" mid-run, animation frames stop, and a perf run measures
@@ -279,9 +335,10 @@ try {
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme, width: 1440, height: 760 });
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme, width: 1440, height: 760 });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await s.evaluate(`document.querySelector('[aria-label="Fibonacci thoái lui"]')?.click()`);
       await sleep(200);
-      const r = JSON.parse(await s.evaluate(`(() => { const b = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const r = JSON.parse(await s.evaluate(`(() => { const b = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ l: b.left, t: b.top, w: b.width, h: b.height }); })()`));
       for (const [fx, fy] of [[0.28, 0.82], [0.66, 0.18]]) {
         const x = r.l + r.w * fx, y = r.t + r.h * fy;
@@ -298,9 +355,10 @@ try {
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme, width: 1440, height: 760 });
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme, width: 1440, height: 760 });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await s.evaluate(`document.querySelector('[aria-label="Kênh xu hướng song song"]')?.click()`);
       await sleep(200);
-      const r = JSON.parse(await s.evaluate(`(() => { const b = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const r = JSON.parse(await s.evaluate(`(() => { const b = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ l: b.left, t: b.top, w: b.width, h: b.height }); })()`));
       for (const [fx, fy] of [[0.12, 0.35], [0.92, 0.72], [0.5, 0.86]]) {
         const x = r.l + r.w * fx, y = r.t + r.h * fy;
@@ -365,16 +423,12 @@ try {
     };
     if (!(await visible())) break perf;
 
-    const INDICATORS = ["SMA50", "EMA20", "BB", "VWAP", "RSI", "MACD", "ADX"];
     phase = "baseline: loading the chart";
-    await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light", width: 1440, height: 900 });
+    await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&ind=sma50,ema20,bb,vwap,rsi,macd,adx", { scheme: "light", width: 1440, height: 900 });
     if (!(await visible())) break perf;
-    for (const label of INDICATORS) {
-      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '${label}')?.click()`);
-      await sleep(120);
-    }
-    await sleep(600);
-    const activeCount = await s.evaluate(`document.querySelectorAll('svg[role=img]').length`);
+    await s.waitFor(CHART_DRAWN, { timeoutMs: 20000 });
+    await sleep(800);
+    const activeCount = await s.evaluate(PANES);
 
     const metric = async (name) => {
       const { metrics } = await s.send("Performance.getMetrics");
@@ -406,7 +460,7 @@ try {
       });
     })()`);
 
-    const box = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+    const box = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
       return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width }); })()`));
 
     // Where the time actually goes. Guessing at hot spots wastes a fix; a CPU
@@ -543,15 +597,26 @@ try {
           else out.push({ id, kind, t1: a.t, p1: a.l * K, t2: z.t, p2: z.h * K });
         }
         out.push({ id: 'perf-grip', kind: 'hline', price: bars[n - 1].c });
-        localStorage.setItem('drawings:VNM', JSON.stringify(out));
-        return out.length;
+        // A pro reader's drawings follow the account, which wins over a copy seeded into this browser. The
+        // account caps a document's bytes, so the seed is the most it accepts; the grip, last, is always kept.
+        const held = await (await fetch('/api/docs?kind=drawings&key=VNM')).json().catch(() => ({}));
+        const version = held?.data?.version;
+        let data = out, put;
+        for (;;) {
+          put = await fetch('/api/docs', { method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ kind: 'drawings', key: 'VNM', data, ...(typeof version === 'number' ? { version } : {}) }) });
+          if (put.ok || put.status !== 400 || data.length <= 10) break;
+          data = data.slice(10);
+        }
+        localStorage.setItem('drawings:VNM', JSON.stringify(data));
+        return put.ok ? data.length : 'seed refused: ' + put.status;
       })()`);
 
       // Settled means the chart has stopped changing by itself: pane count and
       // visible window both hold for 1.5s. "Tất cả" pulls a page of older bars
       // on its own, and that paging is not the interaction under test.
       const signature = () => s.evaluate(
-        "document.querySelectorAll('svg').length + '|' + ((document.body.innerText.match(/([\\d.]+)\\s*nến/) || [])[1] || '')");
+        "document.querySelectorAll('canvas').length + '|' + ((document.body.innerText.match(/([\\d.]+)\\s*nến/) || [])[1] || '')");
       const settle = async () => {
         const t0 = Date.now();
         let last = "", since = Date.now();
@@ -571,7 +636,7 @@ try {
       await s.send("Page.navigate", { url });
       for (let i = 0; i < 80; i++) {
         await sleep(150);
-        if (await s.evaluate("document.readyState === 'complete' && !!document.querySelector('svg[role=img]')")) break;
+        if (await s.evaluate("document.readyState === 'complete' && !!document.querySelector('div[role=img][tabindex]')")) break;
       }
       phase = "heavy: opening";
       const opened = await settle();
@@ -588,14 +653,14 @@ try {
       // bars the chart opens with, every column already fits.
       if (process.env.PERF_DEEP === "1") {
         phase = "heavy: paging in history";
-        const pbox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+        const pbox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
           return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()`));
         // Narrow the window so it can pan at all; "Tất cả" pans nowhere.
         for (let i = 0; i < 6; i++) {
           await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: pbox.x, y: pbox.y, deltaX: 0, deltaY: -120 });
         }
         await sleep(400);
-        await s.evaluate("document.querySelector('svg[role=img]').focus()");
+        await s.evaluate("document.querySelector('div[role=img][tabindex]').focus()");
         const key = (type) => s.send("Input.dispatchKeyEvent", {
           type, key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, modifiers: 8,
         });
@@ -606,14 +671,12 @@ try {
         await s.click(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Tất cả')`);
         await settle();
       }
-      const hbox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const hbox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }); })()`));
       const facts = await s.evaluate(`JSON.stringify({
-        panes: document.querySelectorAll('svg[role=img]').length,
-        svgs: document.querySelectorAll('svg').length,
+        panes: ${PANES},
         window: (document.body.innerText.match(/([\\d.]+)\\s*nến/) || [])[1] || null,
-        pathKB: Math.round([...document.querySelectorAll('svg path')].reduce((n, p) => n + (p.getAttribute('d') || '').length, 0) / 1024),
-        canvases: document.querySelectorAll('canvas[data-pane-layer]').length,
+        canvases: ${HOST}.querySelectorAll('canvas').length,
       })`);
       const nodes = await metric("Nodes"), heap = await metric("JSHeapUsedSize");
       // PERF_SHOT=name: a picture of exactly what was measured, so density is
@@ -624,23 +687,28 @@ try {
       // drawings on the chart a press can land on one and grab it instead of
       // panning, and at "Tất cả" there is nothing to pan to — either would
       // make a "pan" row measure something else entirely.
-      const paneSig = () => s.evaluate(`(() => {
-        const c = document.querySelector('canvas[data-layer]');
-        if (c) return 'canvas:' + (c.dataset.window || '');
-        const p = document.querySelector('svg[role=img] path');
-        return p ? (p.getAttribute('d') || '').length + ':' + (p.getAttribute('d') || '').slice(0, 48) : '';
-      })()`);
+      const paneSig = () => s.evaluate(`${HOST}?.dataset.window ?? ''`);
       const probe = (px, py) => s.evaluate(`(() => {
         const el = document.elementFromPoint(${px}, ${py});
         return el ? el.tagName.toLowerCase() + (el.getAttribute('role') ? '[' + el.getAttribute('role') + ']' : '') : 'none';
       })()`);
-      const selectedNow = () => s.evaluate("!!document.querySelector('svg[role=img] circle[r=\"4.5\"], svg[data-plot-overlay] circle[r=\"4.5\"]')");
+      const selectedNow = async () => {
+        await s.evaluate(TRACE_ON);
+        const n = (await s.evaluate(DRAWN)).handles;
+        await s.evaluate(`${HOST}.dataset.trace = ''`);
+        return n > 0;
+      };
       const checks = [];
       const checked = (label, px, py, act) => async () => {
         const under = await probe(px, py);
         const sig0 = await paneSig();
         await act();
-        checks.push({ drag: label, "pressed on": under, "window moved": sig0 !== (await paneSig()), "drawing selected after": await selectedNow() });
+        checks.push({ drag: label, "pressed on": under, "window moved": sig0 !== (await paneSig()), "drawing selected after": null });
+      };
+      // What a drag selected is read after its measurement, so the paint trace never runs inside one.
+      const runChecked = async (name, label, px, py, act) => {
+        await run(name, checked(label, px, py, act));
+        checks[checks.length - 1]["drawing selected after"] = await selectedNow();
       };
 
       const drag = async (fromX, fromY, dx, dy, steps = 40) => {
@@ -669,12 +737,12 @@ try {
       await run("hover-sweep (60 moves)", hover);
       // Pans press in the upper quarter of the pane, away from the one on-screen drawing.
       const panY = hbox.y - hbox.h / 4;
-      await run("drag at Tất cả (40 moves)", checked("drag at Tất cả", hbox.x, panY, () => drag(hbox.x, panY, 6, 0)));
+      await runChecked("drag at Tất cả (40 moves)", "drag at Tất cả", hbox.x, panY, () => drag(hbox.x, panY, 6, 0));
       await run("wheel-zoom (20 notches)", async () => { await wheel(10, -1); await wheel(10, 1); });
 
       // Genuine panning needs a window smaller than what is loaded.
       await wheel(8, -1);
-      await run("pan, zoomed in (40 moves)", checked("pan, zoomed in", hbox.x, panY, () => drag(hbox.x, panY, 6, 0)));
+      await runChecked("pan, zoomed in (40 moves)", "pan, zoomed in", hbox.x, panY, () => drag(hbox.x, panY, 6, 0));
       // A pan long enough to outrun the margin a drag draws past each edge: it
       // has to re-centre several times, so any hitch in that shows here.
       const swing = async (fromX, fromY) => {
@@ -688,21 +756,21 @@ try {
         await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: fromX - 600, y: fromY, button: "left", clickCount: 1, buttons: 0 });
         await sleep(500);
       };
-      await run("long pan (180 moves)", checked("long pan", hbox.x, panY, () => swing(hbox.x, panY)));
+      await runChecked("long pan (180 moves)", "long pan", hbox.x, panY, () => swing(hbox.x, panY));
 
       // Grab a real drawing: the first dashed accent line inside the price pane
       // is an hline. Whether it moved is checked, not assumed — a press that
       // missed would silently measure a pan instead.
+      await s.evaluate(TRACE_ON);
       const grip = JSON.parse(await s.evaluate(`(() => {
-        const pane = document.querySelector('svg[role=img]').getBoundingClientRect();
-        const line = [...document.querySelectorAll('svg[role=img] line[stroke-dasharray="4 3"]')]
-          .find((l) => { const r = l.getBoundingClientRect(); return r.top > pane.top + 20 && r.top < pane.bottom - 20; });
-        if (!line) return 'null';
-        const r = line.getBoundingClientRect();
-        return JSON.stringify({ x: pane.left + pane.width / 2, y: r.top + r.height / 2 });
+        const h = ${HOST}, box = h.getBoundingClientRect();
+        const pane = [...h.querySelectorAll('table tr')][0]?.getBoundingClientRect();
+        const hl = ${DRAWN}.drawn.find((d) => d.k === 'hline' && d.y > 20 && d.y < (pane?.height ?? 0) - 20);
+        return hl ? JSON.stringify({ x: box.left + box.width / 2, y: box.top + hl.y }) : 'null';
       })()`));
+      await s.evaluate(`${HOST}.dataset.trace = ''`);
       const before = await s.evaluate("localStorage.getItem('drawings:VNM')");
-      if (grip) await run("drawing-drag (40 moves)", checked("drawing-drag", grip.x, grip.y, () => drag(grip.x, grip.y, 0, 2)));
+      if (grip) await runChecked("drawing-drag (40 moves)", "drawing-drag", grip.x, grip.y, () => drag(grip.x, grip.y, 0, 2));
       const moved = grip ? before !== (await s.evaluate("localStorage.getItem('drawings:VNM')")) : false;
 
       console.log(`\nheavy config: ${W}×${H}, fullscreen, ${ALL_IND.length} indicators requested, ${seeded} drawings seeded`);
@@ -782,9 +850,9 @@ try {
           unnamedButtons: q('button').filter(b => !name(b)).length,
           unnamedLinks: q('a').filter(a => !name(a)).length,
           imgNoAlt: q('img').filter(i => !i.hasAttribute('alt')).length,
-          tablesNoCaption: q('table').filter(t => !t.querySelector('caption')).length,
+          tablesNoCaption: q('table').filter(t => t.getAttribute('role') !== 'presentation' && !t.querySelector('caption')).length,
           positiveTabindex: q('[tabindex]').filter(e => +e.getAttribute('tabindex') > 0).length,
-          svgNoLabel: q('svg[role=img]').filter(sv => !name(sv)).length,
+          imgNoLabel: q('[role=img]').filter(el => !name(el)).length,
           bodyOverflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
         };
       })()`);
@@ -793,7 +861,7 @@ try {
     console.table(rows);
     const bad = rows.filter(r =>
       r.h1 !== 1 || r.headingSkips || r.unnamedButtons || r.unnamedLinks ||
-      r.imgNoAlt || r.tablesNoCaption || r.positiveTabindex || r.svgNoLabel ||
+      r.imgNoAlt || r.tablesNoCaption || r.positiveTabindex || r.imgNoLabel ||
       r.bodyOverflowX || !r.lang);
     if (bad.length) { console.error("A11Y ISSUES on:", bad.map(b => b.page).join(", ")); process.exitCode = 1; }
     else console.log("all accessibility checks passed");
@@ -821,21 +889,25 @@ try {
       + (f.where.length ? ` (${f.where.join(", ")})` : "");
     const fsButton = `[...document.querySelectorAll('button[aria-pressed]')].find((b) => /⛶|⤢/.test(b.textContent))`;
     const state = async () => JSON.parse(await s.evaluate(`JSON.stringify((() => {
-      const c = document.querySelector('canvas[data-layer]');
+      const c = document.querySelector('div[role=img]');
       const m = (document.querySelector('main')?.innerText ?? '').match(/([0-9.,]+)\\s*nến/);
       return { win: c?.dataset.window, pill: m ? Number(m[1].replace(/[.,]/g, '')) : null };
     })())`));
+    // Lightweight Charts lays each pane out as a table row: a main canvas, and a
+    // crosshair layer above it that stays transparent until the pointer arrives —
+    // so only the main canvas can be asked whether it drew anything.
     const panes = async () => JSON.parse(await s.evaluate(`JSON.stringify((() => {
-      const svgs = [...document.querySelectorAll('svg[role=img]')];
-      const canvases = [...document.querySelectorAll('canvas[data-pane-layer]')];
+      const host = document.querySelector('div[role=img]');
+      const rows = host ? [...host.querySelectorAll('table tr')].filter((tr) => tr.querySelector('canvas')).slice(0, -1) : [];
+      const mains = rows.map((tr) => tr.children[1]?.querySelector('canvas')).filter((c) => c && c.width > 0 && c.height > 0);
+      const canvases = host ? [...host.querySelectorAll('canvas')] : [];
       const notCrisp = canvases.filter((c) => { const r = c.getBoundingClientRect();
         return c.width !== Math.round(r.width * devicePixelRatio) || c.height !== Math.round(r.height * devicePixelRatio); }).length;
-      const blank = canvases.filter((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const blank = mains.filter((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
         for (let i = 3; i < d.length; i += 4 * 97) if (d[i]) return false; return true; }).length;
-      return { panes: svgs.length, withCanvas: svgs.filter((sv) => sv.parentElement?.querySelector('canvas[data-pane-layer]')).length,
-        canvases: canvases.length, notCrisp, blank };
+      return { panes: rows.length, withCanvas: mains.length, canvases: canvases.length, notCrisp, blank };
     })())`));
-    const box = async () => JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+    const box = async () => JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img]').getBoundingClientRect();
       return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }); })()`));
     const key = async (k) => {
       await s.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, text: k });
@@ -892,7 +964,7 @@ try {
 
       const t0 = Date.now();
       await s.goto(`${target}/vi/bieu-do/VNM?tf=1D&ind=sma20,rsi,macd`, { width: 1728, height: 1117 });
-      const drawn = await s.waitFor("!!document.querySelector('canvas[data-layer]')", { timeoutMs: 30000 });
+      const drawn = await s.waitFor("!!document.querySelector('div[role=img] canvas')", { timeoutMs: 30000 });
       check("the chart opens and the price canvas draws", !!drawn, `${Date.now() - t0}ms`);
       if (!drawn) throw new Error(`${target} never drew a chart canvas`);
       await sleep(1500);
@@ -903,7 +975,7 @@ try {
       check("no canvas is blank", st.blank === 0, `${st.blank} of ${st.canvases} blank`);
 
       const s0 = await state();
-      await s.evaluate("document.querySelector('svg[role=img]').focus()");
+      await s.evaluate("document.querySelector('div[role=img]').focus()");
       await key("+"); await key("+");
       const s1 = await state();
       check("keyboard + zooms in and the canvas redraws", s1.pill < s0.pill && s1.win !== s0.win, `${s0.pill} → ${s1.pill} bars`);
@@ -939,7 +1011,7 @@ try {
         }
       });
       check("the fullscreen crosshair holds 60fps", sweep.dropped === 0, fmt(sweep));
-      await s.evaluate("document.querySelector('svg[role=img]').focus()");
+      await s.evaluate("document.querySelector('div[role=img]').focus()");
       await key("+"); await key("+"); await key("+");
       const panMark = Date.now();
       const fpan = await frames(() => drag(b.x - 200, b.y - b.h / 4, 8, 40));
@@ -947,7 +1019,7 @@ try {
       check("the fullscreen pan holds 60fps", fpan.dropped === 0, `${fmt(fpan)}, ${paged} history fetch during the pan`);
       console.log(`  screenshot: ${await s.shot("smoke-fullscreen", false)}`);
 
-      const hash = `(() => { const d = document.querySelector('canvas[data-layer]').toDataURL(); let h = 0;
+      const hash = `(() => { const d = document.querySelector('div[role=img] canvas').toDataURL(); let h = 0;
         for (let i = 0; i < d.length; i += 7) h = (h * 31 + d.charCodeAt(i)) | 0; return h; })()`;
       const light = await s.evaluate(hash);
       await s.evaluate(`document.documentElement.setAttribute('data-theme', 'dark')`);
@@ -970,7 +1042,9 @@ try {
           return click.call(this);
         };
       })()`);
-      await s.click(`[...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Lưu ảnh')`);
+      await s.click(`document.querySelector('button[aria-haspopup=menu][aria-label="Chia sẻ"]')`);
+      await sleep(200);
+      await s.click(`document.querySelector('[role=menuitem][aria-label="Lưu ảnh"]')`);
       const name = await s.waitFor("window.__export?.name ?? null", { timeoutMs: 10000 });
       const png = name ? JSON.parse(await s.evaluate(`(async () => { const b = new Uint8Array(await window.__export.blob.arrayBuffer());
         return JSON.stringify({ size: b.length, sig: b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 }); })()`)) : null;
@@ -1026,6 +1100,20 @@ try {
     const LIVE_TEXT =
       `[...document.querySelectorAll('[aria-live=polite]')].map(e => e.innerText.trim()).filter(Boolean).join(' | ')`;
     const NEEDS_SLOT = "needs AUTH_SECRET: a signed-out reader gets one indicator slot";
+    /**
+     * Drawings start empty. On a tier that syncs they follow the account, so
+     * clearing this browser's copy alone lets the account's copy merge straight
+     * back; the rail's own "clear" empties both, then its push is waited out.
+     */
+    const { SYNC_DEBOUNCE_MS } = await import("../packages/core/src/docs-sync.ts");
+    const clearDrawings = async (url = BASE + "/vi/bieu-do/VNM?tf=1D") => {
+      await s.goto(url, { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(800);
+      await s.evaluate(`document.querySelector('[aria-label="Xoá hình vẽ"]')?.click()`);
+      await sleep(SYNC_DEBOUNCE_MS + 1200);
+      await s.evaluate("localStorage.removeItem('drawings:VNM')");
+    };
 
     // Hermetic start — the Chrome profile dir persists between runs. The
     // watchlist checks below assert the anonymous round trip, so the session
@@ -1080,27 +1168,22 @@ try {
 
     // ── chart interaction ─────────────────────────────────────────
     await s.goto(BASE + "/vi/chung-khoan/VNM", { scheme: "light" });
-    const hasSvg = await s.evaluate("!!document.querySelector('svg[role=img]')");
-    check("price chart renders", hasSvg === true);
-    // This route permanently redirects to the terminal, so the chart here is
-    // ChartPro, which batches candle bodies into paths. The old `rect` count was
-    // written for PriceChart and could not pass once the two symbol pages were
-    // merged.
+    const hasChart = await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+    check("price chart renders", !!hasChart);
+    await sleep(600);
+    // This route permanently redirects to the terminal.
     const candles = await s.evaluate(CANDLE_COLUMNS);
     check("candles drawn", candles > 20, `${candles} candles`);
-    // The OHLC readout is what actually tracks the hovered bar, so it is what
-    // gets asserted. This used to test `!!document.querySelector('[role=status]')`
-    // — which the chart now always has, because the upgrade hint mounts its live
-    // region empty on every load. That check passed before the key was pressed.
-    const readoutBefore = await s.evaluate(`document.querySelector('dl')?.textContent ?? ""`);
-    await s.evaluate(`(()=>{const s=document.querySelector('svg[role=img]');s.focus();s.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));})()`);
+    // The legend is what tracks the hovered bar, so it is what gets asserted.
+    const readoutBefore = await s.evaluate(LEGEND);
+    await s.evaluate(`(()=>{const h=${HOST};h.focus();h.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));})()`);
     await sleep(300);
-    const readoutAfter = await s.evaluate(`document.querySelector('dl')?.textContent ?? ""`);
+    const readoutAfter = await s.evaluate(LEGEND);
     check("keyboard arrow moves the crosshair", readoutBefore !== "" && readoutBefore !== readoutAfter,
-      `${readoutBefore.slice(0, 28)} → ${readoutAfter.slice(0, 28)}`);
+      `${readoutBefore.slice(0, 40)} → ${readoutAfter.slice(0, 40)}`);
     await s.evaluate(`[...document.querySelectorAll('button')].find(b=>/dạng bảng/.test(b.textContent)).click()`);
     await sleep(300);
-    const tableRows = await s.evaluate("document.querySelectorAll('table tbody tr').length");
+    const tableRows = await s.evaluate("document.querySelectorAll('table.data-table tbody tr').length");
     check("chart table view renders rows", tableRows > 10, `${tableRows} rows`);
 
     // ── hover a bar, then zoom past it ────────────────────────────
@@ -1111,7 +1194,9 @@ try {
     // a reader, caught by nothing here — the suite hovers, and it zooms, but it
     // never did both in that order.
     await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
-    const zb = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+    await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+    await sleep(500);
+    const zb = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
       return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height }); })()`));
     const zy = Math.round(zb.t + zb.h * 0.5);
     // Hover the far right: the highest bar index the widest window offers.
@@ -1124,16 +1209,16 @@ try {
     }
     await sleep(500);
     const zoomState = JSON.parse(await s.evaluate(`(() => JSON.stringify({
-      svg: !!document.querySelector('svg[role=img]'),
+      drawn: !!document.querySelector('div[role=img][tabindex] canvas'),
       crashed: /Đã xảy ra lỗi|Something went wrong/.test(document.body.innerText),
     }))()`));
     check("hovering a bar then zooming past it keeps the chart alive",
-      zoomState.svg === true && zoomState.crashed === false,
+      zoomState.drawn === true && zoomState.crashed === false,
       zoomState.crashed ? "error boundary caught a throw" : "chart intact");
 
     // ── line mode ─────────────────────────────────────────────────
     await s.goto(BASE + "/vi/chung-khoan/VNM", { scheme: "light" });
-    await s.evaluate(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Đường').click()`);
+    await s.evaluate(PICK_STYLE("Đường"));
     await sleep(300);
     const paths = await s.evaluate(LINE_DRAWN);
     check("line mode draws a path", paths >= 1, `${paths} paths`);
@@ -1226,11 +1311,13 @@ try {
     // setup rather than inheriting an earlier check's choice.
     await s.evaluate("localStorage.removeItem('settings:chart')");
     await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
-    const panesBefore = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
-    check("terminal renders price and volume panes", panesBefore >= 2, `${panesBefore} panes`);
-    // Count the CANDLES, not the elements they happen to be made of: bodies are
-    // batched into paths, so an element count would only be testing the
-    // rendering strategy. Each candle contributes one body subpath.
+    await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+    await sleep(600);
+    const panesBefore = await s.evaluate(PANES);
+    const plotPx = await s.evaluate(PLOT_PIXELS);
+    // Volume sits at the foot of the price pane, as TradingView draws it, not in a pane of its own.
+    check("terminal renders the price pane with volume at its foot", panesBefore >= 1 && (plotPx?.volume ?? 0) > 50,
+      `${panesBefore} panes, ${plotPx?.volume ?? 0} volume px`);
     const termCandles = await s.evaluate(CANDLE_COLUMNS);
     check("every visible bar is drawn as a candle", termCandles > 50, `${termCandles} candles`);
 
@@ -1242,16 +1329,8 @@ try {
     // `aria-haspopup="menu"` button and the first one is the interval list, so a
     // positional selector opened the wrong menu and found no checkboxes.
     const clickInd = async (label) => {
-      await s.evaluate(`(() => {
-        const b = [...document.querySelectorAll('button[aria-haspopup="menu"]')]
-          .find(x => x.textContent.includes('Chỉ báo'));
-        if (b && b.getAttribute('aria-expanded') === 'false') b.click();
-      })()`);
-      await sleep(150);
-      return s.evaluate(
-        `[...document.querySelectorAll('[role=menuitemcheckbox]')]` +
-        `.find(b => b.textContent.trim().startsWith(${JSON.stringify(label)}))?.click()`,
-      );
+      await s.evaluate(OPEN_INDICATORS);
+      return s.evaluate(`${INDICATOR_ROWS}.find(b => b.textContent.trim().startsWith(${JSON.stringify(label)}))?.click()`);
     };
     // A second indicator needs a second slot, and a signed-out reader has one:
     // the menu shows SMA (20) on and every other row padlocked, so the click is
@@ -1263,22 +1342,18 @@ try {
       skip("every registry indicator draws for a pro reader", NEEDS_SLOT);
     } else {
       await clickInd("RSI (14)"); await sleep(400);
-      const afterRsi = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
+      const afterRsi = await s.evaluate(PANES);
       check("adding an oscillator adds a pane", afterRsi > panesBefore, `${panesBefore} → ${afterRsi}`);
       await clickInd("RSI (14)"); await sleep(400);
-      const afterOff = await s.evaluate("document.querySelectorAll('svg[role=img]').length");
+      const afterOff = await s.evaluate(PANES);
       check("removing it removes the pane", afterOff === panesBefore, `${afterOff}`);
 
       // Every indicator a pro reader can switch on, one at a time from a link.
       // An oscillator must add a pane that draws; a price overlay must change
       // what the price pane draws. Requested is not drawn.
       const menuCount = await (async () => {
-        await s.evaluate(`(() => {
-          const b = [...document.querySelectorAll('button[aria-haspopup="menu"]')].find(x => x.textContent.includes('Chỉ báo'));
-          if (b && b.getAttribute('aria-expanded') === 'false') b.click();
-        })()`);
-        await sleep(150);
-        return s.evaluate("document.querySelectorAll('[role=menuitemcheckbox]').length");
+        await s.evaluate(OPEN_INDICATORS);
+        return s.evaluate(`${INDICATOR_ROWS}.length`);
       })();
       const swept = PRICE_IND.length + OSC_IND.length;
       check("the indicator sweep covers the whole menu", menuCount === swept, `${menuCount} in the menu, ${swept} swept`);
@@ -1286,19 +1361,20 @@ try {
       s.on("Runtime.exceptionThrown", (p) => errs.push((p.exceptionDetails?.exception?.description ?? "").split("\n")[0]));
       await s.send("Runtime.enable");
       const drawn = `JSON.stringify((() => {
-        const svgs = [...document.querySelectorAll('svg[role=img]')];
-        const canvases = [...document.querySelectorAll('canvas[data-pane-layer]')];
-        const blank = canvases.filter((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const h = ${HOST};
+        const rows = h ? [...h.querySelectorAll('table tr')].filter((tr) => tr.children[1]?.querySelector('canvas')).slice(0, -1) : [];
+        const mains = rows.map((tr) => tr.children[1].querySelector('canvas'));
+        const blank = mains.filter((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
           for (let i = 3; i < d.length; i += 4 * 97) if (d[i]) return false; return true; }).length;
-        const price = document.querySelector('canvas[data-layer]');
         let hash = 0;
-        if (price) { const d = price.toDataURL(); for (let i = 0; i < d.length; i += 7) hash = (hash * 31 + d.charCodeAt(i)) | 0; }
-        return { panes: svgs.length, labels: svgs.map((sv) => sv.getAttribute('aria-label')), canvases: canvases.length, blank, hash };
+        if (mains[0]) { const d = mains[0].toDataURL(); for (let i = 0; i < d.length; i += 7) hash = (hash * 31 + d.charCodeAt(i)) | 0; }
+        const labels = [...(h?.parentElement?.querySelectorAll('button[aria-label^="Bỏ "]') ?? [])].map((b) => b.getAttribute('aria-label').slice(3));
+        return { panes: rows.length, labels, canvases: mains.length, blank, hash };
       })())`;
       const openWith = async (id) => {
         await s.goto(`${BASE}/vi/bieu-do/VNM?tf=1D&ind=${id}`, { scheme: "light" });
-        await s.waitFor("!!document.querySelector('canvas[data-layer]')", { timeoutMs: 15000 });
-        await sleep(300);
+        await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+        await sleep(700);
         return JSON.parse(await s.evaluate(drawn));
       };
       // Candles alone on the price pane (an oscillator draws elsewhere), and
@@ -1332,8 +1408,9 @@ try {
       // "everything loaded" and pans nowhere, by decision. Paging in older bars
       // is reached the way a reader reaches it: pan to the edge of a narrower window.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&r=1Y", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(600);
-      const oldestLabel = `(${AXIS_LABELS})[0] ?? null`;
+      const oldestLabel = `Number(${HOST}?.dataset.window?.split(':')[0] ?? 0)`;
       const startOldest = await s.evaluate(oldestLabel);
       // Count the history requests directly. The VISIBLE bar count is not the
       // signal — the window keeps its size, it is the reachable history that
@@ -1350,17 +1427,17 @@ try {
       // Panning to the left edge is what triggers the fetch. Shift+Left is the
       // keyboard pan, so this drives the same path a reader's drag would.
       await s.evaluate(`(() => {
-        const svg = document.querySelector('svg[role=img]');
-        svg.focus();
+        const host = document.querySelector('div[role=img][tabindex]');
+        host.focus();
         for (let i = 0; i < 12; i++) {
-          svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', shiftKey: true, bubbles: true }));
+          host.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', shiftKey: true, bubbles: true }));
         }
       })()`);
       const fetched = await s.waitFor(`window.__hist > 0 ? window.__hist : null`, 12000);
       check("panning to the left edge requests older history", !!fetched, `${fetched} request(s)`);
       const nowOldest = await s.evaluate(oldestLabel);
       check("the chart really reaches further back than it started",
-        nowOldest !== startOldest, `${startOldest} -> ${nowOldest}`);
+        nowOldest < startOldest, `${startOldest} -> ${nowOldest}`);
 
       // The API contract the fetch relies on.
       const older = JSON.parse(await s.evaluate(`(async () => {
@@ -1412,11 +1489,12 @@ try {
       // A shared setup must open the SENDER's screen, not a default chart of
       // the same symbol — that is the whole growth loop.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1W&type=line&ind=rsi&sc=log", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(500);
-      const tpl = await s.evaluate(`(() => {
-        const btn = [...document.querySelectorAll('button')].find(b => /Chép thiết lập/.test(b.textContent||''));
-        return !!btn;
-      })()`);
+      // The setup is one of the share menu's items.
+      await s.click(SHARE_MENU);
+      await sleep(200);
+      const tpl = await s.evaluate(`!![...document.querySelectorAll('[role=menuitem]')].find(b => /Chép thiết lập/.test(b.textContent||''))`);
       check("the chart offers to share its setup", tpl === true);
 
       // Built the same way the button builds it, then opened cold.
@@ -1425,16 +1503,17 @@ try {
         return btoa(JSON.stringify(c)).split('+').join('-').split('/').join('_').split('=').join('');
       })()`);
       await s.goto(BASE + "/vi/bieu-do/VNM?tpl=" + link, { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(600);
       const restored = await s.evaluate(`(() => {
         const tf = document.querySelector('[aria-label="Khung thời gian"] [aria-current=page]')?.textContent.trim();
-        const rsi = !!document.querySelector('svg[aria-label^="RSI"]');
+        const rsi = !!document.querySelector('button[aria-label^="Chu kỳ RSI"]');
         return JSON.stringify({ tf, rsi });
       })()`);
       const rs = JSON.parse(restored);
       check("a shared setup opens the sender's screen", rs.tf === "1W" && rs.rsi === true, restored);
       check("and needs no account to open it",
-        (await s.evaluate(`!!document.querySelector('svg[role=img]')`)) === true);
+        (await s.evaluate(CHART_DRAWN)) === true);
 
       // The reader's own edits win over the template they opened.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&tpl=" + link, { scheme: "light" });
@@ -1477,9 +1556,10 @@ try {
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
       await asTier("free");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(400);
       const r = JSON.parse(await s.evaluate(`(() => {
-        const b = document.querySelector('svg[role=img]').getBoundingClientRect();
+        const b = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ l: b.left, t: b.top, w: b.width, h: b.height });
       })()`));
       const clickAt2 = async (fx, fy) => {
@@ -1488,10 +1568,14 @@ try {
         await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
         await sleep(250);
       };
-      await s.evaluate(`document.querySelector('[aria-label="Mức giá"]')?.click()`);
-      await sleep(150);
-      // Four horizontal lines against a cap of three.
-      for (const fy of [0.3, 0.45, 0.6, 0.75]) await clickAt2(0.5, fy);
+      // Four horizontal lines against a cap of three. The tool returns to the
+      // cursor after each drawing, as TradingView's does, so it is picked up
+      // again for every one.
+      for (const fy of [0.3, 0.45, 0.6, 0.75]) {
+        await s.evaluate(`document.querySelector('[aria-label="Mức giá"]')?.click()`);
+        await sleep(150);
+        await clickAt2(0.5, fy);
+      }
       await sleep(400);
       const stored = JSON.parse(await s.evaluate(`localStorage.getItem('drawings:VNM') || '[]'`));
       check("the free drawing cap actually holds", stored.length === 3, `${stored.length} stored`);
@@ -1507,70 +1591,57 @@ try {
           return !!el?.querySelector('a[href*="goi-dich-vu"], a[href*="dang-nhap"]');
         })()`)) === true);
       check("it never blocks the chart behind it",
-        (await s.evaluate(`!!document.querySelector('svg[role=img]')`)) === true);
+        (await s.evaluate(CHART_DRAWN)) === true);
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
       await asTier("pro");
     }
 
     // ── pinch to zoom on a phone (P2-15) ──────────────────────────
     {
-      // 390x1100 is the viewport the design targets, and the only place this
-      // gesture exists: the chart had no zoom at all on touch.
-      //
-      // Driven with synthetic PointerEvents rather than CDP's touch dispatch,
-      // which times out against this harness. That is a real limit worth
-      // stating: this exercises the component's own gesture handling — two
-      // pointers, the spread between them, the range it produces — but NOT the
-      // browser's touch-action behaviour, so it cannot catch the page zooming
-      // instead of the chart. The pinch arithmetic itself is unit-tested.
+      // 390x1100 is the viewport the design targets. Driven with real touch
+      // points through CDP: the engine reads touch events for a pinch.
       await s.evaluate("localStorage.removeItem('settings:chart')");
+      await s.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light", width: 390, height: 1100 });
-      await sleep(400);
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(600);
 
       const barCount = `(() => {
         const t = document.querySelector('main')?.innerText ?? '';
-        const m = t.match(/([0-9.,]+)[  ]nến/);
+        const m = t.match(/([0-9.,]+)[  ]nến/);
         return m ? Number(m[1].replace(/[.,]/g, "")) : null;
       })()`;
-      const pinchBy = (from, to) => s.evaluate(`(() => {
-        const svg = document.querySelector('svg[role=img]');
-        const r = svg.getBoundingClientRect();
-        const y = r.top + r.height / 2;
-        const at = (f) => r.left + r.width * f;
-        const ev = (type, id, x) => svg.dispatchEvent(new PointerEvent(type, {
-          pointerId: id, pointerType: 'touch', clientX: x, clientY: y,
-          buttons: 1, bubbles: true, cancelable: true,
-        }));
-        ev('pointerdown', 1, at(0.5 - ${from}));
-        ev('pointerdown', 2, at(0.5 + ${from}));
-        for (const f of ${JSON.stringify([0.25, 0.5, 0.75, 1])}.map(k => ${from} + (${to} - ${from}) * k)) {
-          ev('pointermove', 1, at(0.5 - f));
-          ev('pointermove', 2, at(0.5 + f));
+      // The fingers stay on the plot: a touch that lands on the price axis scales that axis instead.
+      const pinchBy = async (from, to) => {
+        const r = JSON.parse(await s.evaluate(`JSON.stringify([...${HOST}.querySelectorAll('table tr')][0].children[1].getBoundingClientRect())`));
+        const y = r.top + r.height * 0.4, at = (f) => r.left + r.width * f;
+        const pts = (f) => [{ x: at(0.5 - f), y, id: 1 }, { x: at(0.5 + f), y, id: 2 }];
+        await s.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts(from) });
+        for (const k of [0.25, 0.5, 0.75, 1]) {
+          await s.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: pts(from + (to - from) * k) });
+          await sleep(30);
         }
-        ev('pointerup', 1, at(0.5 - ${to}));
-        ev('pointerup', 2, at(0.5 + ${to}));
-        return true;
-      })()`);
+        await s.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      };
 
-      const before = await s.evaluate(barCount);
-      await pinchBy(0.08, 0.42);
-      const after = await s.waitFor(`(() => {
-        const n = ${barCount};
-        return n !== null && n < ${before} ? n : null;
-      })()`, 5000);
+      let before = null, after = null, mid = null, out = null;
+      try {
+        before = await s.evaluate(barCount);
+        await pinchBy(0.08, 0.42);
+        after = await s.waitFor(`(() => { const n = ${barCount}; return n !== null && n < ${before} ? n : null; })()`, { timeoutMs: 5000 });
+        mid = await s.evaluate(barCount);
+        await pinchBy(0.42, 0.06);
+        out = await s.waitFor(`(() => { const n = ${barCount}; return n !== null && n > ${mid} ? n : null; })()`, { timeoutMs: 5000 });
+      } catch (e) {
+        console.error(`  pinch dispatch failed: ${String(e.message ?? e).slice(0, 100)}`);
+      }
       check("pinching apart zooms in on touch", !!after, `${before} -> ${after} bars`);
-
-      const mid = await s.evaluate(barCount);
-      await pinchBy(0.42, 0.06);
-      const out = await s.waitFor(`(() => {
-        const n = ${barCount};
-        return n !== null && n > ${mid} ? n : null;
-      })()`, 5000);
       check("pinching together zooms out on touch", !!out, `${mid} -> ${out} bars`);
 
       check("the chart does not overflow a 390px viewport",
         (await s.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")) === true);
 
+      await s.send("Emulation.setTouchEmulationEnabled", { enabled: false });
       await s.evaluate("localStorage.removeItem('settings:chart')");
     }
 
@@ -1578,12 +1649,13 @@ try {
     {
       await s.evaluate("localStorage.removeItem('settings:chart')");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(400);
       const divider = 'div[role=separator][aria-orientation=horizontal]';
       check("the price pane has a resize divider",
         (await s.evaluate(`!!document.querySelector('${divider}')`)) === true);
       // Operable by keyboard, not only by pointer.
-      const before = await s.evaluate(`document.querySelector('svg[role=img]').getBoundingClientRect().height`);
+      const before = await s.evaluate(`document.querySelector('div[role=img][tabindex]').getBoundingClientRect().height`);
       await s.evaluate(`(() => {
         const d = document.querySelector('${divider}');
         d.focus();
@@ -1595,7 +1667,7 @@ try {
       // faster than React re-renders, so a nudge that reads its starting point
       // from render state collapses the whole burst into a single step.
       const grew = await s.waitFor(`(() => {
-        const h = document.querySelector('svg[role=img]').getBoundingClientRect().height;
+        const h = document.querySelector('div[role=img][tabindex]').getBoundingClientRect().height;
         return h > ${before} + 80 ? h : null;
       })()`, 4000);
       check("repeated arrow presses compose", !!grew, `${before} -> ${grew}`);
@@ -1603,8 +1675,9 @@ try {
         (await s.evaluate(`document.querySelector('${divider}').getAttribute('aria-valuenow')`)) !== null);
       // The whole point: it has to come back.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(500);
-      const after = await s.evaluate(`document.querySelector('svg[role=img]').getBoundingClientRect().height`);
+      const after = await s.evaluate(`document.querySelector('div[role=img][tabindex]').getBoundingClientRect().height`);
       check("a resized pane survives a reload", Math.abs(after - grew) < 8, `${grew} -> ${after}`);
       await s.evaluate("localStorage.removeItem('settings:chart')");
     }
@@ -1622,12 +1695,10 @@ try {
     } else {
       const dr = () => s.evaluate(`localStorage.getItem('drawings:VNM') || '[]'`);
       const count = async () => JSON.parse(await dr()).length;
-      await s.evaluate("localStorage.removeItem('drawings:VNM')");
-      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
-      await sleep(300);
+      await clearDrawings();
 
       const box = JSON.parse(await s.evaluate(`(() => {
-        const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+        const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height });
       })()`));
       const clickAt = async (fx, fy) => {
@@ -1659,8 +1730,8 @@ try {
       await clickAt(0.3, 0.7);
       await sleep(350);
       check("clicking a drawing selects it instead of deleting it", (await count()) === 1);
-      const handles = await s.evaluate(
-        `document.querySelectorAll('svg[role=img] circle[stroke-width="2"], svg[data-plot-overlay] circle[stroke-width="2"]').length`);
+      await s.evaluate(TRACE_ON);
+      const handles = (await s.evaluate(DRAWN)).handles;
       check("a selected drawing shows grab handles", handles >= 1, `${handles} handles`);
 
       // Delete is now explicit, and undo brings it back — the property that
@@ -1670,18 +1741,18 @@ try {
       await sleep(350);
       check("the selected drawing can be deleted", (await count()) === 0);
       await s.evaluate(`(() => {
-        const svg = document.querySelector('svg[role=img]');
-        svg.focus();
-        svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+        const host = document.querySelector('div[role=img][tabindex]');
+        host.focus();
+        host.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
       })()`);
       await sleep(400);
       check("undo restores a deleted drawing", (await count()) === 1);
       check("undo restores it unchanged", (await dr()) === beforeDelete);
 
       await s.evaluate(`(() => {
-        const svg = document.querySelector('svg[role=img]');
-        svg.focus();
-        svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true }));
+        const host = document.querySelector('div[role=img][tabindex]');
+        host.focus();
+        host.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true }));
       })()`);
       await sleep(400);
       check("redo takes it away again", (await count()) === 0);
@@ -1690,25 +1761,20 @@ try {
     }
 
     // ── price axis: linear, log, percent (P2-11) ──────────────────
-    // The axis is asserted by its ARITHMETIC, not by a class name: a log axis
-    // is one whose tick ratios are constant, and a linear axis one whose tick
-    // differences are. A control that renders but does not change the mapping
-    // would pass any test that only looked at the button.
-    const axisTicks = async (sc) => {
+    // The axis is asserted by its ARITHMETIC, not by a class name. It is canvas,
+    // so the chart samples its own price mapping at four evenly spaced heights:
+    // a linear axis steps by equal amounts, a log axis by equal ratios. The
+    // percent axis's labels come from the chart's own formatter.
+    const axisRead = async (sc) => {
       await s.goto(BASE + `/vi/bieu-do/VNM?tf=1M&r=ALL${sc ? `&sc=${sc}` : ""}`, { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(400);
-      return s.evaluate(`(() => {
-        const svg = document.querySelector('svg[role=img]');
-        return [...svg.querySelectorAll('text.tnum')]
-          .map(t => t.textContent.trim()).slice(0, 5);
-      })()`);
+      await s.evaluate(TRACE_ON);
+      return JSON.parse(await s.evaluate(`JSON.stringify({ scale: JSON.parse(${HOST}.dataset.scale || '[]'), pct: JSON.parse(${HOST}.dataset.pct || '[]') })`));
     };
-    const spread = (v) => {
-      const n = v.map(x => Number(String(x).replace(/\./g, "").replace(",", ".")));
-      return n.every(Number.isFinite) && n.length >= 4 ? n : null;
-    };
-    const linTicks = spread(await axisTicks(""));
-    const logTicks = spread(await axisTicks("log"));
+    const finite = (v) => (v.length >= 4 && v.every(Number.isFinite) ? v : null);
+    const linTicks = finite((await axisRead("")).scale);
+    const logTicks = finite((await axisRead("log")).scale);
     if (linTicks && logTicks) {
       const diffs = linTicks.slice(1).map((v, i) => v - linTicks[i]);
       const evenDiff = Math.max(...diffs) - Math.min(...diffs) < 0.05;
@@ -1719,11 +1785,11 @@ try {
       check("the two axes are actually different",
         Math.abs(linTicks[1] - logTicks[1]) > 0.01, `${linTicks[1]} vs ${logTicks[1]}`);
     } else {
-      check("a log axis steps by equal percentages", false, "could not read axis labels");
+      check("a log axis steps by equal percentages", false, "could not read the price mapping");
     }
-    const pctTicks = await axisTicks("pct");
+    const pctTicks = (await axisRead("pct")).pct;
     check("a percent axis prints signed percentages",
-      pctTicks.every(t => /^[+-].*%$/.test(t)), pctTicks.join(" "));
+      pctTicks.length > 0 && pctTicks.every(t => /^[+-].*%$/.test(t)), pctTicks.join(" "));
 
     // ── saved layouts (P1-6) ──────────────────────────────────────
     // LAYOUT_LIMIT existed with no consumer: the cap guarded writes that could
@@ -1795,9 +1861,9 @@ try {
     // legend chip; the chart, the pane label and the URL must all agree
     // afterwards, or a reader cannot share the chart they tuned.
     await s.goto(BASE + "/vi/bieu-do/VNM?ind=rsi", { scheme: "light" });
-    await sleep(400);
+    await s.waitFor(`!!document.querySelector('button[aria-label^="Chu kỳ RSI"]')`, { timeoutMs: 15000 });
     check("an untuned indicator labels itself with the registry default",
-      (await s.evaluate(`document.querySelector('svg[aria-label^="RSI"]')?.getAttribute('aria-label')`)) === "RSI (14)");
+      (await s.evaluate(`document.querySelector('button[aria-label^="Chu kỳ RSI"]')?.getAttribute('aria-label')`)) === "Chu kỳ RSI (14)");
     await s.evaluate(`[...document.querySelectorAll('button[aria-label^="Chu kỳ"]')][0]?.click()`);
     await sleep(200);
     const hasPeriodInput = await s.evaluate(`!!document.querySelector('#per-rsi')`);
@@ -1810,32 +1876,34 @@ try {
       i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     })()`);
     const tuned = await s.waitFor(`(() => {
-      const l = document.querySelector('svg[aria-label^="RSI"]')?.getAttribute('aria-label');
-      return l === 'RSI (21)' ? l : null;
+      const l = document.querySelector('button[aria-label^="Chu kỳ RSI"]')?.getAttribute('aria-label');
+      return l === 'Chu kỳ RSI (21)' ? l : null;
     })()`, 4000);
-    check("tuning the period retitles the pane", tuned === "RSI (21)", String(tuned));
+    check("tuning the period retitles the pane", tuned === "Chu kỳ RSI (21)", String(tuned));
     const tunedUrl = await s.waitFor(`location.search.includes('rsi%3A21') || location.search.includes('rsi:21') ? location.search : null`, 4000);
     check("a tuned period is carried in the URL", !!tunedUrl, String(tunedUrl));
     // The reload is the whole promise of P1-5 extended to periods: a chart a
     // reader tuned must come back tuned.
     await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
-    await sleep(500);
-    const survived = await s.evaluate(`document.querySelector('svg[aria-label^="RSI"]')?.getAttribute('aria-label')`);
-    check("a tuned period survives a reload", survived === "RSI (21)", String(survived));
+    await s.waitFor(`!!document.querySelector('button[aria-label^="Chu kỳ RSI"]')`, { timeoutMs: 15000 });
+    const survived = await s.evaluate(`document.querySelector('button[aria-label^="Chu kỳ RSI"]')?.getAttribute('aria-label')`);
+    check("a tuned period survives a reload", survived === "Chu kỳ RSI (21)", String(survived));
     // Surviving a reload is the point, so this check leaves a tuned RSI stored.
     // Clear it: later checks assume the chart's default setup, and inheriting
     // one section's state is how this suite has broken before.
     await s.evaluate("localStorage.removeItem('settings:chart')");
 
-    await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Đường')?.click()`);
+    await s.evaluate(PICK_STYLE("Đường"));
     await sleep(350);
     const termPaths = await s.evaluate(LINE_DRAWN);
     check("line mode draws a path", termPaths >= 1, `${termPaths} paths`);
 
-    await s.evaluate(`(()=>{const g=document.querySelector('svg[role=img]');g.focus();
+    const legendBefore = await s.evaluate(LEGEND);
+    await s.evaluate(`(()=>{const g=${HOST};g.focus();
       g.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));})()`);
     await sleep(300);
-    check("keyboard moves the crosshair", await s.evaluate(`!!document.querySelector('[role=status]')`));
+    const legendAfter = await s.evaluate(LEGEND);
+    check("keyboard moves the crosshair", legendBefore !== "" && legendAfter !== legendBefore, legendAfter.slice(0, 40));
 
     const counter = await s.evaluate(`(() => {
       const t = document.querySelector('main')?.innerText ?? '';
@@ -1846,9 +1914,7 @@ try {
 
     // ── drawing tools (Pro; the suite runs with a pro session) ────
     if (secret) {
-      await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
-      await s.evaluate("localStorage.removeItem('drawings:VNM')");
-      await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
+      await clearDrawings(BASE + "/vi/bieu-do/VNM");
 
       // A locked tool is no longer `disabled` — it is a button that explains the
       // lock — so `!b.disabled` was true for every tier and could not fail. What
@@ -1863,7 +1929,7 @@ try {
 
       await s.evaluate(`document.querySelector('[aria-label="Mức giá"]')?.click()`);
       await sleep(250);
-      const box = await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const box = await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.4 }); })()`);
       const { x: cx, y: cy } = JSON.parse(box);
       await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1 });
@@ -1874,11 +1940,12 @@ try {
       check("clicking the chart creates a drawing", drawn === 1, `${drawn} stored`);
 
       // The point of storing in data space: a range change must not move it.
-      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '250')?.click()`);
+      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '6M')?.click()`);
       await sleep(550);
+      await s.evaluate(TRACE_ON);
       const after = await s.evaluate(`JSON.stringify({
         stored: JSON.parse(localStorage.getItem('drawings:VNM') || '[]').length,
-        rendered: document.querySelectorAll('line[stroke-dasharray="4 3"]').length,
+        rendered: ${DRAWN}.drawn.filter((d) => d.k === 'hline').length,
       })`);
       const a = JSON.parse(after);
       check("drawings survive a range change", a.stored === 1 && a.rendered === 1, after);
@@ -1891,8 +1958,13 @@ try {
 
       // ── timeframes ──────────────────────────────────────────────
       await s.goto(BASE + "/vi/bieu-do/VNM", { scheme: "light" });
-      const quick = await s.evaluate(`[...document.querySelectorAll('[aria-label="Khung thời gian"] a')].map(a => a.textContent.trim()).join(",")`);
-      check("quick timeframes are one click away", quick.includes("1D") && quick.includes("1h"), quick);
+      // TradingView's toolbar has one interval button; the quick intervals live in its menu.
+      await s.evaluate(`document.querySelector('button[aria-haspopup="menu"]')?.click()`);
+      await sleep(200);
+      const quick = await s.evaluate(`[...document.querySelectorAll('[role=menu] [role=menuitem]')].map(a => a.textContent.trim()).join(",")`);
+      check("the interval menu offers the quick intervals", /1D/.test(quick) && /1h/.test(quick), quick.slice(0, 80));
+      await s.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+      await sleep(200);
 
       await s.evaluate(`document.querySelector('button[aria-haspopup="menu"]')?.click()`);
       await sleep(250);
@@ -1922,13 +1994,25 @@ try {
       // The axis of every timeframe must be INFORMATIVE. The bug this guards:
       // a clock-only intraday axis printed "09:00" at all six ticks once the
       // window spanned more than a day, which tells the reader nothing.
-      const axis = async () => s.evaluate(`JSON.stringify(${AXIS_LABELS})`);
+      const axis = async () => {
+        await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+        await sleep(500);
+        await s.evaluate(TRACE_ON);
+        return s.evaluate(`JSON.stringify(${AXIS_LABELS})`);
+      };
 
+      // TradingView's axis marks each session with its date and the hours in
+      // between with the clock, so one time can recur across sessions by
+      // design. What must not come back is the bug above: one clock time at
+      // every tick, with nothing saying which day it belongs to.
+      const isDate = (l) => /^[0-9]{2}\/[0-9]{2}$/.test(l) || /^[0-9]{4}$/.test(l) || /[A-Za-zÀ-ỹ]/.test(l);
       for (const tf of ["5m", "1h", "1D"]) {
         await s.goto(BASE + `/vi/bieu-do/VNM?tf=${tf}`, { scheme: "light" });
         const labels = JSON.parse(await axis());
         const distinct = new Set(labels).size;
-        check(`${tf} axis labels are all distinct`, labels.length >= 3 && distinct === labels.length,
+        const neighboursDiffer = labels.every((l, i) => i === 0 || l !== labels[i - 1]);
+        check(`${tf} axis labels tell the ticks apart`,
+          labels.length >= 3 && neighboursDiffer && (distinct === labels.length || labels.some(isDate)),
           `${distinct}/${labels.length}: ${labels.join(" ")}`);
       }
 
@@ -2009,10 +2093,14 @@ try {
 
       // ── panning into the past ───────────────────────────────────
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
-      const axisFirst = async () => s.evaluate(`(${AXIS_LABELS})[0] ?? null`);
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(500);
+      const axisFirst = async () => s.evaluate(`Number(${HOST}?.dataset.window?.split(':')[0] ?? 0) || null`);
 
+      const windowEnd = async () => s.evaluate(`Number(${HOST}?.dataset.window?.split(':')[1] ?? 0) || null`);
       const panFrom = await axisFirst();
-      const rect = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const panEnd = await windowEnd();
+      const rect = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 }); })()`));
       // Drag to the right: older bars should come into view.
       await s.send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button: "left", clickCount: 1, buttons: 1 });
@@ -2023,14 +2111,15 @@ try {
       await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x + 240, y: rect.y, button: "left", clickCount: 1, buttons: 0 });
       await sleep(500);
       const panTo = await axisFirst();
-      check("dragging right walks into the past", panFrom !== null && panTo !== null && panFrom !== panTo,
+      check("dragging right walks into the past", panFrom !== null && panTo !== null && panTo < panFrom,
         `${panFrom} → ${panTo}`);
 
       const backBtn = await s.evaluate(`[...document.querySelectorAll('button')].some(b => /Về hiện tại/.test(b.textContent))`);
       check("a way back to the present appears", backBtn === true);
       await s.evaluate(`[...document.querySelectorAll('button')].find(b => /Về hiện tại/.test(b.textContent))?.click()`);
       await sleep(450);
-      check("it returns to the latest bars", (await axisFirst()) === panFrom, `${await axisFirst()} vs ${panFrom}`);
+      // The newest bar is what "latest" means; the left edge may keep a sliver of one more bar.
+      check("it returns to the latest bars", (await windowEnd()) === panEnd, `${await windowEnd()} vs ${panEnd}`);
 
       // A drag must not leave a drawing behind: the press was a pan, not a click.
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
@@ -2041,8 +2130,14 @@ try {
       await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x + 160, y: rect.y, button: "left", buttons: 1 });
       await s.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x + 160, y: rect.y, button: "left", clickCount: 1, buttons: 0 });
       await sleep(400);
-      check("keyboard panning is available too",
-        (await s.evaluate(`typeof document.querySelector('svg[role=img]').onkeydown !== 'undefined'`)) === true);
+      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(500);
+      const keyFrom = await axisFirst();
+      await s.evaluate(`(() => { const h = ${HOST}; h.focus(); h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', shiftKey: true, bubbles: true })); })()`);
+      await sleep(300);
+      const keyTo = await axisFirst();
+      check("keyboard panning is available too", keyFrom !== null && keyTo !== null && keyTo < keyFrom, `${keyFrom} → ${keyTo}`);
 
       // ── wheel zoom ──────────────────────────────────────────────
       // Wrapped: the chart binds wheel non-passively so it can preventDefault,
@@ -2061,7 +2156,7 @@ try {
           const m = (document.querySelector('main')?.innerText ?? '').match(/([0-9.,]+)\\s*nến/);
           return m ? m[1].replace(/\\./g, '') : null;
         })()`);
-      const plot = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const plot = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 }); })()`));
 
       try {
@@ -2075,7 +2170,7 @@ try {
           await s.send("Input.dispatchKeyEvent", { type: "keyUp", key: k });
           await sleep(250);
         };
-        await s.evaluate(`document.querySelector('svg[role=img]')?.focus()`);
+        await s.evaluate(`document.querySelector('div[role=img][tabindex]')?.focus()`);
         const zStart = await rangePill();
         await key("+");
         const zIn = await rangePill();
@@ -2098,7 +2193,7 @@ try {
       await s.evaluate(`window.scrollTo(0, 300)`);
       await sleep(250);
       const scrollBefore = await s.evaluate(`window.scrollY`);
-      const chartAt = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const chartAt = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 }); })()`));
       check("the page was actually scrollable for this check", scrollBefore > 0, String(scrollBefore));
       await s.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: chartAt.x, y: chartAt.y, deltaX: 0, deltaY: -120 });
@@ -2119,7 +2214,9 @@ try {
       // ── T+2.5 entry marker ──────────────────────────────────────
       // A VN holder cannot sell what they just bought; no global charting tool
       // models that. The marker seeds a purchase at a real bar so the settlement
-      // line has somewhere to land.
+      // line has somewhere to land. Seeded as free: on pro the account's own
+      // copy of the drawings would be adopted over a seed written to this browser.
+      await asTier("free");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
       const seeded = await s.evaluate(`(async () => {
         const r = await fetch('/api/bars?symbol=VNM&tf=1D');
@@ -2133,28 +2230,31 @@ try {
         return String(b.c);
       })()`);
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(700);
-      const entryLine = await s.evaluate(
-        `document.querySelectorAll('svg[role=img] line[stroke-dasharray="6 2"]').length`);
-      check("an entry marker draws its level", entryLine >= 1, `${entryLine} @ ${seeded}`);
-      const unrealised = await s.evaluate(
-        `/[▲▼]\\s*[+-]?[0-9.,]+%/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
-      check("the marker shows the unrealised move, signed and glyphed", unrealised === true);
+      await s.evaluate(TRACE_ON);
+      const trade = (await s.evaluate(DRAWN)).drawn.find((d) => d.k === "trade");
+      check("an entry marker draws its level", !!trade, `${trade ? "drawn" : "not drawn"} @ ${seeded}`);
+      check("the marker shows the unrealised move, signed and glyphed",
+        /[▲▼]\s*[+-]?[0-9.,]+%/.test(trade?.labels?.[0] ?? ""), String(trade?.labels?.[0]));
       await s.evaluate("localStorage.removeItem('drawings:VNM')");
+      await asTier("pro");
 
       // ── market breadth (Pro) ────────────────────────────────────
       // An index is cap-weighted, so it can rise while most of the board falls.
       // This is the pane that says which — and it is the Pro tier's flagship, so
       // it has to actually render for a Pro reader, not just gate for everyone.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&br=1", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 20000 });
       await sleep(1200); // thirty member fetches on a cold cache
-      const breadthPane = await s.evaluate(
-        `document.querySelectorAll('svg[aria-label*="rộng"]').length`);
-      check("pro gets the breadth pane", breadthPane >= 1, `${breadthPane} panes`);
+      // The breadth pane is named by its own legend, at the top of the pane.
+      const breadthRow = `[...(${HOST}?.parentElement?.querySelectorAll('.tnum div') ?? [])].find((d) => /rộng/.test(d.firstElementChild?.textContent ?? ''))`;
+      const breadthPane = await s.evaluate(`(${breadthRow}) ? ${PANES} : 0`);
+      check("pro gets the breadth pane", breadthPane >= 2, `${breadthPane} panes`);
       const breadthReading = await s.evaluate(`(() => {
-        const el = document.querySelector('svg[aria-label*="rộng"]');
-        const m = (el?.textContent ?? '').match(/([0-9]{1,3})%/);
-        return m ? Number(m[1]) : null;
+        const v = (${breadthRow})?.querySelector('[data-lv]')?.textContent ?? '';
+        const n = Number(v.replace(/[.]/g, '').replace(',', '.'));
+        return v !== '' && Number.isFinite(n) ? n : null;
       })()`);
       check("breadth reads as a percentage of the market",
         breadthReading !== null && breadthReading >= 0 && breadthReading <= 100,
@@ -2166,78 +2266,60 @@ try {
       // without relying on colour.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&cmp=VNINDEX,HPG,FPT", { scheme: "light" });
       await sleep(400);
-      const overlays = await s.evaluate(`(() => {
-        // On canvas the lines have no attributes to read, so it publishes the
-        // patterns it drew; as SVG they are counted from the paths themselves.
-        const c = document.querySelector('canvas[data-layer]');
-        if (c) return new Set((c.dataset.compareDashes || '').split('|').filter(Boolean)).size;
-        const pane = document.querySelector('svg[role=img]');
-        if (!pane) return 0;
-        const dashes = new Set();
-        pane.querySelectorAll('path[stroke-dasharray]').forEach((p) => {
-          if (p.getAttribute('fill') === 'none') dashes.add(p.getAttribute('stroke-dasharray'));
-        });
-        return dashes.size;
-      })()`);
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(600);
+      // The chart publishes the dash pattern it gave each overlay's series.
+      const overlays = await s.evaluate(`new Set((${HOST}?.dataset.compare || '').split('|').filter(Boolean)).size`);
       check("pro overlays several symbols at once", overlays >= 3, `${overlays} dash patterns`);
-      const legend = await s.evaluate(
-        `(document.querySelector('svg[role=img]')?.textContent ?? '')`);
+      const legend = await s.evaluate(LEGEND);
       check("each overlay is named in the legend",
         /VNINDEX/.test(legend) && /HPG/.test(legend) && /FPT/.test(legend), "VNINDEX/HPG/FPT");
 
       // The legacy link shape must keep working.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D&cmp=1", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       await sleep(400);
-      const legacy = await s.evaluate(
-        `/VNINDEX/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
+      const legacy = /VNINDEX/.test(await s.evaluate(LEGEND));
       check("a cmp=1 link shared before this still means VNINDEX", legacy === true);
 
       // ── export the chart as a picture ───────────────────────────
-      // The failure this catches is silent: the chart paints with CSS variables
-      // and currentColor, and an SVG isolated inside an <img> resolves neither,
-      // so a naive export saves a black rectangle that still "works".
+      // The real path: the share menu's "Lưu ảnh", captured in the page rather
+      // than downloaded, then decoded to prove it holds a coloured chart.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
-      const png = await s.evaluate(`(async () => {
-        const svg = document.querySelector('svg[role=img]');
-        if (!svg) return 'no-pane';
-        const clone = svg.cloneNode(true);
-        const from = [svg, ...svg.querySelectorAll('*')];
-        const to = [clone, ...clone.querySelectorAll('*')];
-        from.forEach((el, i) => {
-          const cs = getComputedStyle(el);
-          const d = to[i];
-          if (cs.fill && cs.fill !== 'none') d.setAttribute('fill', cs.fill);
-          if (cs.stroke && cs.stroke !== 'none') d.setAttribute('stroke', cs.stroke);
-        });
-        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        const markup = new XMLSerializer().serializeToString(clone);
-        const img = await new Promise((res, rej) => {
-          const im = new Image();
-          im.onload = () => res(im); im.onerror = () => rej(new Error('x'));
-          im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
-        });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(600);
+      await s.evaluate(`(() => {
+        const make = URL.createObjectURL.bind(URL);
+        URL.createObjectURL = (blob) => { window.__export = { blob }; return make(blob); };
+        const click = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+          if (this.download && window.__export) { window.__export.name = this.download; return; }
+          return click.call(this);
+        };
+      })()`);
+      await s.click(SHARE_MENU);
+      await sleep(200);
+      const shareItems = await s.evaluate(`[...document.querySelectorAll('[role=menu] [role=menuitem]')].map((b) => b.textContent.trim()).join(' | ')`);
+      await s.click(`document.querySelector('[role=menuitem][aria-label="Lưu ảnh"]')`);
+      const exported = await s.waitFor("window.__export?.name ?? null", { timeoutMs: 8000 });
+      const png = exported ? await s.evaluate(`(async () => {
+        const bmp = await createImageBitmap(window.__export.blob);
         const c = document.createElement('canvas');
-        c.width = img.width; c.height = img.height;
+        c.width = bmp.width; c.height = bmp.height;
         const ctx = c.getContext('2d');
-        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(bmp, 0, 0);
         // Count distinct colours: a blank or all-black export has almost none.
         const data = ctx.getImageData(0, 0, c.width, c.height).data;
         const seen = new Set();
-        for (let i = 0; i < data.length; i += 4 * 97) {
-          seen.add(data[i] + ',' + data[i+1] + ',' + data[i+2]);
-        }
+        for (let i = 0; i < data.length; i += 4 * 97) seen.add(data[i] + ',' + data[i + 1] + ',' + data[i + 2]);
         return JSON.stringify({ w: c.width, h: c.height, colours: seen.size });
-      })()`);
-      const shot = png && png !== 'no-pane' ? JSON.parse(png) : null;
+      })()`) : null;
+      const shot = png ? JSON.parse(png) : null;
       check("the chart renders to a canvas at full size", !!shot && shot.w > 300 && shot.h > 200,
-        shot ? `${shot.w}x${shot.h}` : String(png));
+        shot ? `${shot.w}x${shot.h} (${exported})` : "no export");
       check("the exported image keeps its colours", !!shot && shot.colours >= 3,
         shot ? `${shot.colours} distinct` : "none");
-
-      const shareBtns = await s.evaluate(
-        `[...document.querySelectorAll('button')].filter(b => /Chép liên kết|Lưu ảnh/.test(b.textContent)).length`);
-      check("the share controls are on the toolbar", shareBtns === 2, `${shareBtns} buttons`);
+      check("the share controls are on the toolbar", /Chép liên kết/.test(shareItems) && /Lưu ảnh/.test(shareItems), shareItems);
 
       // ── a link reproduces the view ──────────────────────────────
       // The story this protects: a reader bookmarks their chart, or sends it to
@@ -2246,7 +2328,7 @@ try {
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
       await s.evaluate("localStorage.removeItem('settings:chart')");
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
-      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Đường')?.click()`);
+      await s.evaluate(PICK_STYLE("Đường"));
       await sleep(400);
       const urlAfter = await s.evaluate("location.search");
       check("changing the view rewrites the address bar", /type=line/.test(urlAfter), urlAfter);
@@ -2254,8 +2336,9 @@ try {
 
       // Reload that exact URL: the view must come back from the link alone.
       await s.goto(BASE + "/vi/bieu-do/VNM" + urlAfter, { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
       const linePressed = await s.evaluate(
-        `!![...document.querySelectorAll('button[aria-pressed="true"]')].find(b => b.textContent.trim() === 'Đường')`);
+        `/Đường$/.test(document.querySelector('button[aria-haspopup=menu][aria-label^="Kiểu biểu đồ"]')?.getAttribute('aria-label') ?? '')`);
       check("reopening the link restores the view", linePressed === true);
 
       // A link must not be able to hand out a paid indicator. Checked as FREE:
@@ -2274,18 +2357,30 @@ try {
       // Reading a level off a chart means "what price is HERE", so the pointer
       // must answer with its own height, not with the hovered candle's close.
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      await sleep(500);
       const paneBox = JSON.parse(await s.evaluate(`(() => {
-        const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+        const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ x: r.left + r.width * 0.5, y: r.top + r.height * 0.35 });
       })()`));
       await s.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: paneBox.x, y: paneBox.y });
       await sleep(350);
-      const crosshair = await s.evaluate(
-        `document.querySelectorAll('svg[role=img] line[stroke-dasharray="3 3"]').length`);
-      check("the pointer draws a horizontal crosshair", crosshair >= 1, `${crosshair} lines`);
-      const pctReadout = await s.evaluate(
-        `/[+-][0-9.,]+%/.test(document.querySelector('svg[role=img]')?.textContent ?? '')`);
-      check("the crosshair prints a signed distance from the last close", pctReadout === true);
+      // The crosshair is painted on the engine's top layer: a full-width run of ink on some row.
+      const crosshair = await s.evaluate(`(() => {
+        const top = [...${HOST}.querySelectorAll('table tr')][0]?.children[1]?.querySelectorAll('canvas')[1];
+        if (!top || !top.width) return 0;
+        const W = top.width, H = top.height, d = top.getContext('2d').getImageData(0, 0, W, H).data;
+        let rows = 0;
+        for (let y = 0; y < H; y++) {
+          let n = 0;
+          for (let x = 0; x < W; x += 4) if (d[(y * W + x) * 4 + 3] > 0) n++;
+          if (n > (W / 4) * 0.3) rows++;
+        }
+        return rows;
+      })()`);
+      check("the pointer draws a horizontal crosshair", crosshair >= 1, `${crosshair} inked rows`);
+      const readout = await s.evaluate(LEGEND_SLOT("cp"));
+      check("the crosshair prints a signed distance from the last close", /[▲▼] [+-][0-9.,]+%/.test(readout), readout);
 
       // ── dense windows decimate (P2-9) ───────────────────────────
       // A wide intraday window is the only place today where visible bars
@@ -2295,7 +2390,7 @@ try {
       await s.goto(BASE + "/vi/bieu-do/VNM?tf=5m", { scheme: "light", width: 1440, height: 900 });
       // An earlier check leaves the chart in line mode, and the setup persists,
       // so candle mode is asserted here rather than assumed.
-      await s.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Nến')?.click()`);
+      await s.evaluate(PICK_STYLE("Nến"));
       await sleep(250);
       await s.evaluate(`(() => {
         const g = document.querySelector('[role=group][aria-label="Khoảng"]');
@@ -2375,14 +2470,13 @@ try {
       check("and the reader is told why", /không hợp lệ/.test(rj.msg || ""), String(rj.msg));
 
       // ── Fibonacci ───────────────────────────────────────────────
-      await s.evaluate("localStorage.removeItem('drawings:VNM')");
-      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await clearDrawings();
       check("the rail offers Fibonacci tools",
         (await s.evaluate(`!!document.querySelector('[aria-label="Fibonacci thoái lui"]') && !!document.querySelector('[aria-label="Fibonacci mở rộng"]')`)) === true);
 
       await s.evaluate(`document.querySelector('[aria-label="Fibonacci thoái lui"]')?.click()`);
       await sleep(200);
-      const fibBox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('svg[role=img]').getBoundingClientRect();
+      const fibBox = JSON.parse(await s.evaluate(`(() => { const r = document.querySelector('div[role=img][tabindex]').getBoundingClientRect();
         return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height }); })()`));
       const clickAt = async (fx, fy) => {
         const x = fibBox.l + fibBox.w * fx, y = fibBox.t + fibBox.h * fy;
@@ -2395,9 +2489,10 @@ try {
       await clickAt(0.7, 0.2);
       await sleep(400);
 
+      await s.evaluate(TRACE_ON);
       const fib = JSON.parse(await s.evaluate(`(() => {
         const d = JSON.parse(localStorage.getItem('drawings:VNM') || '[]');
-        const texts = [...document.querySelectorAll('svg[role=img] text, svg[data-plot-overlay] text')].map(t => t.textContent.trim());
+        const texts = ${DRAWN}.drawn.filter((x) => x.k === 'fib').flatMap((x) => x.labels || []);
         return JSON.stringify({ stored: d.length, kind: d[0]?.kind, labels: texts.filter(t => /%/.test(t)) });
       })()`));
       check("two clicks store one Fibonacci drawing", fib.stored === 1 && fib.kind === "fib", JSON.stringify(fib.stored));
@@ -2411,16 +2506,14 @@ try {
         const d = JSON.parse(localStorage.getItem('drawings:VNM') || '[]')[0];
         if (!d) return false;
         const lo = Math.min(d.p1, d.p2), hi = Math.max(d.p1, d.p2);
-        const nums = [...document.querySelectorAll('svg[role=img] text, svg[data-plot-overlay] text')]
-          .map(t => t.textContent.trim()).filter(t => /%/.test(t))
+        const nums = ${DRAWN}.drawn.filter((x) => x.k === 'fib').flatMap((x) => x.labels || []).filter(t => /%/.test(t))
           .map(t => Number(t.split('·')[1].trim().replace(/[.]/g, '').replace(/[,]/, '.')));
         return nums.every(n => n >= lo - 0.5 && n <= hi + 0.5);
       })()`);
       check("every retracement level sits inside the swing", bounded === true);
 
       // Extensions must project PAST the swing, which is what distinguishes them.
-      await s.evaluate("localStorage.removeItem('drawings:VNM')");
-      await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+      await clearDrawings();
       await s.evaluate(`document.querySelector('[aria-label="Fibonacci mở rộng"]')?.click()`);
       await sleep(200);
       await clickAt(0.3, 0.8);
@@ -2440,8 +2533,7 @@ try {
 
       // ── parallel trend channel ──────────────────────────────────
       {
-        await s.evaluate("localStorage.removeItem('drawings:VNM')");
-        await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+        await clearDrawings();
         check("the rail offers a parallel channel",
           (await s.evaluate(`!!document.querySelector('[aria-label="Kênh xu hướng song song"]')`)) === true);
 
@@ -2475,24 +2567,18 @@ try {
           JSON.stringify(chan.kind));
 
         // The two edges must be drawn parallel on screen, not merely in the data.
-        const parallelOnScreen = await s.evaluate(`(() => {
-          const g = [...document.querySelectorAll('svg[role=img] g, svg[data-plot-overlay] g')]
-            .find(g => g.querySelector('polygon') && g.querySelectorAll('line').length === 2);
-          if (!g) return null;
-          const [a, b] = [...g.querySelectorAll('line')];
-          const slope = (l) => (Number(l.getAttribute('y2')) - Number(l.getAttribute('y1')))
-                             / (Number(l.getAttribute('x2')) - Number(l.getAttribute('x1')));
-          return Math.abs(slope(a) - slope(b));
-        })()`);
+        await s.evaluate(TRACE_ON);
+        const channelPaint = (await s.evaluate(DRAWN)).drawn.find((x) => x.k === "channel");
+        const slope = (e) => (e[3] - e[1]) / (e[2] - e[0]);
+        const parallelOnScreen = channelPaint?.edges?.length === 2
+          ? Math.abs(slope(channelPaint.edges[0]) - slope(channelPaint.edges[1])) : null;
         check("the two edges are parallel on screen",
           parallelOnScreen !== null && parallelOnScreen < 1e-6, String(parallelOnScreen));
 
-        check("the channel band is filled",
-          (await s.evaluate(`!!document.querySelector('svg[role=img] polygon, svg[data-plot-overlay] polygon')`)) === true);
+        check("the channel band is filled", channelPaint?.filled === true);
 
         // Switching tools mid-draw must not leave a half-finished anchor behind.
-        await s.evaluate("localStorage.removeItem('drawings:VNM')");
-        await s.goto(BASE + "/vi/bieu-do/VNM?tf=1D", { scheme: "light" });
+        await clearDrawings();
         await s.evaluate(`document.querySelector('[aria-label="Kênh xu hướng song song"]')?.click()`);
         await sleep(150);
         await clickAt(0.3, 0.7);
@@ -2562,8 +2648,9 @@ try {
       // server snapshot is null — so it appears one frame AFTER hydration, not
       // in the markup `goto` waits for.
       await sleep(600);
-      const alertLine = await s.evaluate(
-        `document.querySelectorAll('svg[role=img] line[stroke-dasharray="1 5"]').length`);
+      await s.waitFor(CHART_DRAWN, { timeoutMs: 15000 });
+      // The chart states how many alert levels it drew as price lines.
+      const alertLine = await s.evaluate(`Number(${HOST}?.dataset.alerts || 0)`);
       check("an armed alert is drawn on the chart", alertLine >= 1, `${alertLine} lines @ ${lastClose}`);
       await s.evaluate("localStorage.removeItem('alerts')");
 
@@ -2590,7 +2677,7 @@ try {
 
       // ── multi-chart layout ──────────────────────────────────────
       await s.goto(BASE + "/vi/bieu-do/VNM?layout=4&s=FPT,HPG,VCB", { scheme: "light" });
-      const cards = await s.evaluate(`document.querySelectorAll('main .card.min-w-0').length`);
+      const cards = await s.evaluate(`document.querySelectorAll('[data-chart-cell]').length`);
       check("pro gets a four-chart grid", cards === 4, `${cards} charts`);
 
       // ── linked crosshair (P2-14) ────────────────────────────────
@@ -2598,15 +2685,13 @@ try {
       // must move the crosshair in the others, and — the part that actually
       // matters — land on the SAME SESSION, not the same bar index. Two symbols
       // rarely have the same history, so an index would line up unrelated days.
-      const readStamps = `(() => {
-        return [...document.querySelectorAll('main .card.min-w-0')].map(card => {
-          const axis = [...card.querySelectorAll('svg')].pop();
-          const t = axis?.querySelector('text[fill="var(--page)"]');
-          return t ? t.textContent.trim() : null;
-        });
-      })()`;
+      // Each cell's legend names the session under its crosshair.
+      const readStamps = `[...document.querySelectorAll('[data-chart-cell]')].map((cell) => cell.querySelector('[data-lv="d"]')?.textContent.trim() || null)`;
+      await s.waitFor(`document.querySelectorAll('[data-chart-cell] div[role=img] canvas').length >= 4`, { timeoutMs: 20000 });
+      await sleep(800);
+      const resting = JSON.parse(await s.evaluate(`JSON.stringify(${readStamps})`));
       const gridBox = JSON.parse(await s.evaluate(`(() => {
-        const r = document.querySelector('main .card.min-w-0 svg[role=img]').getBoundingClientRect();
+        const r = document.querySelector('[data-chart-cell] div[role=img]').getBoundingClientRect();
         return JSON.stringify({ l: r.left, t: r.top, w: r.width, h: r.height });
       })()`));
       await s.send("Input.dispatchMouseEvent", {
@@ -2616,8 +2701,10 @@ try {
       });
       const stamps = await s.waitFor(`(() => {
         const v = ${readStamps};
-        return v.filter(Boolean).length >= 2 ? JSON.stringify(v) : null;
-      })()`, 5000);
+        // Settled means linked: every cell on one session, and not the one it rested on.
+        const shown = v.filter(Boolean);
+        return shown.length >= 2 && new Set(shown).size === 1 && shown[0] !== ${JSON.stringify(resting[0] ?? "")} ? JSON.stringify(v) : null;
+      })()`, { timeoutMs: 5000 });
       const cellStamps = stamps ? JSON.parse(stamps) : [];
       const shown = cellStamps.filter(Boolean);
       check("hovering one cell shows a crosshair in the others",

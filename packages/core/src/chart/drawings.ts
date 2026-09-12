@@ -1,3 +1,5 @@
+import { sanitizeStyle, type DrawingStyle } from "./drawing-style.ts";
+
 /**
  * Chart drawings.
  *
@@ -119,9 +121,10 @@ export interface MeasureDrawing extends Segment {
   kind: "measure";
 }
 
-export type Drawing =
+export type Drawing = (
   | HLine | TrendLine | FibDrawing | ChannelDrawing | TradeMarker
-  | RayLine | VLine | RectDrawing | TextNote | MeasureDrawing;
+  | RayLine | VLine | RectDrawing | TextNote | MeasureDrawing
+) & { style?: DrawingStyle };
 
 /** The longest note that may be stored, so one drawing cannot fill the budget. */
 export const MAX_TEXT_LEN = 120;
@@ -463,6 +466,11 @@ export function parseDrawings(raw: string | null): Drawing[] {
           && typeof d.text === "string" && d.text.length > 0 && d.text.length <= MAX_TEXT_LEN;
       }
       return false;
+    }).map((d) => {
+      const copy: Drawing & { style?: unknown } = { ...d };
+      const style = sanitizeStyle(copy.style);
+      delete copy.style;
+      return style ? { ...copy, style } : copy;
     });
   } catch {
     return [];

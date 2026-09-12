@@ -14,7 +14,9 @@
 import { parseRef } from "../ta/params.ts";
 import { DEFAULT_SCALE, isScale, type ScaleId } from "./scale.ts";
 
-export type ChartTypeId = "candle" | "line" | "area";
+import { isChartType, type ChartTypeId } from "./chart-types.ts";
+import { DEFAULT_APPEARANCE, parseAppearance, type Appearance } from "./appearance.ts";
+export type { ChartTypeId } from "./chart-types.ts";
 
 export interface ChartSettings {
   type: ChartTypeId;
@@ -23,45 +25,45 @@ export interface ChartSettings {
   /** Price axis. A preference, so it is remembered like the chart type. */
   scale: ScaleId;
   /**
-   * Reader-set price-pane height, as a FRACTION of the viewport, or `null` for
-   * the automatic size.
+   * Reader-set chart workspace height, as a FRACTION of the viewport, or `null`
+   * for "fill the window".
    *
-   * A fraction rather than pixels because this setting syncs: a 900px pane
-   * dragged out on a desktop would be taller than a phone's whole screen, and
-   * restoring it there would push every other pane off the page. A fraction
-   * says what the reader actually meant — "give the price about this much of
-   * the screen" — and travels.
+   * A fraction rather than pixels because this setting syncs: a height dragged
+   * out on a desktop would be meaningless on a phone. A fraction says what the
+   * reader meant — "this much of the screen" — and travels.
+   *
+   * The chart before the workspace stored the price pane's share as `paneRatio`. That measures
+   * something else, so it is never read: those readers get the window-filling default.
    */
-  paneRatio: number | null;
+  wsRatio: number | null;
+  /** How the chart looks; absent on setups saved before it existed, which read as the defaults. */
+  appearance?: Appearance;
 }
 
 export const SETTINGS_KEY = "settings:chart";
 
 export const DEFAULT_SETTINGS: ChartSettings = {
-  type: "candle", indicators: ["sma20"], scale: DEFAULT_SCALE, paneRatio: null,
+  type: "candle", indicators: ["sma20"], scale: DEFAULT_SCALE, wsRatio: null, appearance: DEFAULT_APPEARANCE,
 };
 
 /**
- * Bounds on the price pane's share of the viewport.
- *
- * The floor keeps the candles readable; the ceiling keeps the volume pane, the
- * oscillators and the toolbar from being pushed off the bottom, which a drag
- * with no upper bound will do on the first try.
+ * Bounds on the workspace's share of the viewport. The floor keeps the candles
+ * readable; the ceiling lets a reader with many indicator panes make the chart
+ * taller than the window, but not endlessly so.
  */
-export const MIN_PANE_RATIO = 0.25;
-export const MAX_PANE_RATIO = 0.85;
+export const MIN_WS_RATIO = 0.4;
+export const MAX_WS_RATIO = 2;
 
 /** A stored or dragged ratio, brought inside the usable range. */
-export function clampPaneRatio(r: number): number {
+export function clampWsRatio(r: number): number {
   // Only NaN needs a guard: it defeats every comparison, so Math.min/max would
   // propagate it. Infinities clamp correctly on their own, and clamping them to
   // the floor — as an is-finite guard would — turns "as tall as possible" into
   // "as short as possible".
-  if (Number.isNaN(r)) return MIN_PANE_RATIO;
-  return Math.min(MAX_PANE_RATIO, Math.max(MIN_PANE_RATIO, r));
+  if (Number.isNaN(r)) return MIN_WS_RATIO;
+  return Math.min(MAX_WS_RATIO, Math.max(MIN_WS_RATIO, r));
 }
 
-const TYPES: ChartTypeId[] = ["candle", "line", "area"];
 
 /**
  * Entries are indicator TOKENS — `rsi` or `rsi:21`. `parseRef` owns the grammar
@@ -74,7 +76,7 @@ export function parseSettings(raw: string | null): ChartSettings | null {
   try {
     const v = JSON.parse(raw) as Partial<ChartSettings>;
     if (typeof v !== "object" || v === null) return null;
-    const type = TYPES.includes(v.type as ChartTypeId) ? (v.type as ChartTypeId) : DEFAULT_SETTINGS.type;
+    const type = isChartType(v.type) ? v.type : DEFAULT_SETTINGS.type;
     const indicators: string[] = [];
     if (Array.isArray(v.indicators)) {
       const seen = new Set<string>();
@@ -90,17 +92,19 @@ export function parseSettings(raw: string | null): ChartSettings | null {
     const scale = isScale(v.scale) ? v.scale : DEFAULT_SETTINGS.scale;
     // A stored ratio is clamped rather than trusted: hand-edited storage should
     // not be able to collapse the chart to nothing.
-    const paneRatio = typeof v.paneRatio === "number" && Number.isFinite(v.paneRatio)
-      ? clampPaneRatio(v.paneRatio)
+    const wsRatio = typeof v.wsRatio === "number" && Number.isFinite(v.wsRatio)
+      ? clampWsRatio(v.wsRatio)
       : null;
-    return { type, indicators, scale, paneRatio };
+    return { type, indicators, scale, wsRatio, appearance: parseAppearance((v as { appearance?: unknown }).appearance) };
   } catch {
     return null;
   }
 }
 
 export function serializeSettings(s: ChartSettings): string {
-  return JSON.stringify({ type: s.type, indicators: s.indicators, scale: s.scale, paneRatio: s.paneRatio });
+  return JSON.stringify({
+    type: s.type, indicators: s.indicators, scale: s.scale, wsRatio: s.wsRatio, appearance: s.appearance ?? DEFAULT_APPEARANCE,
+  });
 }
 
 /**
@@ -129,7 +133,8 @@ export function restorable(
   return {
     type: s.type,
     scale: s.scale,
-    paneRatio: s.paneRatio,
+    wsRatio: s.wsRatio,
+    appearance: s.appearance ?? DEFAULT_APPEARANCE,
     // Both predicates answer about an INDICATOR, so both are asked about the
     // id — passing the whole `rsi:21` token would make every tuned indicator
     // look unknown. Applied before the slice, so an indicator the reader may
