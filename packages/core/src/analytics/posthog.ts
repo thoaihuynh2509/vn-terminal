@@ -9,6 +9,7 @@
  * Only the payload builders are exported for tests; the browser bits
  * (localStorage ids, sendBeacon) guard for SSR and for storage that throws.
  */
+import { gaEvent } from "./ga.ts";
 
 const KEY = "ph_distinct_id";
 
@@ -140,9 +141,10 @@ function send(cfg: PosthogConfig, body: Record<string, unknown>): void {
   }
 }
 
-/** Fire an event. No-op on the server or when unconfigured. */
+/** Fire an event to PostHog, and to GA when the Google tag is on the page. No-op on the server or when neither is set up. */
 export function track(event: string, properties: Record<string, unknown> = {}): void {
   if (typeof window === "undefined") return;
+  gaEvent(event, properties);
   const cfg = posthogConfig();
   if (!cfg) return;
   send(cfg, captureBody(cfg.apiKey, event, distinctId(), properties, Date.now()));

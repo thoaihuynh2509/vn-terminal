@@ -103,6 +103,14 @@ every secret in **Vercel → Project → Settings → Environment Variables**
       `ANTHROPIC_API_KEY`; it stays gated (Plus+, 2 free asks) and rate-limited.
 - [ ] `NEXT_PUBLIC_USD_VND` — reference rate for the gold premium (default 26300).
 
+### Google Analytics 4 (optional)
+- analytics.google.com → Admin → Create property → Data stream **Web** for the production URL →
+  copy the **Measurement ID** (`G-…`). Keep *Enhanced measurement* on: it records page views on
+  client-side navigation, which the app does not send to GA itself.
+- Vercel → Environment Variables → `NEXT_PUBLIC_GA_ID=G-…` (Production) → redeploy.
+- Unset or malformed → the Google tag is not loaded at all. Every `track()` event also goes to GA,
+  with names made GA-safe and PostHog's `$` events skipped.
+
 ## 7. Go-live
 - [ ] Point the domain at Vercel; confirm `NEXT_PUBLIC_SITE_URL` matches it exactly.
 - [ ] Smoke test on the live URL: `/vi` renders; sign in via magic link; upgrade a

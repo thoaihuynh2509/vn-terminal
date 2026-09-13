@@ -26,6 +26,9 @@ export function VerifyView({ locale, token }: { locale: Locale; token?: string }
       <div className="max-w-[460px]">
         {token ? (
           <form method="post" action="/api/auth/magic/verify" className="card p-7">
+            {/* Runs while the page parses, before any analytics reads the address: a token that can still
+                sign someone in must not reach a third party. The form below keeps its own copy. */}
+            <script dangerouslySetInnerHTML={{ __html: "history.replaceState(history.state,'',location.pathname)" }} />
             <input type="hidden" name="token" value={token} />
             <input type="hidden" name="locale" value={locale} />
             <button

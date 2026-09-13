@@ -8,6 +8,7 @@ import { SessionChrome, SessionChromeFallback } from "@/components/SessionChrome
 import { ThemeScript } from "@/components/ThemeScript";
 import { TickerStrip, TickerStripFallback } from "@/components/TickerStrip";
 import { Analytics } from "@/components/Analytics";
+import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 import { getDict, isLocale, LOCALES } from "@/lib/i18n";
 import { siteUrl } from "@/lib/site";
 
@@ -113,6 +114,7 @@ export default async function LocaleLayout({
           <SessionChrome locale={locale} dict={dict} />
         </Suspense>
         <Analytics />
+        <GoogleAnalytics />
         <main id="main" className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
           {children}
         </main>
